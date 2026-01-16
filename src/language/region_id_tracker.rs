@@ -242,7 +242,7 @@ impl RegionIdTracker {
             // Next full parse will correct positions anyway.
             debug_assert!(false, "No edits from diff despite old_text != new_text");
             warn!(
-                target: "tree_sitter_ls::region_tracker",
+                target: "kakehashi::region_tracker",
                 "No edits from diff despite old_text != new_text (uri={}). \
                  This may indicate a similar crate bug.",
                 uri
@@ -257,7 +257,7 @@ impl RegionIdTracker {
         if has_overlap {
             // Use error! level - this path should be unreachable if similar crate behaves correctly
             error!(
-                target: "tree_sitter_ls::region_tracker",
+                target: "kakehashi::region_tracker",
                 "Overlapping edits from diff (uri={}, edit_count={}). \
                  Falling back to whole-document invalidation. \
                  This may indicate a similar crate bug or version incompatibility.",
@@ -394,7 +394,7 @@ impl RegionIdTracker {
             // Defensive: skip invalid edits in production (graceful degradation)
             if edit.old_end_byte < edit.start_byte {
                 warn!(
-                    target: "tree_sitter_ls::region_tracker",
+                    target: "kakehashi::region_tracker",
                     "Skipping invalid edit: old_end_byte ({}) < start_byte ({})",
                     edit.old_end_byte, edit.start_byte
                 );
@@ -490,7 +490,7 @@ impl RegionIdTracker {
                 Entry::Occupied(_) => {
                     // Collision: keep first entry, log dropped ULID for debugging
                     warn!(
-                        target: "tree_sitter_ls::region_tracker",
+                        target: "kakehashi::region_tracker",
                         "Position collision after edit - ULID mapping dropped: ulid={}, start={}, end={}, kind={}",
                         ulid, new_key.start_byte, new_key.end_byte, new_key.kind
                     );

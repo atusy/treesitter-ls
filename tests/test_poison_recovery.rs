@@ -3,10 +3,10 @@
 //! These tests intentionally poison locks and must run serially to avoid
 //! interference between tests.
 
+use kakehashi::language::{ConfigStore, FiletypeResolver, LanguageRegistry, QueryStore};
 use serial_test::serial;
 use std::sync::Arc;
 use std::thread;
-use tree_sitter_ls::language::{ConfigStore, FiletypeResolver, LanguageRegistry, QueryStore};
 
 #[test]
 #[serial(poison)]
@@ -105,7 +105,7 @@ fn test_query_store_recovers_from_poisoned_write_lock() {
 #[test]
 #[serial(poison)]
 fn test_config_store_recovers_from_poisoned_lock() {
-    use tree_sitter_ls::config::settings::LanguageConfig;
+    use kakehashi::config::settings::LanguageConfig;
 
     let store = Arc::new(ConfigStore::new());
     let store_clone = store.clone();

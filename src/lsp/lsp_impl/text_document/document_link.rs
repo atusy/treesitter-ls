@@ -39,7 +39,7 @@ impl TreeSitterLs {
 
         // Get the language for this document
         let Some(language_name) = self.get_language_for_document(&uri) else {
-            log::debug!(target: "tree_sitter_ls::document_link", "No language detected");
+            log::debug!(target: "kakehashi::document_link", "No language detected");
             return Ok(None);
         };
 

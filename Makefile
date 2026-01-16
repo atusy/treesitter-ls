@@ -1,10 +1,10 @@
-# Makefile for tree-sitter-ls
+# Makefile for kakehashi
 
 # Variables
 CARGO = cargo
 TARGET_DIR = target
 RELEASE_DIR = $(TARGET_DIR)/release
-BINARY_NAME = tree-sitter-ls
+BINARY_NAME = kakehashi
 RELEASE_BINARY = $(RELEASE_DIR)/$(BINARY_NAME)
 
 # Default target
@@ -98,12 +98,12 @@ deps/nvim/nvim-treesitter:
 deps/nvim/catppuccin:
 	git clone --filter=blob:none https://github.com/catppuccin/nvim $@
 
-target/debug/tree-sitter-ls: build-debug
+target/debug/kakehashi: build-debug
 
-deps/tree-sitter/.installed: target/debug/tree-sitter-ls
+deps/tree-sitter/.installed: target/debug/kakehashi
 	@mkdir -p deps/tree-sitter
 	for lang in lua rust markdown markdown_inline yaml; do \
-		./target/debug/tree-sitter-ls language install $$lang --data-dir deps/tree-sitter --force; \
+		./target/debug/kakehashi language install $$lang --data-dir deps/tree-sitter --force; \
 	done
 	@touch $@
 

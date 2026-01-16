@@ -28,7 +28,7 @@ fn check_predicate(query: &Query, match_: &QueryMatch, capture: &QueryCapture, t
                                     }
                                     Err(err) => {
                                         log::info!(
-                                            target: "tree_sitter_ls::query",
+                                            target: "kakehashi::query",
                                             "Failed to compile regex from lua-pattern: {} ({err})",
                                             regex_str
                                         );
@@ -36,7 +36,7 @@ fn check_predicate(query: &Query, match_: &QueryMatch, capture: &QueryCapture, t
                                 },
                                 Err(err) => {
                                     log::info!(
-                                        target: "tree_sitter_ls::query",
+                                        target: "kakehashi::query",
                                         "Failed to convert lua-pattern to regex: {} ({err:?})",
                                         pattern_str
                                     );
@@ -44,7 +44,7 @@ fn check_predicate(query: &Query, match_: &QueryMatch, capture: &QueryCapture, t
                             }
                         } else {
                             log::info!(
-                                target: "tree_sitter_ls::query",
+                                target: "kakehashi::query",
                                 "Invalid lua-pattern: {}",
                                 pattern_str
                             );

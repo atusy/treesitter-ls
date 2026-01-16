@@ -126,7 +126,7 @@ impl TreeSitterLs {
                     && let Err(error) = self.failed_parsers.clear_failed(language_name)
                 {
                     log::warn!(
-                        target: "tree_sitter_ls::crash_recovery",
+                        target: "kakehashi::crash_recovery",
                         "Failed to clear failed parser state for '{}': {}",
                         language_name,
                         error
@@ -150,7 +150,7 @@ impl TreeSitterLs {
         let request_id = self.semantic_request_tracker.start_request(&uri);
 
         log::debug!(
-            target: "tree_sitter_ls::semantic",
+            target: "kakehashi::semantic",
             "[SEMANTIC_TOKENS] START uri={} req={}",
             uri, request_id
         );
@@ -158,7 +158,7 @@ impl TreeSitterLs {
         // Early exit if request was superseded
         if !self.semantic_request_tracker.is_active(&uri, request_id) {
             log::debug!(
-                target: "tree_sitter_ls::semantic",
+                target: "kakehashi::semantic",
                 "[SEMANTIC_TOKENS] CANCELLED uri={} req={}",
                 uri, request_id
             );
@@ -190,7 +190,7 @@ impl TreeSitterLs {
         // Early exit check after loading language
         if !self.semantic_request_tracker.is_active(&uri, request_id) {
             log::debug!(
-                target: "tree_sitter_ls::semantic",
+                target: "kakehashi::semantic",
                 "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (after language load)",
                 uri, request_id
             );
@@ -209,7 +209,7 @@ impl TreeSitterLs {
         // Early exit check before expensive computation
         if !self.semantic_request_tracker.is_active(&uri, request_id) {
             log::debug!(
-                target: "tree_sitter_ls::semantic",
+                target: "kakehashi::semantic",
                 "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (before compute)",
                 uri, request_id
             );
@@ -232,7 +232,7 @@ impl TreeSitterLs {
                 self.semantic_request_tracker
                     .finish_request(&uri, request_id);
                 log::debug!(
-                    target: "tree_sitter_ls::semantic",
+                    target: "kakehashi::semantic",
                     "[SEMANTIC_TOKENS] CANCELLED uri={} req={} ({:?})",
                     uri, request_id, reason
                 );
@@ -242,7 +242,7 @@ impl TreeSitterLs {
             // Early exit check after waiting for parse completion
             if !self.semantic_request_tracker.is_active(&uri, request_id) {
                 log::debug!(
-                    target: "tree_sitter_ls::semantic",
+                    target: "kakehashi::semantic",
                     "[SEMANTIC_TOKENS] CANCELLED uri={} req={}",
                     uri, request_id
                 );
@@ -270,7 +270,7 @@ impl TreeSitterLs {
             self.semantic_request_tracker
                 .finish_request(&uri, request_id);
             log::debug!(
-                target: "tree_sitter_ls::semantic",
+                target: "kakehashi::semantic",
                 "[SEMANTIC_TOKENS] CANCELLED uri={} req={} ({:?})",
                 uri, request_id, reason
             );
@@ -305,7 +305,7 @@ impl TreeSitterLs {
             .finish_request(&uri, request_id);
 
         log::debug!(
-            target: "tree_sitter_ls::semantic",
+            target: "kakehashi::semantic",
             "[SEMANTIC_TOKENS] DONE uri={} req={} tokens={}",
             uri, request_id, lsp_tokens.data.len()
         );
@@ -324,7 +324,7 @@ impl TreeSitterLs {
         let request_id = self.semantic_request_tracker.start_request(&uri);
 
         log::debug!(
-            target: "tree_sitter_ls::semantic",
+            target: "kakehashi::semantic",
             "[SEMANTIC_TOKENS_DELTA] START uri={} req={}",
             uri, request_id
         );
@@ -332,7 +332,7 @@ impl TreeSitterLs {
         // Early exit if request was superseded
         if !self.semantic_request_tracker.is_active(&uri, request_id) {
             log::debug!(
-                target: "tree_sitter_ls::semantic",
+                target: "kakehashi::semantic",
                 "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={}",
                 uri, request_id
             );
@@ -364,7 +364,7 @@ impl TreeSitterLs {
         // Early exit check before expensive computation
         if !self.semantic_request_tracker.is_active(&uri, request_id) {
             log::debug!(
-                target: "tree_sitter_ls::semantic",
+                target: "kakehashi::semantic",
                 "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} (before compute)",
                 uri, request_id
             );
@@ -389,7 +389,7 @@ impl TreeSitterLs {
                 self.semantic_request_tracker
                     .finish_request(&uri, request_id);
                 log::debug!(
-                    target: "tree_sitter_ls::semantic",
+                    target: "kakehashi::semantic",
                     "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} ({:?})",
                     uri, request_id, reason
                 );
@@ -399,7 +399,7 @@ impl TreeSitterLs {
             // Early exit check after waiting for parse completion
             if !self.semantic_request_tracker.is_active(&uri, request_id) {
                 log::debug!(
-                    target: "tree_sitter_ls::semantic",
+                    target: "kakehashi::semantic",
                     "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={}",
                     uri, request_id
                 );
@@ -454,7 +454,7 @@ impl TreeSitterLs {
 
             let result = if use_incremental {
                 log::debug!(
-                    target: "tree_sitter_ls::semantic",
+                    target: "kakehashi::semantic",
                     "Using incremental tokenization path"
                 );
 
@@ -488,7 +488,7 @@ impl TreeSitterLs {
                             // If we got a delta, we need the full tokens
                             // This shouldn't happen since we passed None for previous
                             log::warn!(
-                                target: "tree_sitter_ls::semantic",
+                                target: "kakehashi::semantic",
                                 "Unexpected delta result when computing full tokens"
                             );
                             return Ok(Some(result));
@@ -509,7 +509,7 @@ impl TreeSitterLs {
                     );
 
                     log::debug!(
-                        target: "tree_sitter_ls::semantic",
+                        target: "kakehashi::semantic",
                         "Incremental merge: {} changed lines, line_delta={}",
                         merge_result.changed_lines.len(),
                         merge_result.line_delta
@@ -532,7 +532,7 @@ impl TreeSitterLs {
                 }
             } else {
                 log::debug!(
-                    target: "tree_sitter_ls::semantic",
+                    target: "kakehashi::semantic",
                     "Using full tokenization path (strategy={:?}, has_prev_tokens={}, has_prev_tree={}, has_prev_text={})",
                     strategy,
                     previous_tokens.is_some(),
@@ -571,7 +571,7 @@ impl TreeSitterLs {
 
         if let Some(reason) = self.check_text_staleness(&uri, &text_used) {
             log::debug!(
-                target: "tree_sitter_ls::semantic",
+                target: "kakehashi::semantic",
                 "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} ({:?})",
                 uri, request_id, reason
             );
@@ -579,7 +579,7 @@ impl TreeSitterLs {
         }
 
         log::debug!(
-            target: "tree_sitter_ls::semantic",
+            target: "kakehashi::semantic",
             "[SEMANTIC_TOKENS_DELTA] DONE uri={} req={}",
             uri, request_id
         );

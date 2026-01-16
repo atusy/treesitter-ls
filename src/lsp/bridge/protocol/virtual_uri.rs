@@ -201,7 +201,7 @@ mod tests {
     use tower_lsp::lsp_types::Url;
 
     #[test]
-    fn uses_tree_sitter_ls_path_prefix() {
+    fn uses_kakehashi_path_prefix() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
         let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
 

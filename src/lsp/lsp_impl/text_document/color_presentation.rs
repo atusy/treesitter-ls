@@ -45,7 +45,7 @@ impl TreeSitterLs {
 
         // Get the language for this document
         let Some(language_name) = self.get_language_for_document(&uri) else {
-            log::debug!(target: "tree_sitter_ls::color_presentation", "No language detected");
+            log::debug!(target: "kakehashi::color_presentation", "No language detected");
             return Ok(Vec::new());
         };
 

@@ -22,9 +22,9 @@ pub struct LspClient {
 impl LspClient {
     /// Spawn the tree-sitter-ls binary and create a new LSP client.
     pub fn new() -> Self {
-        // `CARGO_BIN_EXE_tree-sitter-ls` is set by Cargo's test harness for integration tests
+        // `CARGO_BIN_EXE_kakehashi` is set by Cargo's test harness for integration tests
         // and points to the built `tree-sitter-ls` binary, so we don't hardcode its path here.
-        let mut child = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

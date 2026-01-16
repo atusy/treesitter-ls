@@ -1,8 +1,8 @@
 //! Integration test for dynamically loading Lua from searchPaths
 
+use kakehashi::config::{TreeSitterSettings, WorkspaceSettings};
+use kakehashi::language::LanguageCoordinator;
 use std::collections::HashMap;
-use tree_sitter_ls::config::{TreeSitterSettings, WorkspaceSettings};
-use tree_sitter_ls::language::LanguageCoordinator;
 
 /// Verify that the coordinator can dynamically load Lua when searchPaths points to deps/tree-sitter
 #[test]

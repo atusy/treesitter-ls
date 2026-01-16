@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
+use kakehashi::install::{default_data_dir, metadata, parser, queries};
 use std::path::PathBuf;
-use tree_sitter_ls::install::{default_data_dir, metadata, parser, queries};
 
 /// A Language Server Protocol (LSP) server using Tree-sitter for parsing
 #[derive(Parser)]
@@ -400,7 +400,7 @@ fn find_parser_file(parser_dir: &std::path::Path, lang: &str) -> Option<PathBuf>
 
 /// Run the config init command
 fn run_config_init(output: Option<PathBuf>, force: bool) {
-    use tree_sitter_ls::config::defaults::default_settings;
+    use kakehashi::config::defaults::default_settings;
 
     // Check for --force without --output (warn but continue)
     if force && output.is_none() {
@@ -520,12 +520,12 @@ fn run_install(
 #[tokio::main]
 async fn run_lsp_server() {
     use env_logger::Builder;
+    use kakehashi::lsp::{RequestIdCapture, TreeSitterLs};
     use tokio::io::{stdin, stdout};
     use tower_lsp::{LspService, Server};
-    use tree_sitter_ls::lsp::{RequestIdCapture, TreeSitterLs};
 
     // Initialize logging to stderr (CRITICAL: stdout is used for LSP JSON-RPC)
-    // Configure via RUST_LOG, e.g.: RUST_LOG=tree_sitter_ls=debug
+    // Configure via RUST_LOG, e.g.: RUST_LOG=kakehashi=debug
     Builder::from_default_env()
         .target(env_logger::Target::Stderr)
         .init();

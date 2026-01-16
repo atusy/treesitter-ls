@@ -114,7 +114,7 @@ async fn reader_loop(
             // Check for cancellation first
             _ = cancel_token.cancelled() => {
                 debug!(
-                    target: "tree_sitter_ls::bridge::reader",
+                    target: "kakehashi::bridge::reader",
                     "Reader task cancelled, shutting down"
                 );
                 break;
@@ -129,7 +129,7 @@ async fn reader_loop(
                     Err(e) => {
                         // EOF or read error - mark all pending as failed and exit
                         warn!(
-                            target: "tree_sitter_ls::bridge::reader",
+                            target: "kakehashi::bridge::reader",
                             "Reader error: {}, failing pending requests",
                             e
                         );
@@ -150,7 +150,7 @@ fn handle_message(message: serde_json::Value, router: &ResponseRouter) {
         let delivered = router.route(message);
         if !delivered {
             debug!(
-                target: "tree_sitter_ls::bridge::reader",
+                target: "kakehashi::bridge::reader",
                 "Response for unknown request ID, dropping"
             );
         }
@@ -158,7 +158,7 @@ fn handle_message(message: serde_json::Value, router: &ResponseRouter) {
         // It's a notification - log and skip
         if let Some(method) = message.get("method").and_then(|v| v.as_str()) {
             debug!(
-                target: "tree_sitter_ls::bridge::reader",
+                target: "kakehashi::bridge::reader",
                 "Received notification: {}, skipping",
                 method
             );

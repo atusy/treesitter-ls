@@ -1,10 +1,10 @@
+use kakehashi::text::PositionMapper;
 /// Tests for incremental edit handling with multi-byte characters
 ///
 /// This test verifies that InputEdit positions are computed correctly for documents
 /// containing multi-byte UTF-8 characters. LSP uses UTF-16 code units for positions,
 /// while tree-sitter uses byte offsets.
 use tree_sitter::{InputEdit, Parser, Point};
-use tree_sitter_ls::text::PositionMapper;
 
 /// Test that position_to_point correctly converts UTF-16 columns to byte columns
 ///
