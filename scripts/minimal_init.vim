@@ -24,26 +24,34 @@ augroup END
 " Enable semantic highlight
 let g:lsp_semantic_enabled = 1
 let g:lsp_semantic_delay = 500
-highlight LspSemanticComment guifg=#6a737d ctermfg=245
-highlight LspSemanticKeyword guifg=#d73a49 ctermfg=167 gui=bold cterm=bold
-highlight LspSemanticString guifg=#032f62 ctermfg=24
-highlight LspSemanticNumber guifg=#005cc5 ctermfg=26
-highlight LspSemanticRegexp guifg=#032f62 ctermfg=24
-highlight LspSemanticOperator guifg=#d73a49 ctermfg=167
-highlight LspSemanticNamespace guifg=#6f42c1 ctermfg=97
-highlight LspSemanticType guifg=#6f42c1 ctermfg=97
-highlight LspSemanticStruct guifg=#6f42c1 ctermfg=97
-highlight LspSemanticClass guifg=#6f42c1 ctermfg=97
-highlight LspSemanticInterface guifg=#6f42c1 ctermfg=97
-highlight LspSemanticEnum guifg=#6f42c1 ctermfg=97
-highlight LspSemanticEnumMember guifg=#005cc5 ctermfg=26
-highlight LspSemanticTypeParameter guifg=#6f42c1 ctermfg=97
-highlight LspSemanticFunction guifg=#6f42c1 ctermfg=97 gui=bold cterm=bold
-highlight LspSemanticMethod guifg=#6f42c1 ctermfg=97
-highlight LspSemanticMacro guifg=#005cc5 ctermfg=26
-highlight LspSemanticVariable guifg=#e36209 ctermfg=166
-highlight LspSemanticParameter guifg=#e36209 ctermfg=166
-highlight LspSemanticProperty guifg=#005cc5 ctermfg=26
-highlight LspSemanticEvent guifg=#e36209 ctermfg=166
-highlight LspSemanticModifier guifg=#d73a49 ctermfg=167
-highlight LspSemanticDecorator guifg=#6f42c1 ctermfg=97
+highlight LspSemanticComment guifg=#8b949e ctermfg=245
+highlight LspSemanticKeyword guifg=#ff7b72 ctermfg=167 gui=bold cterm=bold
+highlight LspSemanticString guifg=#a5d6ff ctermfg=117
+highlight LspSemanticNumber guifg=#79c0ff ctermfg=111
+highlight LspSemanticRegexp guifg=#a5d6ff ctermfg=117
+highlight LspSemanticOperator guifg=#ff7b72 ctermfg=167
+highlight LspSemanticNamespace guifg=#d2a8ff ctermfg=183
+highlight LspSemanticType guifg=#d2a8ff ctermfg=183
+highlight LspSemanticStruct guifg=#d2a8ff ctermfg=183
+highlight LspSemanticClass guifg=#d2a8ff ctermfg=183
+highlight LspSemanticInterface guifg=#d2a8ff ctermfg=183
+highlight LspSemanticEnum guifg=#d2a8ff ctermfg=183
+highlight LspSemanticEnumMember guifg=#79c0ff ctermfg=111
+highlight LspSemanticTypeParameter guifg=#d2a8ff ctermfg=183
+highlight LspSemanticFunction guifg=#d2a8ff ctermfg=183 gui=bold cterm=bold
+highlight LspSemanticMethod guifg=#d2a8ff ctermfg=183
+highlight LspSemanticMacro guifg=#79c0ff ctermfg=111
+highlight LspSemanticVariable guifg=#ffa657 ctermfg=215
+highlight LspSemanticParameter guifg=#ffa657 ctermfg=215
+highlight LspSemanticProperty guifg=#79c0ff ctermfg=111
+highlight LspSemanticEvent guifg=#ffa657 ctermfg=215
+highlight LspSemanticModifier guifg=#ff7b72 ctermfg=167
+highlight LspSemanticDecorator guifg=#d2a8ff ctermfg=183
+
+
+if has('nvim')
+  augroup my_disable_treesitter
+    autocmd!
+    autocmd FileType * lua vim.treesitter.stop(0)
+  augroup END
+endif
