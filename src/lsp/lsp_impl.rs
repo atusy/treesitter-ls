@@ -37,6 +37,11 @@ use super::auto_install::{InstallingLanguages, get_injected_languages};
 use super::progress::{create_progress_begin, create_progress_end};
 use super::semantic_request_tracker::SemanticRequestTracker;
 
+/// Timeout for semantic tokens refresh requests in milliseconds.
+/// This timeout prevents deadlock with clients (e.g., vim-lsp) that don't respond
+/// to workspace/semanticTokens/refresh, and prevents memory leaks from accumulated pending requests.
+const SEMANTIC_TOKENS_REFRESH_TIMEOUT_MS: u64 = 500;
+
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
         .iter()
@@ -669,7 +674,7 @@ impl TreeSitterLs {
                     let lang_id = language_id.clone();
                     tokio::spawn(async move {
                         match tokio::time::timeout(
-                            std::time::Duration::from_millis(500),
+                            std::time::Duration::from_millis(SEMANTIC_TOKENS_REFRESH_TIMEOUT_MS),
                             client.semantic_tokens_refresh(),
                         )
                         .await
