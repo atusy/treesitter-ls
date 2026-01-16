@@ -6,7 +6,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: tree-sitter-ls
+  BINARY_NAME: kakehashi
 
 jobs:
   build:

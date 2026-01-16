@@ -1,4 +1,4 @@
-// CLI integration tests for tree-sitter-ls
+// CLI integration tests for kakehashi
 // Tests the command-line interface functionality
 
 use std::process::Command;
@@ -6,7 +6,7 @@ use std::process::Command;
 /// Test that --help flag shows help message with program description
 #[test]
 fn test_help_flag_shows_help_message() {
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .arg("--help")
         .output()
         .expect("Failed to execute command");
@@ -18,7 +18,7 @@ fn test_help_flag_shows_help_message() {
 
     // Should contain program name
     assert!(
-        stdout.contains("tree-sitter-ls"),
+        stdout.contains("kakehashi"),
         "Help should contain program name. Got: {}",
         stdout
     );
@@ -41,7 +41,7 @@ fn test_help_flag_shows_help_message() {
 /// Test that language install --help shows usage with LANGUAGE argument
 #[test]
 fn test_install_help_shows_language_argument() {
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args(["language", "install", "--help"])
         .output()
         .expect("Failed to execute command");
@@ -65,7 +65,7 @@ fn test_install_help_shows_language_argument() {
 /// Test that language install command with unsupported language shows helpful error
 #[test]
 fn test_install_command_unsupported_language_shows_error() {
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args([
             "language",
             "install",
@@ -101,7 +101,7 @@ fn test_install_command_unsupported_language_shows_error() {
 fn test_no_args_does_not_show_help() {
     // When run with no args, it should NOT print help (it should try to start LSP)
     // We use timeout to prevent hanging on stdin read
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .stdin(std::process::Stdio::null())
         .output()
         .expect("Failed to execute command");
@@ -119,7 +119,7 @@ fn test_no_args_does_not_show_help() {
 /// Test that --version flag works
 #[test]
 fn test_version_flag() {
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .arg("--version")
         .output()
         .expect("Failed to execute command");
@@ -131,7 +131,7 @@ fn test_version_flag() {
 
     // Should contain version number pattern
     assert!(
-        stdout.contains("tree-sitter-ls") || stdout.contains("0."),
+        stdout.contains("kakehashi") || stdout.contains("0."),
         "Version should show program name or version. Got: {}",
         stdout
     );
@@ -140,7 +140,7 @@ fn test_version_flag() {
 /// Test that language --help shows available actions
 #[test]
 fn test_language_help_shows_actions() {
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args(["language", "--help"])
         .output()
         .expect("Failed to execute command");
@@ -169,7 +169,7 @@ fn test_language_help_shows_actions() {
 /// Test that language list command works
 #[test]
 fn test_language_list_command() {
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args(["language", "list"])
         .output()
         .expect("Failed to execute command");
@@ -196,7 +196,7 @@ fn test_language_list_command() {
 /// Test that config --help shows available actions
 #[test]
 fn test_config_help_shows_actions() {
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args(["config", "--help"])
         .output()
         .expect("Failed to execute command");
@@ -220,7 +220,7 @@ fn test_config_help_shows_actions() {
 /// Test that config init outputs to stdout by default
 #[test]
 fn test_config_init_outputs_to_stdout() {
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args(["config", "init"])
         .output()
         .expect("Failed to execute command");
@@ -244,7 +244,7 @@ fn test_config_init_outputs_to_stdout() {
 /// Test that config init includes captureMappings in output
 #[test]
 fn test_config_init_includes_capture_mappings() {
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args(["config", "init"])
         .output()
         .expect("Failed to execute command");
@@ -273,14 +273,14 @@ fn test_config_init_output_creates_file() {
     use std::path::Path;
 
     let test_dir = "/tmp/test-config-init-output";
-    let config_path = Path::new(test_dir).join("tree-sitter-ls.toml");
+    let config_path = Path::new(test_dir).join("kakehashi.toml");
 
     // Clean up before test
     let _ = fs::remove_dir_all(test_dir);
     fs::create_dir_all(test_dir).expect("Failed to create test directory");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
-        .args(["config", "init", "--output", "tree-sitter-ls.toml"])
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
+        .args(["config", "init", "--output", "kakehashi.toml"])
         .current_dir(test_dir)
         .output()
         .expect("Failed to execute command");
@@ -318,15 +318,15 @@ fn test_config_init_output_no_overwrite_without_force() {
     use std::path::Path;
 
     let test_dir = "/tmp/test-config-no-overwrite";
-    let config_path = Path::new(test_dir).join("tree-sitter-ls.toml");
+    let config_path = Path::new(test_dir).join("kakehashi.toml");
 
     // Clean up and setup
     let _ = fs::remove_dir_all(test_dir);
     fs::create_dir_all(test_dir).expect("Failed to create test directory");
     fs::write(&config_path, "existing").expect("Failed to write existing config");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
-        .args(["config", "init", "--output", "tree-sitter-ls.toml"])
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
+        .args(["config", "init", "--output", "kakehashi.toml"])
         .current_dir(test_dir)
         .output()
         .expect("Failed to execute command");
@@ -352,21 +352,15 @@ fn test_config_init_output_force_overwrites() {
     use std::path::Path;
 
     let test_dir = "/tmp/test-config-force";
-    let config_path = Path::new(test_dir).join("tree-sitter-ls.toml");
+    let config_path = Path::new(test_dir).join("kakehashi.toml");
 
     // Clean up and setup
     let _ = fs::remove_dir_all(test_dir);
     fs::create_dir_all(test_dir).expect("Failed to create test directory");
     fs::write(&config_path, "existing").expect("Failed to write existing config");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
-        .args([
-            "config",
-            "init",
-            "--output",
-            "tree-sitter-ls.toml",
-            "--force",
-        ])
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
+        .args(["config", "init", "--output", "kakehashi.toml", "--force"])
         .current_dir(test_dir)
         .output()
         .expect("Failed to execute command");
@@ -395,7 +389,7 @@ fn test_config_init_output_force_overwrites() {
 /// Test that config init --force without --output warns to stderr
 #[test]
 fn test_config_init_force_without_output_warns() {
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args(["config", "init", "--force"])
         .output()
         .expect("Failed to execute command");
@@ -426,7 +420,7 @@ fn test_config_init_force_without_output_warns() {
 /// Test that config init --output - outputs to stdout
 #[test]
 fn test_config_init_output_dash_outputs_to_stdout() {
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args(["config", "init", "--output", "-"])
         .output()
         .expect("Failed to execute command");
@@ -450,7 +444,7 @@ fn test_config_init_output_dash_outputs_to_stdout() {
 /// Test that language status --help shows expected options
 #[test]
 fn test_language_status_help() {
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args(["language", "status", "--help"])
         .output()
         .expect("Failed to execute command");
@@ -496,7 +490,7 @@ fn test_language_status_shows_installed() {
     )
     .expect("Failed to write query");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args(["language", "status", "--data-dir", test_dir])
         .output()
         .expect("Failed to execute command");
@@ -534,7 +528,7 @@ fn test_language_status_missing_queries() {
     fs::write(format!("{}/parser/incomplete.so", test_dir), "fake")
         .expect("Failed to write parser");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args(["language", "status", "--data-dir", test_dir])
         .output()
         .expect("Failed to execute command");
@@ -562,7 +556,7 @@ fn test_language_status_missing_queries() {
 /// Test that language uninstall --help shows expected options
 #[test]
 fn test_language_uninstall_help() {
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args(["language", "uninstall", "--help"])
         .output()
         .expect("Failed to execute command");
@@ -608,7 +602,7 @@ fn test_language_uninstall_removes_files() {
     )
     .expect("Failed to write query");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args([
             "language",
             "uninstall",
@@ -670,7 +664,7 @@ fn test_language_uninstall_all() {
     )
     .expect("Failed to write query");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args([
             "language",
             "uninstall",
@@ -721,7 +715,7 @@ fn test_language_uninstall_cancel() {
     fs::write(format!("{}/parser/testlang.dylib", test_dir), "fake")
         .expect("Failed to write parser");
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tree-sitter-ls"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
         .args(["language", "uninstall", "testlang", "--data-dir", test_dir])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -73,7 +73,7 @@ impl FailedParserRegistry {
                     let language = line.trim();
                     if !language.is_empty() {
                         log::error!(
-                            target: "tree_sitter_ls::crash_recovery",
+                            target: "kakehashi::crash_recovery",
                             "Detected crash during parsing of '{}'. Marking as failed.",
                             language
                         );

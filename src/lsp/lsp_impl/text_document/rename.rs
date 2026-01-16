@@ -1,4 +1,4 @@
-//! Rename method for TreeSitterLs.
+//! Rename method for Kakehashi.
 
 use tower_lsp::jsonrpc::{Id, Result};
 use tower_lsp::lsp_types::*;
@@ -7,9 +7,9 @@ use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
-use super::super::TreeSitterLs;
+use super::super::Kakehashi;
 
-impl TreeSitterLs {
+impl Kakehashi {
     pub(crate) async fn rename_impl(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
@@ -42,7 +42,7 @@ impl TreeSitterLs {
 
         // Get the language for this document
         let Some(language_name) = self.get_language_for_document(&uri) else {
-            log::debug!(target: "tree_sitter_ls::rename", "No language detected");
+            log::debug!(target: "kakehashi::rename", "No language detected");
             return Ok(None);
         };
 

@@ -31,7 +31,7 @@ pub struct BridgeLanguageConfig {
 /// Configuration for a bridge language server.
 ///
 /// This is used to configure external language servers (like rust-analyzer, pyright)
-/// that tree-sitter-ls can redirect requests to for injection regions.
+/// that kakehashi can redirect requests to for injection regions.
 #[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq, Eq)]
 pub struct BridgeServerConfig {
     /// Command array: first element is the program, rest are arguments

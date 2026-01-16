@@ -21,4 +21,4 @@ mod semantic_tokens;
 mod signature_help;
 mod type_definition;
 
-// Re-export the methods (they are implemented as impl blocks on TreeSitterLs)
+// Re-export the methods (they are implemented as impl blocks on Kakehashi)

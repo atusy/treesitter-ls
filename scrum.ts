@@ -13,7 +13,7 @@ const scrum: ScrumDashboard = {
     success_metrics: [
       { metric: "Bridge coverage", target: "Support completion, signatureHelp, definition, typeDefinition, implementation, declaration, hover, references, document highlight, inlay hints, document link, document symbols, moniker, color presentation, rename" },
       { metric: "Modular architecture", target: "Bridge module organized with text_document/ subdirectory matching lsp_impl structure" },
-      { metric: "E2E test coverage using tree-sitter-ls binary", target: "Each bridged feature has E2E test verifying end-to-end flow" },
+      { metric: "E2E test coverage using kakehashi binary", target: "Each bridged feature has E2E test verifying end-to-end flow" },
     ],
   },
   product_backlog: [],

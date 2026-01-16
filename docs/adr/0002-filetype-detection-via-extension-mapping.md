@@ -6,7 +6,7 @@ Superseded by [ADR-0005](0005-language-detection-fallback-chain.md)
 
 ## Context
 
-tree-sitter-ls needs to select the appropriate Tree-sitter parser for opened files. While the LSP protocol allows clients to send a `language_id` via `textDocument/didOpen`, client behavior varies and can be inconsistent.
+kakehashi needs to select the appropriate Tree-sitter parser for opened files. While the LSP protocol allows clients to send a `language_id` via `textDocument/didOpen`, client behavior varies and can be inconsistent.
 
 The following options were considered for language resolution:
 

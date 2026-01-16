@@ -425,7 +425,7 @@ mod tests {
     #[test]
     fn test_resolve_query_with_real_typescript() {
         // Integration test with actual installed queries
-        let search_path = "/Users/atusy/Library/Application Support/tree-sitter-ls".to_string();
+        let search_path = "/Users/atusy/Library/Application Support/kakehashi".to_string();
 
         // Skip if queries aren't installed
         let ts_path = std::path::Path::new(&search_path)
@@ -488,7 +488,7 @@ mod tests {
     #[test]
     fn test_resolve_query_with_real_javascript_multiple_inheritance() {
         // Integration test: JavaScript inherits from BOTH ecma AND jsx
-        let search_path = "/Users/atusy/Library/Application Support/tree-sitter-ls".to_string();
+        let search_path = "/Users/atusy/Library/Application Support/kakehashi".to_string();
 
         // Skip if queries aren't installed
         let js_path = std::path::Path::new(&search_path)

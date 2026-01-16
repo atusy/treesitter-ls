@@ -127,7 +127,7 @@ fn apply_content_changes_with_edits(
     (text, edits)
 }
 
-pub struct TreeSitterLs {
+pub struct Kakehashi {
     client: Client,
     language: LanguageCoordinator,
     parser_pool: Mutex<DocumentParserPool>,
@@ -153,9 +153,9 @@ pub struct TreeSitterLs {
     region_id_tracker: RegionIdTracker,
 }
 
-impl std::fmt::Debug for TreeSitterLs {
+impl std::fmt::Debug for Kakehashi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TreeSitterLs")
+        f.debug_struct("Kakehashi")
             .field("client", &self.client)
             .field("language", &"LanguageCoordinator")
             .field("parser_pool", &"Mutex<DocumentParserPool>")
@@ -173,7 +173,7 @@ impl std::fmt::Debug for TreeSitterLs {
     }
 }
 
-impl TreeSitterLs {
+impl Kakehashi {
     pub fn new(client: Client) -> Self {
         let language = LanguageCoordinator::new();
         let parser_pool = language.create_document_parser_pool();
@@ -207,15 +207,15 @@ impl TreeSitterLs {
     /// Uses the default data directory for state storage.
     /// If initialization fails, returns an empty registry.
     fn init_failed_parser_registry() -> FailedParserRegistry {
-        let state_dir = crate::install::default_data_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp/tree-sitter-ls"));
+        let state_dir =
+            crate::install::default_data_dir().unwrap_or_else(|| PathBuf::from("/tmp/kakehashi"));
 
         let registry = FailedParserRegistry::new(&state_dir);
 
         // Initialize and detect any previous crashes
         if let Err(e) = registry.init() {
             log::warn!(
-                target: "tree_sitter_ls::crash_recovery",
+                target: "kakehashi::crash_recovery",
                 "Failed to initialize crash recovery state: {}",
                 e
             );
@@ -281,7 +281,7 @@ impl TreeSitterLs {
                 MessageType::WARNING,
                 format!(
                     "Parser for '{}' not found. Auto-install is disabled because {}. \
-                     Please install the parser manually using: tree-sitter-ls language install {}",
+                     Please install the parser manually using: kakehashi language install {}",
                     language, reason, language
                 ),
             )
@@ -314,7 +314,7 @@ impl TreeSitterLs {
                     // This region is affected - invalidate its cache
                     self.injection_token_cache.remove(uri, &region.result_id);
                     log::debug!(
-                        target: "tree_sitter_ls::injection_cache",
+                        target: "kakehashi::injection_cache",
                         "Invalidated injection cache for {} region (edit bytes {}..{})",
                         region.language,
                         edit_start,
@@ -477,7 +477,7 @@ impl TreeSitterLs {
             // Check if this parser has previously crashed
             if self.failed_parsers.is_failed(&language_name) {
                 log::warn!(
-                    target: "tree_sitter_ls::crash_recovery",
+                    target: "kakehashi::crash_recovery",
                     "Skipping parsing for '{}' - parser previously crashed",
                     language_name
                 );
@@ -605,7 +605,7 @@ impl TreeSitterLs {
             && !host_settings.is_language_bridgeable(injection_language)
         {
             log::debug!(
-                target: "tree_sitter_ls::bridge",
+                target: "kakehashi::bridge",
                 "Bridge filter for {} blocks injection language {}",
                 host_language,
                 injection_language
@@ -1089,7 +1089,7 @@ impl TreeSitterLs {
 }
 
 #[tower_lsp::async_trait]
-impl LanguageServer for TreeSitterLs {
+impl LanguageServer for Kakehashi {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         // Debug: Log initialization
         self.client
@@ -1155,7 +1155,7 @@ impl LanguageServer for TreeSitterLs {
             .await;
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
-                name: "tree-sitter-ls".to_string(),
+                name: "kakehashi".to_string(),
                 version: Some(env!("CARGO_PKG_VERSION").to_string()),
             }),
             capabilities: ServerCapabilities {
@@ -1228,7 +1228,7 @@ impl LanguageServer for TreeSitterLs {
         // This enables crash recovery to detect if parsing was in progress
         if let Err(e) = self.failed_parsers.persist_state() {
             log::warn!(
-                target: "tree_sitter_ls::crash_recovery",
+                target: "kakehashi::crash_recovery",
                 "Failed to persist crash detection state on shutdown: {}",
                 e
             );
@@ -1343,7 +1343,7 @@ impl LanguageServer for TreeSitterLs {
         let closed_docs = self.language_server_pool.close_host_document(&uri).await;
         if !closed_docs.is_empty() {
             log::debug!(
-                target: "tree_sitter_ls::bridge",
+                target: "kakehashi::bridge",
                 "Closed {} virtual documents for host {}",
                 closed_docs.len(),
                 uri
@@ -1768,7 +1768,7 @@ mod tests {
     /// we should use wildcard resolution so that undefined languages inherit
     /// from languages._ settings.
     ///
-    /// Since get_bridge_config_for_language needs TreeSitterLs which is hard to instantiate
+    /// Since get_bridge_config_for_language needs Kakehashi which is hard to instantiate
     /// in unit tests, we verify the behavior at the LanguageSettings level.
     #[test]
     fn test_language_settings_wildcard_lookup_blocks_bridging_for_undefined_host() {

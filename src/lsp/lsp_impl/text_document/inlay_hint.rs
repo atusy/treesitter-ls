@@ -1,4 +1,4 @@
-//! Inlay hint method for TreeSitterLs.
+//! Inlay hint method for Kakehashi.
 
 use tower_lsp::jsonrpc::{Id, Result};
 use tower_lsp::lsp_types::*;
@@ -7,9 +7,9 @@ use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
-use super::super::TreeSitterLs;
+use super::super::Kakehashi;
 
-impl TreeSitterLs {
+impl Kakehashi {
     pub(crate) async fn inlay_hint_impl(
         &self,
         params: InlayHintParams,
@@ -44,7 +44,7 @@ impl TreeSitterLs {
 
         // Get the language for this document
         let Some(language_name) = self.get_language_for_document(&uri) else {
-            log::debug!(target: "tree_sitter_ls::inlay_hint", "No language detected");
+            log::debug!(target: "kakehashi::inlay_hint", "No language detected");
             return Ok(None);
         };
 

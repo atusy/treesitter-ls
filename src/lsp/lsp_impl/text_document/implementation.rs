@@ -1,4 +1,4 @@
-//! Goto implementation method for TreeSitterLs.
+//! Goto implementation method for Kakehashi.
 
 use tower_lsp::jsonrpc::{Id, Result};
 use tower_lsp::lsp_types::request::{GotoImplementationParams, GotoImplementationResponse};
@@ -8,9 +8,9 @@ use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
-use super::super::TreeSitterLs;
+use super::super::Kakehashi;
 
-impl TreeSitterLs {
+impl Kakehashi {
     pub(crate) async fn goto_implementation_impl(
         &self,
         params: GotoImplementationParams,
@@ -45,7 +45,7 @@ impl TreeSitterLs {
 
         // Get the language for this document
         let Some(language_name) = self.get_language_for_document(&uri) else {
-            log::debug!(target: "tree_sitter_ls::implementation", "No language detected");
+            log::debug!(target: "kakehashi::implementation", "No language detected");
             return Ok(None);
         };
 

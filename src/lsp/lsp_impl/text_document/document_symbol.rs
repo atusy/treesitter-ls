@@ -1,4 +1,4 @@
-//! Document symbol method for TreeSitterLs.
+//! Document symbol method for Kakehashi.
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -6,9 +6,9 @@ use tower_lsp::lsp_types::*;
 use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;
 
-use super::super::TreeSitterLs;
+use super::super::Kakehashi;
 
-impl TreeSitterLs {
+impl Kakehashi {
     pub(crate) async fn document_symbol_impl(
         &self,
         params: DocumentSymbolParams,
@@ -39,7 +39,7 @@ impl TreeSitterLs {
 
         // Get the language for this document
         let Some(language_name) = self.get_language_for_document(&uri) else {
-            log::debug!(target: "tree_sitter_ls::document_symbol", "No language detected");
+            log::debug!(target: "kakehashi::document_symbol", "No language detected");
             return Ok(None);
         };
 

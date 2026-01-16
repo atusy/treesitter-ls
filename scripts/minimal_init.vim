@@ -5,14 +5,14 @@ filetype plugin indent on
 syntax off
 
 
-" Setup tree-sitter-ls
+" Setup kakehashi
 let s:cwd = getcwd()
 set rtp+=deps/vim/prabirshrestha/vim-lsp
 augroup lsp_setup
   autocmd!
   autocmd User lsp_setup call lsp#register_server({
-        \ 'name': 'tree-sitter-ls',
-        \ 'cmd': {server_info->[s:cwd . '/target/debug/tree-sitter-ls']},
+        \ 'name': 'kakehashi',
+        \ 'cmd': {server_info->[s:cwd . '/target/debug/kakehashi']},
         \ 'allowlist': ['*'],
         \ })
 augroup END

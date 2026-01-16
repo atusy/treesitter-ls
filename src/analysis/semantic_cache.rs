@@ -224,14 +224,14 @@ impl InjectionTokenCache {
 
         if result.is_some() {
             log::debug!(
-                target: "tree_sitter_ls::injection_cache",
+                target: "kakehashi::injection_cache",
                 "Cache HIT for injection region '{}' in {}",
                 region_id,
                 uri.path()
             );
         } else {
             log::trace!(
-                target: "tree_sitter_ls::injection_cache",
+                target: "kakehashi::injection_cache",
                 "Cache MISS for injection region '{}' in {}",
                 region_id,
                 uri.path()

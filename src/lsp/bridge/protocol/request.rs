@@ -640,7 +640,7 @@ mod tests {
     fn assert_uses_virtual_uri(request: &serde_json::Value, extension: &str) {
         let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
         assert!(
-            uri_str.starts_with("file:///.tree-sitter-ls/")
+            uri_str.starts_with("file:///.kakehashi/")
                 && uri_str.ends_with(&format!(".{}", extension)),
             "Request should use virtual URI with .{} extension: {}",
             extension,

@@ -1,10 +1,10 @@
 use clap::{Parser, Subcommand};
+use kakehashi::install::{default_data_dir, metadata, parser, queries};
 use std::path::PathBuf;
-use tree_sitter_ls::install::{default_data_dir, metadata, parser, queries};
 
 /// A Language Server Protocol (LSP) server using Tree-sitter for parsing
 #[derive(Parser)]
-#[command(name = "tree-sitter-ls")]
+#[command(name = "kakehashi")]
 #[command(version)]
 #[command(about = "A Language Server Protocol (LSP) server using Tree-sitter for parsing")]
 struct Cli {
@@ -33,7 +33,7 @@ enum LanguageAction {
         /// The language to install (e.g., lua, rust, python)
         language: String,
 
-        /// Custom data directory (default: ~/.local/share/tree-sitter-ls on Linux)
+        /// Custom data directory (default: ~/.local/share/kakehashi on Linux)
         #[arg(long)]
         data_dir: Option<PathBuf>,
 
@@ -57,7 +57,7 @@ enum LanguageAction {
     },
     /// Show installed languages and their status
     Status {
-        /// Custom data directory (default: ~/.local/share/tree-sitter-ls on Linux)
+        /// Custom data directory (default: ~/.local/share/kakehashi on Linux)
         #[arg(long)]
         data_dir: Option<PathBuf>,
 
@@ -71,7 +71,7 @@ enum LanguageAction {
         #[arg(required_unless_present = "all")]
         language: Option<String>,
 
-        /// Custom data directory (default: ~/.local/share/tree-sitter-ls on Linux)
+        /// Custom data directory (default: ~/.local/share/kakehashi on Linux)
         #[arg(long)]
         data_dir: Option<PathBuf>,
 
@@ -174,7 +174,7 @@ fn run_list_languages(no_cache: bool) {
 
 /// Documentation link for configuration
 const DOC_LINK: &str =
-    "# Documentation: https://github.com/atusy/tree-sitter-ls/blob/main/docs/README.md\n";
+    "# Documentation: https://github.com/atusy/kakehashi/blob/main/docs/README.md\n";
 
 /// Run the language status command
 fn run_language_status(data_dir: Option<PathBuf>, verbose: bool) {
@@ -220,7 +220,7 @@ fn run_language_status(data_dir: Option<PathBuf>, verbose: bool) {
 
     if languages.is_empty() {
         eprintln!("No languages installed in {}", data_dir.display());
-        eprintln!("Use 'tree-sitter-ls language install <language>' to install one.");
+        eprintln!("Use 'kakehashi language install <language>' to install one.");
         return;
     }
 
@@ -400,7 +400,7 @@ fn find_parser_file(parser_dir: &std::path::Path, lang: &str) -> Option<PathBuf>
 
 /// Run the config init command
 fn run_config_init(output: Option<PathBuf>, force: bool) {
-    use tree_sitter_ls::config::defaults::default_settings;
+    use kakehashi::config::defaults::default_settings;
 
     // Check for --force without --output (warn but continue)
     if force && output.is_none() {
@@ -520,12 +520,12 @@ fn run_install(
 #[tokio::main]
 async fn run_lsp_server() {
     use env_logger::Builder;
+    use kakehashi::lsp::{Kakehashi, RequestIdCapture};
     use tokio::io::{stdin, stdout};
     use tower_lsp::{LspService, Server};
-    use tree_sitter_ls::lsp::{RequestIdCapture, TreeSitterLs};
 
     // Initialize logging to stderr (CRITICAL: stdout is used for LSP JSON-RPC)
-    // Configure via RUST_LOG, e.g.: RUST_LOG=tree_sitter_ls=debug
+    // Configure via RUST_LOG, e.g.: RUST_LOG=kakehashi=debug
     Builder::from_default_env()
         .target(env_logger::Target::Stderr)
         .init();
@@ -533,7 +533,7 @@ async fn run_lsp_server() {
     let stdin = stdin();
     let stdout = stdout();
 
-    let (service, socket) = LspService::new(TreeSitterLs::new);
+    let (service, socket) = LspService::new(Kakehashi::new);
 
     // Wrap service with RequestIdCapture to capture upstream request IDs
     // This enables downstream bridge requests to use the same ID per ADR-0016
