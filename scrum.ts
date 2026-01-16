@@ -169,9 +169,9 @@ const scrum: ScrumDashboard = {
         test: "Unit test: Failed state transitions directly to Closed, bypassing Closing",
         implementation: "Update set_state() to allow Failed -> Closed transition (direct, no LSP handshake)",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: [],
+        status: "completed",
+        commits: [{ hash: "7ee0cab9", message: "test(pool): add tests for Failed -> Closed transition", phase: "green" }],
+        notes: ["Implementation was already done in try_transition from subtask 2", "Also added test for invalid Failed -> Closing transition"],
       },
       {
         test: "Unit test: new requests in Closing state receive REQUEST_FAILED error",
