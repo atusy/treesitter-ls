@@ -361,7 +361,7 @@ tree-sitter-ls supports any language with a Tree-sitter grammar available in nvi
 - SQL, GraphQL
 - And many more...
 
-Run `tree-sitter-ls list-languages` for the complete list.
+Run `tree-sitter-ls language list` for the complete list.
 
 ## Query Inheritance
 
