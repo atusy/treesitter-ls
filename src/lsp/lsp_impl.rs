@@ -514,20 +514,41 @@ impl Kakehashi {
                     let text_clone = text.clone();
                     let failed_parsers = self.failed_parsers.clone();
 
-                    // Parse in spawn_blocking to avoid blocking tokio worker thread
-                    let result = tokio::task::spawn_blocking(move || {
-                        // Record that we're about to parse (for crash detection)
-                        let _ = failed_parsers.begin_parsing(&language_name_clone);
+                    // Parse in spawn_blocking with timeout to avoid blocking tokio worker thread
+                    // and prevent infinite hangs on pathological input
+                    const PARSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-                        let parse_result = parser.parse(&text_clone, old_tree.as_ref());
+                    let result = tokio::time::timeout(
+                        PARSE_TIMEOUT,
+                        tokio::task::spawn_blocking(move || {
+                            // Record that we're about to parse (for crash detection)
+                            let _ = failed_parsers.begin_parsing(&language_name_clone);
 
-                        // Parsing succeeded without crash - clear the state for this language
-                        let _ = failed_parsers.end_parsing_language(&language_name_clone);
+                            let parse_result = parser.parse(&text_clone, old_tree.as_ref());
 
-                        (parser, parse_result)
-                    })
-                    .await
-                    .ok();
+                            // Parsing succeeded without crash - clear the state for this language
+                            let _ = failed_parsers.end_parsing_language(&language_name_clone);
+
+                            (parser, parse_result)
+                        }),
+                    )
+                    .await;
+
+                    // Handle timeout vs successful completion
+                    let result = match result {
+                        Ok(join_result) => join_result.ok(),
+                        Err(_timeout) => {
+                            log::warn!(
+                                "Parse timeout after {:?} for language '{}' on document {}",
+                                PARSE_TIMEOUT,
+                                language_name,
+                                uri
+                            );
+                            // Parser is lost in the still-running blocking task - cannot recover it
+                            // The parser pool will create a new parser on next acquire
+                            None
+                        }
+                    };
 
                     if let Some((parser, parse_result)) = result {
                         // Return parser to pool (brief lock)
