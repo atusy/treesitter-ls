@@ -246,9 +246,14 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 12, improvements: [
+      { action: "Document pattern for phased feature implementation (Foundation -> Core -> Robustness) in project guidelines", timing: "product", status: "active", outcome: null },
+      { action: "When adding enum variants, explicitly document whether call sites need updates or existing behavior is correct", timing: "sprint", status: "active", outcome: null },
+      { action: "Document pattern for platform-conditional feature implementation (Unix-only signals, etc.)", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 11, improvements: [
       { action: "Document pattern for handling LSP types with nested optional Location fields in array properties", timing: "product", status: "active", outcome: null },
-      { action: "When changing function signatures, verify all call sites in same commit to maintain atomicity", timing: "sprint", status: "active", outcome: null },
+      { action: "When changing function signatures, verify all call sites in same commit to maintain atomicity", timing: "sprint", status: "completed", outcome: "Applied in Sprint 12: subtask notes referenced this action, call sites for ConnectionState enum variants were verified for correct operation gating behavior" },
     ] },
   ],
 };
