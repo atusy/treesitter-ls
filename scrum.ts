@@ -3,20 +3,127 @@
 // ============================================================
 
 const userStoryRoles = [
-  "Lua developer editing markdown",
-  "lua/python developer editing markdown",
+  "developer using tree-sitter-ls with multiple embedded languages",
+  "editor plugin author integrating tree-sitter-ls",
 ] as const satisfies readonly string[]; // Must have at least one role. Avoid generic roles like "user" or "admin". Remove obsolete roles freely.
 
 const scrum: ScrumDashboard = {
   product_goal: {
-    statement: "Improve LSP feature coverage via bridge",
+    statement: "Reliable connection lifecycle for embedded language servers",
     success_metrics: [
-      { metric: "Bridge coverage", target: "Support completion, signatureHelp, definition, typeDefinition, implementation, declaration, hover, references, document highlight, inlay hints, document link, document symbols, moniker, color presentation, rename" },
-      { metric: "Modular architecture", target: "Bridge module organized with text_document/ subdirectory matching lsp_impl structure" },
-      { metric: "E2E test coverage using kakehashi binary", target: "Each bridged feature has E2E test verifying end-to-end flow" },
+      { metric: "Connection state machine completeness", target: "ConnectionState includes Initializing, Ready, Failed, Closing, Closed with all Phase 1 transitions implemented" },
+      { metric: "LSP shutdown handshake compliance", target: "Graceful shutdown sends shutdown request, waits for response, sends exit notification per LSP spec" },
+      { metric: "Timeout hierarchy implementation", target: "Init timeout (30-60s), Liveness timeout (30-120s), Global shutdown timeout (5-15s) with correct precedence" },
+      { metric: "Cancellation forwarding", target: "$/cancelRequest notifications forwarded to downstream servers while keeping pending request entries" },
     ],
   },
-  product_backlog: [],
+  product_backlog: [
+    {
+      id: "pbi-lsp-shutdown",
+      story: {
+        role: "developer using tree-sitter-ls with multiple embedded languages",
+        capability: "have proper connection lifecycle with graceful LSP shutdown",
+        benefit: "connections shut down gracefully with proper LSP handshake, flushing buffers and releasing locks cleanly",
+      },
+      acceptance_criteria: [
+        // Connection state machine (foundation)
+        { criterion: "ConnectionState enum includes Closing and Closed variants", verification: "Unit test verifies enum has all 5 states: Initializing, Ready, Failed, Closing, Closed" },
+        { criterion: "Ready to Closing transition on shutdown signal", verification: "Unit test: Ready state + shutdown signal = Closing state" },
+        { criterion: "Initializing to Closing transition on shutdown signal", verification: "Unit test: Initializing state + shutdown signal = Closing state" },
+        { criterion: "Closing to Closed transition on completion/timeout", verification: "Unit test: Closing state completes gracefully or times out to Closed" },
+        { criterion: "Failed to Closed transition (direct, no LSP handshake)", verification: "Unit test: Failed state transitions directly to Closed, bypassing Closing" },
+        { criterion: "Operation gating during Closing state rejects new operations", verification: "Unit test: new requests in Closing state receive REQUEST_FAILED error" },
+        // LSP shutdown handshake (makes states reachable)
+        { criterion: "Send LSP shutdown request and wait for response", verification: "Integration test: shutdown request sent, response received before exit" },
+        { criterion: "Send LSP exit notification after shutdown response", verification: "Integration test: exit notification sent after shutdown response" },
+        { criterion: "Three-phase writer loop synchronization", verification: "Unit test: signal stop, wait idle (2s timeout), exclusive access sequence" },
+        { criterion: "SIGTERM then SIGKILL escalation for unresponsive servers", verification: "Integration test: unresponsive process receives SIGTERM, then SIGKILL" },
+        // End-to-end integration
+        { criterion: "Complete shutdown sequence with pending requests", verification: "Integration test: in-flight requests receive REQUEST_FAILED error, then LSP shutdown/exit handshake completes, then process terminates" },
+      ],
+      status: "ready",
+      refinement_notes: [
+        "MERGED: pbi-connection-states + pbi-lsp-shutdown for viable increment",
+        "",
+        "FILES TO MODIFY:",
+        "- src/lsp/bridge/pool.rs: Add Closing and Closed variants to ConnectionState enum (line 38-45)",
+        "- src/lsp/bridge/pool.rs: Update set_state() to enforce valid state transitions per ADR-0015/ADR-0017",
+        "- src/lsp/bridge/pool.rs: Add operation gating for Closing/Closed states in request handling",
+        "- src/lsp/bridge/pool.rs: Implement shutdown() method with LSP handshake sequence",
+        "- src/lsp/bridge/text_document/did_change.rs: Update state check to handle Closing/Closed (line 49)",
+        "- src/lsp/bridge/text_document/did_close.rs: Update state check to handle Closing/Closed (line 38)",
+        "",
+        "IMPLEMENTATION PHASES:",
+        "Phase 1 - State Machine:",
+        "- ConnectionState enum: add Closing, Closed variants",
+        "- State transitions per ADR-0015 diagram",
+        "- Operation gating: Closing rejects requests with REQUEST_FAILED",
+        "",
+        "Phase 2 - LSP Handshake:",
+        "- shutdown() method sends LSP shutdown request, awaits response",
+        "- Send exit notification after shutdown response",
+        "- Three-phase writer loop: signal stop, wait idle (2s), exclusive access",
+        "",
+        "Phase 3 - Forced Shutdown:",
+        "- Failed state bypasses LSP handshake, goes directly to Closed",
+        "- SIGTERM -> SIGKILL escalation for unresponsive processes",
+        "",
+        "DEPENDENCIES:",
+        "- ADR-0015: Connection State Machine specification",
+        "- ADR-0017: Graceful Shutdown Sequence specification",
+        "",
+        "RISKS:",
+        "- State transition validation needs careful testing",
+        "- Writer loop synchronization timing is critical",
+        "- Need to ensure all ConnectionState call sites handle new variants",
+      ],
+    },
+    {
+      id: "pbi-global-shutdown-timeout",
+      story: {
+        role: "editor plugin author integrating tree-sitter-ls",
+        capability: "have bounded shutdown time for all connections",
+        benefit: "editor shutdown is predictable and never hangs indefinitely",
+      },
+      acceptance_criteria: [
+        { criterion: "Global shutdown timeout (5-15s configurable) for entire shutdown", verification: "Unit test: shutdown completes within configured timeout" },
+        { criterion: "Parallel shutdown of all connections", verification: "Integration test: multiple servers shut down concurrently under single timeout" },
+        { criterion: "SIGTERM to SIGKILL escalation on timeout", verification: "Integration test: hung servers receive SIGTERM then SIGKILL when timeout expires" },
+        { criterion: "Writer-idle timeout (2s fixed) within global budget", verification: "Unit test: writer loop given 2s to become idle, counts against global timeout" },
+      ],
+      status: "draft",
+    },
+    {
+      id: "pbi-liveness-timeout",
+      story: {
+        role: "developer using tree-sitter-ls with multiple embedded languages",
+        capability: "have hung downstream servers detected and recovered",
+        benefit: "unresponsive servers do not block LSP features indefinitely",
+      },
+      acceptance_criteria: [
+        { criterion: "Liveness timeout (30-120s configurable) when Ready with pending > 0", verification: "Unit test: timeout starts when pending transitions 0 to 1 in Ready state" },
+        { criterion: "Timer resets on stdout activity from server", verification: "Unit test: any stdout data resets the liveness timer" },
+        { criterion: "Timer stops when pending count returns to 0", verification: "Unit test: all responses received stops the timer without transition" },
+        { criterion: "Ready to Failed transition on liveness timeout", verification: "Unit test: timeout expiry in Ready state triggers Failed transition" },
+        { criterion: "Liveness timeout disabled during Closing state", verification: "Unit test: entering Closing state stops liveness timer" },
+      ],
+      status: "draft",
+    },
+    {
+      id: "pbi-cancellation-forwarding",
+      story: {
+        role: "developer using tree-sitter-ls with multiple embedded languages",
+        capability: "have cancellation requests forwarded to downstream servers",
+        benefit: "cancelled operations release server resources and respect client intent",
+      },
+      acceptance_criteria: [
+        { criterion: "Forward $/cancelRequest notification to downstream server", verification: "Integration test: cancel notification reaches downstream server" },
+        { criterion: "Keep pending request entry after forwarding cancel", verification: "Unit test: pending map still contains request after cancel forwarded" },
+        { criterion: "Forward server response (result or REQUEST_CANCELLED)", verification: "Integration test: server's cancel response (either type) reaches client" },
+      ],
+      status: "draft",
+    },
+  ],
   sprint: null,
   completed: [
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
