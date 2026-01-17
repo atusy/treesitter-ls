@@ -2401,9 +2401,6 @@ fn main() {}
         let injection_languages =
             collect_injection_languages(&tree, text, "markdown", &coordinator, &mut parser_pool);
 
-        // With recursive collection, rust should now be found!
-        eprintln!("Injection languages found: {:?}", injection_languages);
-
         let mut local_parsers: HashMap<String, Parser> = HashMap::new();
         for lang_id in &injection_languages {
             if let Some(parser) = parser_pool.acquire(lang_id) {
