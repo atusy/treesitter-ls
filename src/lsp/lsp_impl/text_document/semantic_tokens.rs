@@ -266,8 +266,13 @@ impl Kakehashi {
                 let mut pool = self.parser_pool.lock().await;
 
                 // Discover all injection languages recursively (requires pool for nested parsing)
-                let injection_languages =
-                    collect_injection_languages(&tree, &text, &language_name, &self.language, &mut pool);
+                let injection_languages = collect_injection_languages(
+                    &tree,
+                    &text,
+                    &language_name,
+                    &self.language,
+                    &mut pool,
+                );
 
                 // Pre-acquire parsers for all discovered languages
                 let mut parsers = std::collections::HashMap::new();

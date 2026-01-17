@@ -523,7 +523,8 @@ fn collect_injection_tokens_recursive(
         return; // No injection support available
     };
 
-    let contexts = collect_injection_contexts(text, tree, filetype, coordinator, content_start_byte);
+    let contexts =
+        collect_injection_contexts(text, tree, filetype, coordinator, content_start_byte);
 
     for ctx in contexts {
         // Acquire parser from pool
@@ -701,7 +702,8 @@ fn collect_injection_tokens_recursive_with_local_parsers(
         return;
     };
 
-    let contexts = collect_injection_contexts(text, tree, filetype, coordinator, content_start_byte);
+    let contexts =
+        collect_injection_contexts(text, tree, filetype, coordinator, content_start_byte);
 
     for ctx in contexts {
         // Use parser from local map (if available)
@@ -2229,13 +2231,8 @@ let z = 42"#;
         };
 
         // Collect injection languages from the markdown document
-        let languages = collect_injection_languages(
-            &tree,
-            text,
-            "markdown",
-            &coordinator,
-            &mut parser_pool,
-        );
+        let languages =
+            collect_injection_languages(&tree, text, "markdown", &coordinator, &mut parser_pool);
 
         // Should find "lua" as an injection language
         assert!(
@@ -2301,7 +2298,8 @@ let z = 42"#;
         );
 
         // Step 2: Pre-acquire parsers into local HashMap
-        let injection_languages = collect_injection_languages(&tree, text, "markdown", &coordinator, &mut parser_pool);
+        let injection_languages =
+            collect_injection_languages(&tree, text, "markdown", &coordinator, &mut parser_pool);
         let mut local_parsers: HashMap<String, Parser> = HashMap::new();
         for lang_id in &injection_languages {
             if let Some(parser) = parser_pool.acquire(lang_id) {
@@ -2400,7 +2398,8 @@ fn main() {}
             .expect("Should have markdown highlight query");
 
         // Pre-acquire parsers using collect_injection_languages (now recursive!)
-        let injection_languages = collect_injection_languages(&tree, text, "markdown", &coordinator, &mut parser_pool);
+        let injection_languages =
+            collect_injection_languages(&tree, text, "markdown", &coordinator, &mut parser_pool);
 
         // With recursive collection, rust should now be found!
         eprintln!("Injection languages found: {:?}", injection_languages);
