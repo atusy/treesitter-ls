@@ -209,9 +209,9 @@ const scrum: ScrumDashboard = {
         test: "Integration test: unresponsive process receives SIGTERM, then SIGKILL",
         implementation: "Add SIGTERM/SIGKILL escalation for unresponsive servers",
         type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Fallback when LSP handshake times out"],
+        status: "completed",
+        commits: [{ hash: "", message: "feat(bridge): add SIGTERM/SIGKILL signal escalation for unresponsive servers", phase: "green" }],
+        notes: ["Fallback when LSP handshake times out", "Unix-only via nix crate", "Wired into graceful_shutdown() flow"],
       },
       {
         test: "Integration test: in-flight requests receive REQUEST_FAILED, then shutdown completes",
