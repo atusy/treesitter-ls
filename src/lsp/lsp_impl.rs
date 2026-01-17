@@ -550,10 +550,11 @@ impl Kakehashi {
                         },
                         Err(_timeout) => {
                             log::warn!(
-                                "Parse timeout after {:?} for language '{}' on document {}",
+                                "Parse timeout after {:?} for language '{}' on document {} ({} bytes)",
                                 PARSE_TIMEOUT,
                                 language_name,
-                                uri
+                                uri,
+                                text.len()
                             );
                             // Parser is lost in the still-running blocking task - cannot recover it
                             // The parser pool will create a new parser on next acquire
