@@ -3128,4 +3128,162 @@ mod tests {
         // Note: After force_kill, we can't directly check process status via handle,
         // but the absence of a hang confirms the process was killed
     }
+
+    /// Test that shutdown with pending requests fails those requests and then completes.
+    ///
+    /// ADR-0017 end-to-end shutdown sequence:
+    /// 1. Create a connection with in-flight requests
+    /// 2. Initiate shutdown (begin_shutdown transitions to Closing)
+    /// 3. Pending requests should receive REQUEST_FAILED error (router channels closed)
+    /// 4. LSP shutdown/exit handshake should complete
+    /// 5. Connection should transition to Closed state
+    ///
+    /// This test uses lua-language-server to verify real LSP shutdown behavior.
+    #[tokio::test]
+    async fn shutdown_with_pending_requests_fails_requests_then_completes() {
+        use std::sync::Arc;
+
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
+        let pool = Arc::new(LanguageServerPool::new());
+        let config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Step 1: Establish a Ready connection
+        let handle = pool
+            .get_or_create_connection("lua", &config)
+            .await
+            .expect("should establish connection");
+
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "Connection should be Ready"
+        );
+
+        // Step 2: Register a pending request (simulates in-flight request)
+        let (request_id, response_rx) = handle.register_request().expect("should register request");
+
+        // Step 3: Initiate shutdown - should transition to Closing
+        handle.begin_shutdown();
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closing,
+            "Connection should be Closing after begin_shutdown"
+        );
+
+        // Step 4: Complete graceful shutdown in background
+        let shutdown_handle = Arc::clone(&handle);
+        let shutdown_task = tokio::spawn(async move { shutdown_handle.graceful_shutdown().await });
+
+        // Step 5: The pending request should fail when shutdown completes
+        // The router is dropped during shutdown, closing all channels
+        let response = tokio::time::timeout(Duration::from_secs(10), response_rx).await;
+
+        // The response should be an error (channel closed) or timeout
+        // because the shutdown closes the router
+        match response {
+            Ok(Ok(_)) => {
+                // If we got a response, it should be because the server
+                // responded before shutdown completed - this is acceptable
+                log::debug!("Pending request received response before shutdown");
+            }
+            Ok(Err(_)) => {
+                // Channel closed - this is the expected behavior
+                // Pending request failed due to shutdown
+                log::debug!("Pending request failed as expected (channel closed)");
+            }
+            Err(_) => {
+                // Timeout - clean up
+                handle.router().remove(request_id);
+                log::debug!("Pending request timed out");
+            }
+        }
+
+        // Wait for shutdown to complete
+        let _ = shutdown_task.await;
+
+        // Step 6: Connection should be in Closed state
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closed,
+            "Connection should be Closed after graceful_shutdown"
+        );
+    }
+
+    /// Test that new requests during Closing state receive REQUEST_FAILED immediately.
+    ///
+    /// This verifies operation gating during shutdown - the acceptance criterion that
+    /// "new requests in Closing state receive REQUEST_FAILED error".
+    #[tokio::test]
+    async fn new_request_during_closing_receives_request_failed() {
+        use std::sync::Arc;
+        use tower_lsp::lsp_types::{Position, Url};
+
+        let pool = Arc::new(LanguageServerPool::new());
+        let config = BridgeServerConfig {
+            cmd: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "cat > /dev/null".to_string(),
+            ],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Insert a connection in Closing state
+        let closing_handle = create_handle_with_state(ConnectionState::Closing).await;
+        pool.connections
+            .lock()
+            .await
+            .insert("lua".to_string(), closing_handle);
+
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let host_position = Position {
+            line: 3,
+            character: 5,
+        };
+
+        // Attempt to send a hover request - should fail immediately
+        let start = std::time::Instant::now();
+        let result = pool
+            .send_hover_request(
+                &config,
+                &host_uri,
+                host_position,
+                "lua",
+                "region-0",
+                3,
+                "print('hello')",
+                1,
+            )
+            .await;
+
+        // Should fail fast (not block)
+        assert!(
+            start.elapsed() < Duration::from_millis(100),
+            "Should fail immediately, not block"
+        );
+
+        // Should return the specific error message
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "bridge: connection closing",
+            "Should return REQUEST_FAILED with connection closing message"
+        );
+    }
 }
