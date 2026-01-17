@@ -1266,6 +1266,12 @@ impl LanguageServer for Kakehashi {
                 e
             );
         }
+
+        // Initiate graceful shutdown of all downstream language server connections
+        // Phase 1: Transitions connections to Closing/Closed states
+        // Phase 2 will add actual LSP shutdown/exit handshake
+        self.language_server_pool.shutdown_all().await;
+
         Ok(())
     }
 
