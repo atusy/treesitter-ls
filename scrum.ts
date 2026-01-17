@@ -218,7 +218,7 @@ const scrum: ScrumDashboard = {
         implementation: "Fail pending requests on shutdown, then complete LSP handshake",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "", message: "test(bridge): add E2E shutdown sequence integration tests", phase: "green" }],
+        commits: [{ hash: "7802fede", message: "test(bridge): add E2E shutdown sequence integration tests", phase: "green" }],
         notes: ["End-to-end shutdown sequence with pending requests", "Verifies operation gating during Closing state"],
       },
     ],
