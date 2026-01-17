@@ -1,7 +1,8 @@
 //! Semantic token methods for Kakehashi.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use tokio::time::Duration;
+use std::time::Duration;
+
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tree_sitter::Tree;
@@ -14,6 +15,9 @@ use crate::analysis::{
 };
 
 use super::super::Kakehashi;
+
+/// Timeout for spawn_blocking parse operations to prevent hangs on pathological inputs.
+const PARSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Reason why a semantic token request was cancelled.
 #[derive(Debug, Clone, Copy)]
@@ -85,16 +89,46 @@ impl Kakehashi {
         let parse_result = if let Some(mut parser) = parser {
             let text_clone = text.clone();
             let language_name_clone = language_name.to_string();
+            let uri_clone = uri.clone();
 
-            let result = tokio::task::spawn_blocking(move || {
-                let parse_result =
-                    catch_unwind(AssertUnwindSafe(|| parser.parse(&text_clone, None)))
-                        .ok()
-                        .flatten();
-                (parser, parse_result)
-            })
-            .await
-            .ok();
+            // Parse in spawn_blocking with timeout and panic protection
+            let result = tokio::time::timeout(
+                PARSE_TIMEOUT,
+                tokio::task::spawn_blocking(move || {
+                    let parse_result =
+                        catch_unwind(AssertUnwindSafe(|| parser.parse(&text_clone, None)))
+                            .ok()
+                            .flatten();
+                    (parser, parse_result)
+                }),
+            )
+            .await;
+
+            // Handle timeout vs successful completion
+            let result = match result {
+                Ok(join_result) => match join_result {
+                    Ok(result) => Some(result),
+                    Err(e) => {
+                        log::error!(
+                            "Parse task panicked for language '{}' on document {}: {}",
+                            language_name_clone,
+                            uri_clone,
+                            e
+                        );
+                        None
+                    }
+                },
+                Err(_timeout) => {
+                    log::warn!(
+                        "Parse timeout after {:?} for language '{}' on document {} ({} bytes)",
+                        PARSE_TIMEOUT,
+                        language_name_clone,
+                        uri_clone,
+                        text.len()
+                    );
+                    None
+                }
+            };
 
             if let Some((parser, parse_result)) = result {
                 let mut pool = self.parser_pool.lock().await;
