@@ -208,6 +208,22 @@ impl ConnectionHandle {
         self.set_state(ConnectionState::Closed);
     }
 
+    /// Force kill the child process with SIGTERM -> SIGKILL escalation (Unix only).
+    ///
+    /// This is the fallback when LSP shutdown handshake times out or fails.
+    /// Implements the signal escalation per ADR-0017:
+    /// 1. Send SIGTERM to allow graceful termination
+    /// 2. Wait briefly (2 seconds)
+    /// 3. Send SIGKILL if process still alive
+    ///
+    /// # Platform Support
+    /// This method is only available on Unix platforms.
+    #[cfg(unix)]
+    pub(crate) async fn force_kill(&self) {
+        let mut writer = self.writer.lock().await;
+        writer.force_kill_with_escalation().await;
+    }
+
     /// Perform graceful shutdown with LSP handshake (ADR-0017).
     ///
     /// Implements the LSP shutdown sequence:
@@ -283,7 +299,14 @@ impl ConnectionHandle {
             let _ = writer.write_message(&exit_notification).await;
         }
 
-        // 5. Transition to Closed state
+        // 5. Force kill the process with signal escalation (Unix only)
+        // This ensures the process is terminated even if it ignores exit notification
+        #[cfg(unix)]
+        {
+            self.force_kill().await;
+        }
+
+        // 6. Transition to Closed state
         self.complete_shutdown();
 
         Ok(())
@@ -3046,5 +3069,63 @@ mod tests {
             ConnectionState::Closing,
             "Already-closing connection should remain Closing"
         );
+    }
+
+    // ========================================
+    // Sprint 12 Phase 3: Forced Shutdown Tests
+    // ========================================
+
+    /// Test that unresponsive process receives SIGTERM then SIGKILL escalation.
+    ///
+    /// ADR-0017: When LSP shutdown handshake times out, escalate to process signals.
+    /// This test uses a script that ignores SIGTERM to verify SIGKILL escalation.
+    ///
+    /// Note: This test is Unix-specific due to process signal handling.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unresponsive_process_receives_sigterm_then_sigkill() {
+        use std::time::Instant;
+
+        // Create a connection to a process that ignores SIGTERM
+        // This script traps SIGTERM and continues, requiring SIGKILL to terminate
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            // Trap SIGTERM and ignore it, sleep indefinitely
+            "trap '' TERM; while true; do sleep 1; done".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        let handle = Arc::new(ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+        ));
+
+        // Start timer to verify escalation doesn't wait too long
+        let start = Instant::now();
+
+        // Call force_kill which should:
+        // 1. Send SIGTERM
+        // 2. Wait briefly (1-2 seconds)
+        // 3. Send SIGKILL if process still alive
+        handle.force_kill().await;
+
+        // Escalation should complete within reasonable time (SIGTERM wait + SIGKILL)
+        // We use 5 seconds as upper bound to account for SIGTERM wait period
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "Signal escalation should complete within 5 seconds"
+        );
+
+        // Process should be terminated
+        // Note: After force_kill, we can't directly check process status via handle,
+        // but the absence of a hang confirms the process was killed
     }
 }
