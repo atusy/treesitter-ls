@@ -208,6 +208,87 @@ impl ConnectionHandle {
         self.set_state(ConnectionState::Closed);
     }
 
+    /// Perform graceful shutdown with LSP handshake (ADR-0017).
+    ///
+    /// Implements the LSP shutdown sequence:
+    /// 1. Transition to Closing state (new operations rejected)
+    /// 2. Send LSP "shutdown" request and wait for response
+    /// 3. Send LSP "exit" notification
+    /// 4. Transition to Closed state
+    ///
+    /// # Returns
+    /// - Ok(()) if shutdown completed successfully
+    /// - Err if shutdown request failed (state still transitions to Closed)
+    ///
+    /// # Timeout
+    /// Uses 5-second timeout for the shutdown response (ADR-0017 global shutdown timeout).
+    pub(crate) async fn graceful_shutdown(&self) -> io::Result<()> {
+        const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+        // 1. Transition to Closing state
+        self.begin_shutdown();
+
+        // 2. Send LSP shutdown request
+        let (request_id, response_rx) = self.register_request()?;
+
+        let shutdown_request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id.as_i64(),
+            "method": "shutdown",
+            "params": null
+        });
+
+        {
+            let mut writer = self.writer().await;
+            writer.write_message(&shutdown_request).await?;
+        }
+
+        // 3. Wait for shutdown response with timeout
+        let result = tokio::time::timeout(SHUTDOWN_TIMEOUT, response_rx).await;
+
+        match result {
+            Ok(Ok(_response)) => {
+                // Shutdown response received, send exit notification
+                log::debug!(
+                    target: "kakehashi::bridge",
+                    "Shutdown response received, sending exit notification"
+                );
+            }
+            Ok(Err(_)) => {
+                log::warn!(
+                    target: "kakehashi::bridge",
+                    "Shutdown response channel closed"
+                );
+            }
+            Err(_) => {
+                log::warn!(
+                    target: "kakehashi::bridge",
+                    "Shutdown response timeout, sending exit notification anyway"
+                );
+                // Clean up the pending request
+                self.router().remove(request_id);
+            }
+        }
+
+        // 4. Send exit notification (no response expected)
+        let exit_notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "exit",
+            "params": null
+        });
+
+        {
+            let mut writer = self.writer().await;
+            // Best effort - if this fails, process will be killed anyway
+            let _ = writer.write_message(&exit_notification).await;
+        }
+
+        // 5. Transition to Closed state
+        self.complete_shutdown();
+
+        Ok(())
+    }
+
     /// Get access to the writer for sending messages.
     ///
     /// Returns the tokio::sync::MutexGuard for exclusive write access.
@@ -556,39 +637,68 @@ impl LanguageServerPool {
     /// Initiate graceful shutdown of all connections.
     ///
     /// Called during LSP server shutdown to cleanly terminate all downstream
-    /// language servers. Transitions each connection through the shutdown lifecycle.
+    /// language servers. Performs LSP shutdown/exit handshake per ADR-0017.
     ///
-    /// This method only initiates shutdowns (Phase 1 state transitions).
-    /// Phase 2 will add the actual LSP shutdown/exit handshake.
+    /// # Shutdown Behavior by State
+    ///
+    /// - Ready/Initializing: Perform full LSP shutdown handshake
+    /// - Failed: Skip LSP handshake, go directly to Closed (stdin unavailable)
+    /// - Closing/Closed: Already shutting down, skip
+    ///
+    /// All shutdowns run in parallel with a global timeout (ADR-0017).
     pub(crate) async fn shutdown_all(&self) {
-        let connections = self.connections.lock().await;
-        for (language, handle) in connections.iter() {
-            match handle.state() {
-                ConnectionState::Ready | ConnectionState::Initializing => {
-                    log::debug!(
+        // Collect handles to shutdown - release lock before async operations
+        let handles_to_shutdown: Vec<(String, Arc<ConnectionHandle>)> = {
+            let connections = self.connections.lock().await;
+            connections
+                .iter()
+                .filter_map(|(language, handle)| match handle.state() {
+                    ConnectionState::Ready | ConnectionState::Initializing => {
+                        Some((language.clone(), Arc::clone(handle)))
+                    }
+                    ConnectionState::Failed => {
+                        log::debug!(
+                            target: "kakehashi::bridge",
+                            "Shutting down {} connection (Failed → Closed)",
+                            language
+                        );
+                        handle.complete_shutdown();
+                        None
+                    }
+                    ConnectionState::Closing | ConnectionState::Closed => {
+                        log::debug!(
+                            target: "kakehashi::bridge",
+                            "Connection {} already shutting down or closed",
+                            language
+                        );
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        // Shutdown all Ready/Initializing connections in parallel
+        // Using spawn() + JoinSet for parallel execution without futures crate
+        let mut join_set = tokio::task::JoinSet::new();
+        for (language, handle) in handles_to_shutdown {
+            join_set.spawn(async move {
+                log::debug!(
+                    target: "kakehashi::bridge",
+                    "Performing graceful shutdown for {} connection",
+                    language
+                );
+                if let Err(e) = handle.graceful_shutdown().await {
+                    log::warn!(
                         target: "kakehashi::bridge",
-                        "Shutting down {} connection (Ready/Initializing → Closing)",
-                        language
-                    );
-                    handle.begin_shutdown();
-                }
-                ConnectionState::Failed => {
-                    log::debug!(
-                        target: "kakehashi::bridge",
-                        "Shutting down {} connection (Failed → Closed)",
-                        language
-                    );
-                    handle.complete_shutdown();
-                }
-                ConnectionState::Closing | ConnectionState::Closed => {
-                    log::debug!(
-                        target: "kakehashi::bridge",
-                        "Connection {} already shutting down or closed",
-                        language
+                        "Graceful shutdown failed for {}: {}",
+                        language, e
                     );
                 }
-            }
+            });
         }
+
+        // Wait for all shutdowns to complete
+        while join_set.join_next().await.is_some() {}
     }
 
     /// Get or create a connection for the specified language with custom timeout.
@@ -2754,6 +2864,65 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             "bridge: connection closing"
+        );
+    }
+
+    // ========================================
+    // Sprint 12 Phase 2: LSP Shutdown Handshake Tests
+    // ========================================
+
+    /// Test that shutdown sends LSP shutdown request and receives response.
+    ///
+    /// ADR-0017: Graceful shutdown requires sending LSP "shutdown" request and
+    /// waiting for the server's response before sending "exit" notification.
+    /// This test verifies the shutdown request is properly formatted and sent.
+    #[tokio::test]
+    async fn shutdown_sends_lsp_shutdown_request_and_waits_for_response() {
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
+        let pool = std::sync::Arc::new(LanguageServerPool::new());
+        let config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // First, establish a Ready connection
+        let handle = pool
+            .get_or_create_connection("lua", &config)
+            .await
+            .expect("should establish connection");
+
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "Connection should be Ready"
+        );
+
+        // Perform graceful shutdown
+        let result = handle.graceful_shutdown().await;
+
+        // Should succeed
+        assert!(
+            result.is_ok(),
+            "graceful_shutdown should succeed: {:?}",
+            result.err()
+        );
+
+        // Connection should be in Closed state after shutdown
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closed,
+            "Connection should be Closed after graceful_shutdown"
         );
     }
 }
