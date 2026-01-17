@@ -41,7 +41,7 @@ const scrum: ScrumDashboard = {
         // End-to-end integration
         { criterion: "Complete shutdown sequence with pending requests", verification: "Integration test: in-flight requests receive REQUEST_FAILED error, then LSP shutdown/exit handshake completes, then process terminates" },
       ],
-      status: "ready",
+      status: "done",
       refinement_notes: [
         "MERGED: pbi-connection-states + pbi-lsp-shutdown for viable increment",
         "",
@@ -124,12 +124,14 @@ const scrum: ScrumDashboard = {
       status: "draft",
     },
   ],
-  sprint: {
-    number: 12,
-    pbi_id: "pbi-lsp-shutdown",
-    goal: "Implement connection lifecycle with graceful LSP shutdown handshake",
-    status: "in_progress",
-    subtasks: [
+  sprint: null,
+  completed: [
+    {
+      number: 12,
+      pbi_id: "pbi-lsp-shutdown",
+      goal: "Implement connection lifecycle with graceful LSP shutdown handshake",
+      status: "done",
+      subtasks: [
       // Phase 1: State Machine (foundation) - COMPLETED
       {
         test: "Unit test: ConnectionState enum has 5 states (Initializing, Ready, Failed, Closing, Closed)",
@@ -222,8 +224,7 @@ const scrum: ScrumDashboard = {
         notes: ["End-to-end shutdown sequence with pending requests", "Verifies operation gating during Closing state"],
       },
     ],
-  },
-  completed: [
+    },
     { number: 1, pbi_id: "pbi-document-highlight", goal: "Bridge textDocument/documentHighlight to downstream LS", status: "done", subtasks: [] },
     { number: 2, pbi_id: "pbi-rename", goal: "Bridge textDocument/rename with WorkspaceEdit transformation", status: "done", subtasks: [] },
     { number: 3, pbi_id: "pbi-document-link", goal: "Bridge textDocument/documentLink with range transformation to host coordinates", status: "done", subtasks: [] },
