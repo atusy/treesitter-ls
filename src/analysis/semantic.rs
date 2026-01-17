@@ -2307,7 +2307,7 @@ let z = 42"#;
             }
         }
 
-        // Step 3: Call new function with local parsers (pool lock NOT needed during this call)
+        // Step 2: Call new function with local parsers (pool lock NOT needed during this call)
         let new_result = handle_semantic_tokens_full_with_local_parsers(
             text,
             &tree,
@@ -2318,7 +2318,7 @@ let z = 42"#;
             &mut local_parsers,
         );
 
-        // Step 4: Return parsers to pool
+        // Step 3: Return parsers to pool
         for (lang_id, parser) in local_parsers {
             parser_pool.release(lang_id, parser);
         }
