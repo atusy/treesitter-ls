@@ -536,7 +536,18 @@ impl Kakehashi {
 
                     // Handle timeout vs successful completion
                     let result = match result {
-                        Ok(join_result) => join_result.ok(),
+                        Ok(join_result) => match join_result {
+                            Ok(result) => Some(result),
+                            Err(e) => {
+                                log::error!(
+                                    "Parse task panicked for language '{}' on document {}: {}",
+                                    language_name,
+                                    uri,
+                                    e
+                                );
+                                None
+                            }
+                        },
                         Err(_timeout) => {
                             log::warn!(
                                 "Parse timeout after {:?} for language '{}' on document {}",
