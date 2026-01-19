@@ -78,7 +78,7 @@ const scrum: ScrumDashboard = {
         implementation: "Add Closing and Closed variants to ConnectionState enum in pool.rs",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "816fd5d3", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
+        commits: [{ hash: "b3a8ec61", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
         notes: ["Verify all call sites handle new variants (Sprint 11 retrospective)"],
       },
       {
@@ -86,7 +86,7 @@ const scrum: ScrumDashboard = {
         implementation: "Add Ready to Closing transition in set_state() with shutdown trigger",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "816fd5d3", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
+        commits: [{ hash: "b3a8ec61", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
         notes: ["ADR-0015 state machine diagram", "Implemented via begin_shutdown() method"],
       },
       {
@@ -94,7 +94,7 @@ const scrum: ScrumDashboard = {
         implementation: "Add Initializing to Closing transition for shutdown during init",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "816fd5d3", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
+        commits: [{ hash: "b3a8ec61", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
         notes: ["ADR-0017: abort initialization, proceed to shutdown", "Uses same begin_shutdown() method as Ready transition"],
       },
       {
@@ -102,7 +102,7 @@ const scrum: ScrumDashboard = {
         implementation: "Add Closing to Closed transition on completion/timeout",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "816fd5d3", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
+        commits: [{ hash: "b3a8ec61", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
         notes: ["Terminal state for graceful shutdown path", "Implemented via complete_shutdown() method"],
       },
       {
@@ -110,7 +110,7 @@ const scrum: ScrumDashboard = {
         implementation: "Add Failed to Closed direct transition, skip LSP handshake",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "816fd5d3", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
+        commits: [{ hash: "b3a8ec61", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
         notes: ["ADR-0017: stdin unavailable in Failed state", "Uses same complete_shutdown() method, bypasses Closing"],
       },
       {
@@ -118,7 +118,7 @@ const scrum: ScrumDashboard = {
         implementation: "Add operation gating for Closing state in request handling",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "816fd5d3", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
+        commits: [{ hash: "b3a8ec61", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
         notes: ["Error message: 'bridge: connection closing'", "Wired via shutdown_all() in LSP shutdown handler"],
       },
       // Phase 2: LSP Handshake (makes states reachable) - COMPLETED
@@ -127,7 +127,7 @@ const scrum: ScrumDashboard = {
         implementation: "Implement shutdown() method that sends LSP shutdown request and awaits response",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "65235928", message: "feat(bridge): implement graceful shutdown with LSP handshake", phase: "green" }],
+        commits: [{ hash: "f22f2d5e", message: "feat(bridge): implement graceful shutdown with LSP handshake", phase: "green" }],
         notes: ["LSP spec: shutdown request before exit notification", "Implemented graceful_shutdown() with 5s timeout"],
       },
       {
@@ -135,7 +135,7 @@ const scrum: ScrumDashboard = {
         implementation: "Send exit notification after receiving shutdown response",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "65235928", message: "feat(bridge): implement graceful shutdown with LSP handshake", phase: "green" }],
+        commits: [{ hash: "f22f2d5e", message: "feat(bridge): implement graceful shutdown with LSP handshake", phase: "green" }],
         notes: ["LSP two-phase shutdown sequence", "Exit notification sent in graceful_shutdown() after shutdown response"],
       },
       {
@@ -143,7 +143,7 @@ const scrum: ScrumDashboard = {
         implementation: "Implement three-phase writer loop synchronization for shutdown",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "fb3c99b3", message: "test(bridge): add writer synchronization tests for graceful shutdown", phase: "green" }],
+        commits: [{ hash: "9f0901fc", message: "test(bridge): add writer synchronization tests for graceful shutdown", phase: "green" }],
         notes: ["ADR-0017: prevents stdin corruption during concurrent writes", "Current Mutex-based architecture provides equivalent synchronization"],
       },
       // Phase 3: Forced Shutdown (robustness)
@@ -152,7 +152,7 @@ const scrum: ScrumDashboard = {
         implementation: "Add SIGTERM/SIGKILL escalation for unresponsive servers",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "1705df83", message: "feat(bridge): add SIGTERM/SIGKILL signal escalation for unresponsive servers", phase: "green" }],
+        commits: [{ hash: "4492ef88", message: "feat(bridge): add SIGTERM/SIGKILL signal escalation for unresponsive servers", phase: "green" }],
         notes: ["Fallback when LSP handshake times out", "Unix-only via nix crate", "Wired into graceful_shutdown() flow"],
       },
       {
@@ -160,7 +160,7 @@ const scrum: ScrumDashboard = {
         implementation: "Fail pending requests on shutdown, then complete LSP handshake",
         type: "behavioral",
         status: "completed",
-        commits: [{ hash: "7802fede", message: "test(bridge): add E2E shutdown sequence integration tests", phase: "green" }],
+        commits: [{ hash: "9ebc6b4b", message: "test(bridge): add E2E shutdown sequence integration tests", phase: "green" }],
         notes: ["End-to-end shutdown sequence with pending requests", "Verifies operation gating during Closing state"],
       },
     ],
