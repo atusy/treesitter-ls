@@ -662,6 +662,12 @@ impl LanguageServerPool {
     /// Called during LSP server shutdown to cleanly terminate all downstream
     /// language servers. Performs LSP shutdown/exit handshake per ADR-0017.
     ///
+    /// # Usage
+    ///
+    /// This method should be called exactly once during the LSP `shutdown` handler.
+    /// Multiple concurrent calls are safe (due to state machine monotonicity) but
+    /// wasteful, as connections already in Closing/Closed state are skipped.
+    ///
     /// # Shutdown Behavior by State
     ///
     /// - Ready/Initializing: Perform full LSP shutdown handshake
