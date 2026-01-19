@@ -152,8 +152,14 @@ impl SplitConnectionWriter {
     /// 3. If still alive, send SIGKILL for forced termination
     ///
     /// # Platform Support
-    /// This method is only available on Unix platforms. On other platforms,
-    /// use the `start_kill()` method via `Drop` which sends SIGKILL directly.
+    ///
+    /// This method is only available on Unix platforms.
+    ///
+    /// On Windows, graceful shutdown relies on the LSP shutdown/exit handshake
+    /// (ADR-0017). If the language server becomes unresponsive, the fallback is
+    /// `start_kill()` via `Drop`, which sends the equivalent of SIGKILL directly
+    /// without a SIGTERM grace period. This means Windows servers don't get the
+    /// 2-second grace period to clean up after an unresponsive shutdown.
     #[cfg(unix)]
     pub(crate) async fn force_kill_with_escalation(&mut self) {
         use nix::sys::signal::{Signal, kill};
