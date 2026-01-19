@@ -230,86 +230,101 @@ impl ConnectionHandle {
     /// 1. Transition to Closing state (new operations rejected)
     /// 2. Send LSP "shutdown" request and wait for response
     /// 3. Send LSP "exit" notification
-    /// 4. Transition to Closed state
+    /// 4. Force kill process (Unix: SIGTERM→SIGKILL escalation)
+    /// 5. Transition to Closed state
+    ///
+    /// # Cleanup Guarantee
+    ///
+    /// Steps 4-5 (force kill and state transition) are **always executed**,
+    /// even if the LSP handshake fails. This prevents connections from getting
+    /// stuck in the Closing state.
     ///
     /// # Returns
     /// - Ok(()) if shutdown completed successfully
     /// - Err if shutdown request failed (state still transitions to Closed)
     ///
     /// # Timeout
-    /// Uses 5-second timeout for the shutdown response (ADR-0017 global shutdown timeout).
+    /// Uses 5-second timeout for the shutdown response.
     pub(crate) async fn graceful_shutdown(&self) -> io::Result<()> {
         const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
         // 1. Transition to Closing state
         self.begin_shutdown();
 
-        // 2. Send LSP shutdown request
-        let (request_id, response_rx) = self.register_request()?;
+        // 2-3. Perform LSP handshake, capturing any error
+        // Wrapped in async block to ensure cleanup (steps 4-5) always runs
+        let handshake_result: io::Result<()> = async {
+            // 2. Send LSP shutdown request
+            let (request_id, response_rx) = self.register_request()?;
 
-        let shutdown_request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": request_id.as_i64(),
-            "method": "shutdown",
-            "params": null
-        });
+            let shutdown_request = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request_id.as_i64(),
+                "method": "shutdown",
+                "params": null
+            });
 
-        {
-            let mut writer = self.writer().await;
-            writer.write_message(&shutdown_request).await?;
-        }
-
-        // 3. Wait for shutdown response with timeout
-        let result = tokio::time::timeout(SHUTDOWN_TIMEOUT, response_rx).await;
-
-        match result {
-            Ok(Ok(_response)) => {
-                // Shutdown response received, send exit notification
-                log::debug!(
-                    target: "kakehashi::bridge",
-                    "Shutdown response received, sending exit notification"
-                );
+            {
+                let mut writer = self.writer().await;
+                writer.write_message(&shutdown_request).await?;
             }
-            Ok(Err(_)) => {
-                log::warn!(
-                    target: "kakehashi::bridge",
-                    "Shutdown response channel closed"
-                );
+
+            // Wait for shutdown response with timeout
+            let result = tokio::time::timeout(SHUTDOWN_TIMEOUT, response_rx).await;
+
+            match result {
+                Ok(Ok(_response)) => {
+                    log::debug!(
+                        target: "kakehashi::bridge",
+                        "Shutdown response received, sending exit notification"
+                    );
+                }
+                Ok(Err(_)) => {
+                    log::warn!(
+                        target: "kakehashi::bridge",
+                        "Shutdown response channel closed"
+                    );
+                }
+                Err(_) => {
+                    log::warn!(
+                        target: "kakehashi::bridge",
+                        "Shutdown response timeout, sending exit notification anyway"
+                    );
+                    // Clean up the pending request
+                    self.router().remove(request_id);
+                }
             }
-            Err(_) => {
-                log::warn!(
-                    target: "kakehashi::bridge",
-                    "Shutdown response timeout, sending exit notification anyway"
-                );
-                // Clean up the pending request
-                self.router().remove(request_id);
+
+            // 3. Send exit notification (no response expected)
+            let exit_notification = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "exit",
+                "params": null
+            });
+
+            {
+                let mut writer = self.writer().await;
+                // Best effort - if this fails, process will be killed anyway
+                let _ = writer.write_message(&exit_notification).await;
             }
+
+            Ok(())
         }
+        .await;
 
-        // 4. Send exit notification (no response expected)
-        let exit_notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "exit",
-            "params": null
-        });
-
-        {
-            let mut writer = self.writer().await;
-            // Best effort - if this fails, process will be killed anyway
-            let _ = writer.write_message(&exit_notification).await;
-        }
-
-        // 5. Force kill the process with signal escalation (Unix only)
+        // 4. Force kill the process with signal escalation (Unix only)
         // This ensures the process is terminated even if it ignores exit notification
+        // ALWAYS executed, even if handshake failed
         #[cfg(unix)]
         {
             self.force_kill().await;
         }
 
-        // 6. Transition to Closed state
+        // 5. Transition to Closed state
+        // ALWAYS executed, even if handshake failed
         self.complete_shutdown();
 
-        Ok(())
+        handshake_result
     }
 
     /// Get access to the writer for sending messages.
