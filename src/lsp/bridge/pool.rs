@@ -3134,7 +3134,7 @@ mod tests {
 
         // Call force_kill which should:
         // 1. Send SIGTERM
-        // 2. Wait briefly (1-2 seconds)
+        // 2. Wait 2 seconds for graceful termination
         // 3. Send SIGKILL if process still alive
         handle.force_kill().await;
 
