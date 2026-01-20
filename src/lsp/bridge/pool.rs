@@ -64,7 +64,7 @@ impl GlobalShutdownTimeout {
     ///
     /// # Returns
     /// - `Ok(GlobalShutdownTimeout)` if duration is within valid range
-    /// - `Err(String)` with description if duration is out of range
+    /// - `Err(io::Error)` with InvalidInput kind if duration is out of range
     ///
     /// # Boundary Behavior
     ///
@@ -82,27 +82,33 @@ impl GlobalShutdownTimeout {
     /// Currently only used in tests. Production code uses `default()`.
     /// This method will be used when configurable timeout is exposed via config.
     #[cfg(test)]
-    pub(crate) fn new(duration: Duration) -> Result<Self, String> {
+    pub(crate) fn new(duration: Duration) -> io::Result<Self> {
         let secs = duration.as_secs();
         let has_subsec = duration.subsec_nanos() > 0;
 
         // Check minimum: must be at least 5 whole seconds
         // 4.999s has secs=4, so it's rejected. 5.001s has secs=5, so it's accepted.
         if secs < Self::MIN_SECS {
-            return Err(format!(
-                "Global shutdown timeout must be at least {}s, got {:?}",
-                Self::MIN_SECS,
-                duration
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Global shutdown timeout must be at least {}s, got {:?}",
+                    Self::MIN_SECS,
+                    duration
+                ),
             ));
         }
 
         // Check maximum: must be at most exactly 15 seconds
         // 15.0s is accepted. 15.001s is rejected (has_subsec is true when secs=15).
         if secs > Self::MAX_SECS || (secs == Self::MAX_SECS && has_subsec) {
-            return Err(format!(
-                "Global shutdown timeout must be at most {}s, got {:?}",
-                Self::MAX_SECS,
-                duration
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Global shutdown timeout must be at most {}s, got {:?}",
+                    Self::MAX_SECS,
+                    duration
+                ),
             ));
         }
 
