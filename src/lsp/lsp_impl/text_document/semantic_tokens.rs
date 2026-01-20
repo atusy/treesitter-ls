@@ -11,6 +11,11 @@ use tower_lsp_server::ls_types::{
 use tree_sitter::Tree;
 use url::Url;
 
+#[cfg(test)]
+use tower_lsp_server::ls_types::{
+    PartialResultParams, TextDocumentIdentifier, WorkDoneProgressParams,
+};
+
 use crate::analysis::{
     IncrementalDecision, collect_injection_languages, compute_incremental_tokens,
     decide_tokenization_strategy, decode_semantic_tokens, encode_semantic_tokens,

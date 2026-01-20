@@ -30,6 +30,10 @@ use tower_lsp_server::ls_types::{
     ColorInformation, ColorPresentation, ColorPresentationParams, ColorProviderCapability,
     DocumentColorParams,
 };
+#[cfg(test)]
+use tower_lsp_server::ls_types::{
+    Position, Range, SemanticTokensWorkspaceClientCapabilities, WorkspaceClientCapabilities,
+};
 use tower_lsp_server::{Client, LanguageServer};
 use tree_sitter::InputEdit;
 use url::Url;
