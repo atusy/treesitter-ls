@@ -3613,7 +3613,9 @@ mod tests {
         pool.shutdown_all_with_timeout(timeout).await;
         let elapsed = start.elapsed();
 
-        // Should complete within timeout + small buffer for overhead
+        // Should complete within timeout + 2s buffer for overhead.
+        // Buffer accounts for: SIGTERM->SIGKILL escalation (2s) + test/CI variability.
+        // Total: 5s timeout + 2s buffer = 7s max expected.
         assert!(
             elapsed < Duration::from_secs(7),
             "Shutdown should complete within global timeout. Elapsed: {:?}",
@@ -3657,8 +3659,10 @@ mod tests {
         pool.shutdown_all_with_timeout(timeout).await;
         let elapsed = start.elapsed();
 
-        // Key assertion: total time should be O(1), not O(N)
-        // 3 servers would take 15s sequential, but should complete in ~5-7s parallel
+        // Key assertion: total time should be O(1), not O(N).
+        // 3 servers would take 15s sequential, but should complete in ~5-7s parallel.
+        // Buffer (3s) accounts for: SIGTERM->SIGKILL escalation (2s) + process spawn overhead
+        // + CI variability. Total: 5s timeout + 3s buffer = 8s max expected.
         assert!(
             elapsed < Duration::from_secs(8),
             "3 servers should shut down in O(1) time, not O(N). Elapsed: {:?}",
