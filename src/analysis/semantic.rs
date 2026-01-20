@@ -155,6 +155,12 @@ fn collect_host_tokens(
     content_start_byte: usize,
     all_tokens: &mut Vec<RawToken>,
 ) {
+    // Validate content_start_byte is within bounds to prevent slice panics
+    // This can happen during concurrent edits when document text shortens
+    if content_start_byte > host_text.len() {
+        return;
+    }
+
     // Calculate position mapping from content-local to host document
     let content_start_line = if content_start_byte == 0 {
         0
@@ -284,8 +290,12 @@ fn collect_injection_contexts<'a>(
             (content_node.start_byte(), content_node.end_byte())
         };
 
-        // Validate range
-        if inj_start_byte >= text.len() || inj_end_byte > text.len() {
+        // Validate range: ensure bounds are valid AND start <= end
+        // The start > end case can occur during concurrent edits or with certain offset calculations
+        if inj_start_byte >= text.len()
+            || inj_end_byte > text.len()
+            || inj_start_byte > inj_end_byte
+        {
             continue;
         }
 
@@ -447,8 +457,11 @@ fn collect_injection_languages_recursive(
             (content_node.start_byte(), content_node.end_byte())
         };
 
-        // Validate range
-        if inj_start_byte >= text.len() || inj_end_byte > text.len() {
+        // Validate range: ensure bounds are valid AND start <= end
+        if inj_start_byte >= text.len()
+            || inj_end_byte > text.len()
+            || inj_start_byte > inj_end_byte
+        {
             continue;
         }
         let inj_content_text = &text[inj_start_byte..inj_end_byte];
