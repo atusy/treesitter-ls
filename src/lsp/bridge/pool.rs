@@ -46,12 +46,16 @@ const INIT_TIMEOUT_SECS: u64 = 30;
 pub(crate) struct GlobalShutdownTimeout(Duration);
 
 impl GlobalShutdownTimeout {
-    /// Minimum valid timeout: 5 seconds
-    const MIN_SECS: u64 = 5;
-    /// Maximum valid timeout: 15 seconds
-    const MAX_SECS: u64 = 15;
     /// Default timeout: 10 seconds
     const DEFAULT_SECS: u64 = 10;
+
+    /// Minimum valid timeout: 5 seconds (used in validation)
+    #[cfg(test)]
+    const MIN_SECS: u64 = 5;
+
+    /// Maximum valid timeout: 15 seconds (used in validation)
+    #[cfg(test)]
+    const MAX_SECS: u64 = 15;
 
     /// Create a new GlobalShutdownTimeout with validation.
     ///
@@ -61,6 +65,11 @@ impl GlobalShutdownTimeout {
     /// # Returns
     /// - `Ok(GlobalShutdownTimeout)` if duration is within valid range
     /// - `Err(String)` with description if duration is out of range
+    ///
+    /// # Note
+    /// Currently only used in tests. Production code uses `default()`.
+    /// This method will be used when configurable timeout is exposed via config.
+    #[cfg(test)]
     pub(crate) fn new(duration: Duration) -> Result<Self, String> {
         let secs = duration.as_secs();
         let has_subsec = duration.subsec_nanos() > 0;
@@ -767,59 +776,10 @@ impl LanguageServerPool {
     /// - Closing/Closed: Already shutting down, skip
     ///
     /// All shutdowns run in parallel with a global timeout (ADR-0017).
+    /// Uses the default GlobalShutdownTimeout (10s) per ADR-0018.
     pub(crate) async fn shutdown_all(&self) {
-        // Collect handles to shutdown - release lock before async operations
-        let handles_to_shutdown: Vec<(String, Arc<ConnectionHandle>)> = {
-            let connections = self.connections.lock().await;
-            connections
-                .iter()
-                .filter_map(|(language, handle)| match handle.state() {
-                    ConnectionState::Ready | ConnectionState::Initializing => {
-                        Some((language.clone(), Arc::clone(handle)))
-                    }
-                    ConnectionState::Failed => {
-                        log::debug!(
-                            target: "kakehashi::bridge",
-                            "Shutting down {} connection (Failed → Closed)",
-                            language
-                        );
-                        handle.complete_shutdown();
-                        None
-                    }
-                    ConnectionState::Closing | ConnectionState::Closed => {
-                        log::debug!(
-                            target: "kakehashi::bridge",
-                            "Connection {} already shutting down or closed",
-                            language
-                        );
-                        None
-                    }
-                })
-                .collect()
-        };
-
-        // Shutdown all Ready/Initializing connections in parallel
-        // Using spawn() + JoinSet for parallel execution without futures crate
-        let mut join_set = tokio::task::JoinSet::new();
-        for (language, handle) in handles_to_shutdown {
-            join_set.spawn(async move {
-                log::debug!(
-                    target: "kakehashi::bridge",
-                    "Performing graceful shutdown for {} connection",
-                    language
-                );
-                if let Err(e) = handle.graceful_shutdown().await {
-                    log::warn!(
-                        target: "kakehashi::bridge",
-                        "Graceful shutdown failed for {}: {}",
-                        language, e
-                    );
-                }
-            });
-        }
-
-        // Wait for all shutdowns to complete
-        while join_set.join_next().await.is_some() {}
+        self.shutdown_all_with_timeout(GlobalShutdownTimeout::default())
+            .await;
     }
 
     /// Initiate graceful shutdown of all connections with a global timeout.
@@ -3554,24 +3514,15 @@ mod tests {
     fn global_shutdown_timeout_accepts_valid_range() {
         // Minimum valid: 5 seconds
         let min_timeout = GlobalShutdownTimeout::new(Duration::from_secs(5));
-        assert!(
-            min_timeout.is_ok(),
-            "5s should be valid minimum"
-        );
+        assert!(min_timeout.is_ok(), "5s should be valid minimum");
 
         // Maximum valid: 15 seconds
         let max_timeout = GlobalShutdownTimeout::new(Duration::from_secs(15));
-        assert!(
-            max_timeout.is_ok(),
-            "15s should be valid maximum"
-        );
+        assert!(max_timeout.is_ok(), "15s should be valid maximum");
 
         // Middle of range: 10 seconds
         let mid_timeout = GlobalShutdownTimeout::new(Duration::from_secs(10));
-        assert!(
-            mid_timeout.is_ok(),
-            "10s should be valid"
-        );
+        assert!(mid_timeout.is_ok(), "10s should be valid");
     }
 
     /// Test that GlobalShutdownTimeout type rejects values outside 5-15s range.
@@ -3582,31 +3533,21 @@ mod tests {
     fn global_shutdown_timeout_rejects_out_of_range() {
         // Below minimum: 4 seconds
         let too_short = GlobalShutdownTimeout::new(Duration::from_secs(4));
-        assert!(
-            too_short.is_err(),
-            "4s should be rejected as too short"
-        );
+        assert!(too_short.is_err(), "4s should be rejected as too short");
 
         // Above maximum: 16 seconds
         let too_long = GlobalShutdownTimeout::new(Duration::from_secs(16));
-        assert!(
-            too_long.is_err(),
-            "16s should be rejected as too long"
-        );
+        assert!(too_long.is_err(), "16s should be rejected as too long");
 
         // Zero duration
         let zero = GlobalShutdownTimeout::new(Duration::ZERO);
-        assert!(
-            zero.is_err(),
-            "0s should be rejected"
-        );
+        assert!(zero.is_err(), "0s should be rejected");
     }
 
     /// Test that GlobalShutdownTimeout provides access to inner Duration.
     #[test]
     fn global_shutdown_timeout_as_duration() {
-        let timeout = GlobalShutdownTimeout::new(Duration::from_secs(10))
-            .expect("10s is valid");
+        let timeout = GlobalShutdownTimeout::new(Duration::from_secs(10)).expect("10s is valid");
 
         assert_eq!(timeout.as_duration(), Duration::from_secs(10));
     }
@@ -3645,8 +3586,7 @@ mod tests {
                 .insert("hung_server".to_string(), handle);
         }
 
-        let timeout = GlobalShutdownTimeout::new(Duration::from_secs(5))
-            .expect("5s is valid");
+        let timeout = GlobalShutdownTimeout::new(Duration::from_secs(5)).expect("5s is valid");
 
         let start = std::time::Instant::now();
         pool.shutdown_all_with_timeout(timeout).await;
@@ -3690,8 +3630,7 @@ mod tests {
         }
 
         // Use 5s timeout - should complete in ~5s even with 3 servers
-        let timeout = GlobalShutdownTimeout::new(Duration::from_secs(5))
-            .expect("5s is valid");
+        let timeout = GlobalShutdownTimeout::new(Duration::from_secs(5)).expect("5s is valid");
 
         let start = std::time::Instant::now();
         pool.shutdown_all_with_timeout(timeout).await;
@@ -3785,8 +3724,7 @@ mod tests {
         }
 
         // Use minimum valid timeout (5s)
-        let timeout = GlobalShutdownTimeout::new(Duration::from_secs(5))
-            .expect("5s is valid");
+        let timeout = GlobalShutdownTimeout::new(Duration::from_secs(5)).expect("5s is valid");
 
         pool.shutdown_all_with_timeout(timeout).await;
 
@@ -3867,7 +3805,10 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Shutdown is blocked waiting for writer lock
-        assert!(!shutdown_task.is_finished(), "Shutdown should be blocked on writer lock");
+        assert!(
+            !shutdown_task.is_finished(),
+            "Shutdown should be blocked on writer lock"
+        );
 
         // Release the writer lock
         drop(_writer_guard);
