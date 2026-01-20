@@ -79,15 +79,15 @@ const scrum: ScrumDashboard = {
     number: 13,
     pbi_id: "pbi-global-shutdown-timeout",
     goal: "Implement global shutdown timeout with configurable ceiling and force-kill fallback",
-    status: "planning",
+    status: "in_progress",
     subtasks: [
       // Phase 1: Foundation (configurable timeout type)
       {
         test: "Unit test: GlobalShutdownTimeout type accepts 5-15s range, rejects out-of-range values",
         implementation: "Add GlobalShutdownTimeout newtype with validation in config module",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "b4f667bb", message: "feat(bridge): add GlobalShutdownTimeout newtype with 5-15s validation", phase: "green" }],
         notes: ["ADR-0018: Global Shutdown 5-15s recommended range", "Consider Duration wrapper with From/Into traits"],
       },
       // Phase 2: Core Feature (global timeout wrapper)
@@ -95,8 +95,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test: shutdown_all completes within configured timeout even with hung servers",
         implementation: "Wrap shutdown_all() parallel shutdowns in tokio::time::timeout(GLOBAL_TIMEOUT)",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "c0e58e62", message: "feat(bridge): add shutdown_all_with_timeout for global shutdown ceiling", phase: "green" }],
         notes: ["ADR-0017: Global timeout overrides all other timeouts", "Use JoinSet with timeout wrapper"],
       },
       {
