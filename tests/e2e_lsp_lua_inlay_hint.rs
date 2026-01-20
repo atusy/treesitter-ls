@@ -140,7 +140,7 @@ More text.
                 println!("  - Hint at line {}", line);
                 // The hints should be in the Lua code block area (lines 3-10)
                 assert!(
-                    line >= 2 && line <= 12,
+                    (2..=12).contains(&line),
                     "Hint line should be in host coordinates (expected 2-12, got {})",
                     line
                 );

@@ -145,7 +145,7 @@ More text.
                 println!("Implementation found at line {}", start_line);
                 // The implementation should be in the Lua code block area (lines 3-20)
                 assert!(
-                    start_line >= 2 && start_line <= 20,
+                    (2..=20).contains(&start_line),
                     "Implementation line should be in host coordinates (expected 2-20, got {})",
                     start_line
                 );
@@ -158,7 +158,7 @@ More text.
             let start_line = range["start"]["line"].as_u64().unwrap_or(0);
             println!("Implementation found at line {}", start_line);
             assert!(
-                start_line >= 2 && start_line <= 20,
+                (2..=20).contains(&start_line),
                 "Implementation line should be in host coordinates (expected 2-20, got {})",
                 start_line
             );

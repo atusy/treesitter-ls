@@ -125,8 +125,8 @@ More text.
     } else {
         // WorkspaceEdit format
         // Can have either "changes" (map) or "documentChanges" (array)
-        if let Some(changes) = result.get("changes") {
-            if let Some(changes_map) = changes.as_object() {
+        if let Some(changes) = result.get("changes")
+            && let Some(changes_map) = changes.as_object() {
                 println!("WorkspaceEdit with changes map: {} URIs", changes_map.len());
 
                 // Verify the edits are for the host document
@@ -145,7 +145,7 @@ More text.
                                 println!("    - Edit at line {}", start_line);
                                 // The edits should be in the Lua code block area (lines 3-4)
                                 assert!(
-                                    start_line >= 2 && start_line <= 6,
+                                    (2..=6).contains(&start_line),
                                     "Edit line should be in host coordinates (expected 2-6, got {})",
                                     start_line
                                 );
@@ -154,18 +154,17 @@ More text.
                     }
                 }
             }
-        }
 
-        if let Some(document_changes) = result.get("documentChanges") {
-            if let Some(changes_arr) = document_changes.as_array() {
+        if let Some(document_changes) = result.get("documentChanges")
+            && let Some(changes_arr) = document_changes.as_array() {
                 println!(
                     "WorkspaceEdit with documentChanges: {} items",
                     changes_arr.len()
                 );
 
                 for item in changes_arr {
-                    if let Some(text_document) = item.get("textDocument") {
-                        if let Some(uri) = text_document.get("uri").and_then(|u| u.as_str()) {
+                    if let Some(text_document) = item.get("textDocument")
+                        && let Some(uri) = text_document.get("uri").and_then(|u| u.as_str()) {
                             println!("  - textDocument.uri: {}", uri);
                             assert!(
                                 uri == markdown_uri,
@@ -173,27 +172,24 @@ More text.
                                 uri
                             );
                         }
-                    }
 
-                    if let Some(edits) = item.get("edits") {
-                        if let Some(edits_arr) = edits.as_array() {
+                    if let Some(edits) = item.get("edits")
+                        && let Some(edits_arr) = edits.as_array() {
                             for edit in edits_arr {
                                 if let Some(range) = edit.get("range") {
                                     let start_line = range["start"]["line"].as_u64().unwrap_or(0);
                                     println!("    - Edit at line {}", start_line);
                                     // The edits should be in the Lua code block area
                                     assert!(
-                                        start_line >= 2 && start_line <= 6,
+                                        (2..=6).contains(&start_line),
                                         "Edit line should be in host coordinates (expected 2-6, got {})",
                                         start_line
                                     );
                                 }
                             }
                         }
-                    }
                 }
             }
-        }
 
         println!("E2E: Rename returns WorkspaceEdit with host coordinates and URIs");
     }
@@ -329,8 +325,8 @@ More text.
     );
 
     let result = rename_response.get("result");
-    if let Some(result) = result {
-        if !result.is_null() {
+    if let Some(result) = result
+        && !result.is_null() {
             // Count the number of edits - should be 3 (declaration + 2 usages)
             let edit_count = if let Some(changes) = result.get("changes") {
                 if let Some(changes_map) = changes.as_object() {
@@ -365,7 +361,6 @@ More text.
                 println!("Note: Got {} edits (expected at least 3)", edit_count);
             }
         }
-    }
 
     // Clean shutdown
     shutdown_client(&mut client);

@@ -140,7 +140,7 @@ More text.
                 println!("  - Reference at line {}", start_line);
                 // The references should be in the Lua code block area (lines 3-9)
                 assert!(
-                    start_line >= 2 && start_line <= 10,
+                    (2..=10).contains(&start_line),
                     "Reference line should be in host coordinates (expected 2-10, got {})",
                     start_line
                 );

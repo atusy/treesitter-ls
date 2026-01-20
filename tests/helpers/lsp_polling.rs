@@ -86,15 +86,14 @@ pub fn poll_for_lsp_result(
             continue;
         }
 
-        if let Some(result) = response.get("result") {
-            if !result.is_null() {
+        if let Some(result) = response.get("result")
+            && !result.is_null() {
                 eprintln!(
                     "{} succeeded on attempt {}/{}",
                     method, attempt, max_attempts
                 );
                 return Some(response);
             }
-        }
 
         eprintln!(
             "{} attempt {}/{}: null result, retrying...",

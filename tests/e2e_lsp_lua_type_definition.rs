@@ -136,7 +136,7 @@ More text.
                 println!("Type definition found at line {}", start_line);
                 // The class definition should be around line 3-5 (0-indexed) in markdown
                 assert!(
-                    start_line >= 2 && start_line <= 7,
+                    (2..=7).contains(&start_line),
                     "Type definition line should be in host coordinates (expected 2-7, got {})",
                     start_line
                 );
@@ -149,7 +149,7 @@ More text.
             let start_line = range["start"]["line"].as_u64().unwrap_or(0);
             println!("Type definition found at line {}", start_line);
             assert!(
-                start_line >= 2 && start_line <= 7,
+                (2..=7).contains(&start_line),
                 "Type definition line should be in host coordinates (expected 2-7, got {})",
                 start_line
             );
