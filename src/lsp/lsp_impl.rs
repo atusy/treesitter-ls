@@ -30,7 +30,7 @@ use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings
 use crate::text::PositionMapper;
 use arc_swap::ArcSwap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
@@ -151,6 +151,10 @@ pub struct Kakehashi {
     root_path: ArcSwap<Option<PathBuf>>,
     /// Settings including auto_install flag
     settings: ArcSwap<WorkspaceSettings>,
+    /// Client capabilities from initialize() - immutable after initialization.
+    /// Uses OnceLock to enforce "set once, read many" semantics per LSP protocol.
+    /// Guards server-to-client requests (e.g., workspace/semanticTokens/refresh).
+    client_capabilities: OnceLock<ClientCapabilities>,
     /// Tracks languages currently being installed
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
@@ -175,6 +179,7 @@ impl std::fmt::Debug for Kakehashi {
             .field("injection_token_cache", &"InjectionTokenCache")
             .field("root_path", &"ArcSwap<Option<PathBuf>>")
             .field("settings", &"ArcSwap<WorkspaceSettings>")
+            .field("client_capabilities", &"OnceLock<ClientCapabilities>")
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
             .field("language_server_pool", &"LanguageServerPool")
@@ -204,6 +209,10 @@ impl Kakehashi {
             injection_token_cache: InjectionTokenCache::new(),
             root_path: ArcSwap::new(Arc::new(None)),
             settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
+            // Empty until initialize() sets actual client capabilities.
+            // OnceLock ensures this can only be set once (during initialize).
+            // Before initialize(), capability checks return false (defensive default).
+            client_capabilities: OnceLock::new(),
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
             semantic_request_tracker: SemanticRequestTracker::new(),
