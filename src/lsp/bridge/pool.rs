@@ -344,8 +344,8 @@ impl ConnectionHandle {
     /// stuck in the Closing state.
     ///
     /// # Returns
-    /// - Ok(()) if shutdown completed successfully
-    /// - Err if shutdown request failed (state still transitions to Closed)
+    /// - Ok(()) if shutdown completed (gracefully or via force-kill)
+    /// - Err only if the method couldn't complete at all (shouldn't happen)
     ///
     /// # Timeout Behavior
     ///
@@ -429,7 +429,17 @@ impl ConnectionHandle {
         // ALWAYS executed, even if handshake failed
         self.complete_shutdown();
 
-        handshake_result
+        // Log handshake errors but return Ok since shutdown completed (via force-kill if needed)
+        if let Err(e) = &handshake_result {
+            log::debug!(
+                target: "kakehashi::bridge",
+                "LSP handshake had error during shutdown (connection force-killed): {}",
+                e
+            );
+        }
+
+        // Always return Ok - the connection is now Closed regardless of handshake result
+        Ok(())
     }
 
     /// Get access to the writer for sending messages.
