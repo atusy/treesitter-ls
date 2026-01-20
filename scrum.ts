@@ -129,8 +129,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test: graceful_shutdown() has no internal timeout (relies on global ceiling)",
         implementation: "Remove 5s SHUTDOWN_TIMEOUT constant from graceful_shutdown()",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "aaa2954b", message: "refactor(bridge): remove per-connection SHUTDOWN_TIMEOUT from graceful_shutdown", phase: "green" }],
         notes: ["ADR-0018: Global shutdown is the only ceiling", "Current hardcoded 5s in pool.rs:249"],
       },
       // Phase 5: Robustness (writer-idle budget verification)
