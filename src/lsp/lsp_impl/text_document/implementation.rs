@@ -1,8 +1,8 @@
 //! Goto implementation method for Kakehashi.
 
 use tower_lsp_server::jsonrpc::{Id, Result};
+use tower_lsp_server::ls_types::MessageType;
 use tower_lsp_server::ls_types::request::{GotoImplementationParams, GotoImplementationResponse};
-use tower_lsp_server::ls_types::*;
 
 use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;

@@ -4,7 +4,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Duration;
 
 use tower_lsp_server::jsonrpc::Result;
-use tower_lsp_server::ls_types::*;
+use tower_lsp_server::ls_types::{
+    SemanticTokens, SemanticTokensDeltaParams, SemanticTokensFullDeltaResult, SemanticTokensParams,
+    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult,
+};
 use tree_sitter::Tree;
 use url::Url;
 

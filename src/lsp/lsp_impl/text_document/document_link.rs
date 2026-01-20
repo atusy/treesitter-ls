@@ -1,7 +1,7 @@
 //! Document link method for Kakehashi.
 
 use tower_lsp_server::jsonrpc::{Id, Result};
-use tower_lsp_server::ls_types::*;
+use tower_lsp_server::ls_types::{DocumentLink, DocumentLinkParams, MessageType};
 
 use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;

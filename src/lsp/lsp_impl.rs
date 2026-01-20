@@ -6,7 +6,30 @@ use tower_lsp_server::ls_types::request::{
     GotoDeclarationParams, GotoDeclarationResponse, GotoImplementationParams,
     GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
 };
-use tower_lsp_server::ls_types::*;
+use tower_lsp_server::ls_types::{
+    ClientCapabilities, CompletionOptions, CompletionParams, CompletionResponse,
+    DeclarationCapability, DidChangeConfigurationParams, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentHighlight,
+    DocumentHighlightParams, DocumentLink, DocumentLinkOptions, DocumentLinkParams,
+    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
+    Hover, HoverParams, HoverProviderCapability, ImplementationProviderCapability,
+    InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location,
+    MessageType, Moniker, MonikerParams, OneOf, ReferenceParams, RenameParams, SaveOptions,
+    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, SemanticTokenModifier,
+    SemanticTokenType, SemanticTokensDeltaParams, SemanticTokensFullDeltaResult,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
+    SignatureHelpOptions, SignatureHelpParams, TextDocumentContentChangeEvent,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, TypeDefinitionProviderCapability, Uri, WorkDoneProgressOptions,
+    WorkspaceEdit,
+};
+#[cfg(feature = "experimental")]
+use tower_lsp_server::ls_types::{
+    ColorInformation, ColorPresentation, ColorPresentationParams, ColorProviderCapability,
+    DocumentColorParams,
+};
 use tower_lsp_server::{Client, LanguageServer};
 use tree_sitter::InputEdit;
 use url::Url;

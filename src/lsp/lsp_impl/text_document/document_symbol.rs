@@ -1,7 +1,9 @@
 //! Document symbol method for Kakehashi.
 
 use tower_lsp_server::jsonrpc::Result;
-use tower_lsp_server::ls_types::*;
+use tower_lsp_server::ls_types::{
+    DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, MessageType, SymbolInformation,
+};
 
 use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;

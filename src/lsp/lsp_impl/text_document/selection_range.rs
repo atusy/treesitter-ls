@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use tower_lsp_server::jsonrpc::Result;
-use tower_lsp_server::ls_types::*;
+use tower_lsp_server::ls_types::{SelectionRange, SelectionRangeParams};
 
 use crate::analysis::handle_selection_range;
 
