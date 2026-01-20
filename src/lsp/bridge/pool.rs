@@ -835,6 +835,10 @@ impl LanguageServerPool {
     /// pool.shutdown_all_with_timeout(timeout).await;
     /// ```
     pub(crate) async fn shutdown_all_with_timeout(&self, timeout: GlobalShutdownTimeout) {
+        // Track connections that were skipped for logging (minimize lock duration)
+        let mut failed_connections: Vec<String> = Vec::new();
+        let mut already_closing: Vec<String> = Vec::new();
+
         // Collect handles to shutdown - release lock before async operations
         let handles_to_shutdown: Vec<(String, Arc<ConnectionHandle>)> = {
             let connections = self.connections.lock().await;
@@ -845,25 +849,33 @@ impl LanguageServerPool {
                         Some((language.clone(), Arc::clone(handle)))
                     }
                     ConnectionState::Failed => {
-                        log::debug!(
-                            target: "kakehashi::bridge",
-                            "Shutting down {} connection (Failed → Closed)",
-                            language
-                        );
+                        failed_connections.push(language.clone());
                         handle.complete_shutdown();
                         None
                     }
                     ConnectionState::Closing | ConnectionState::Closed => {
-                        log::debug!(
-                            target: "kakehashi::bridge",
-                            "Connection {} already shutting down or closed",
-                            language
-                        );
+                        already_closing.push(language.clone());
                         None
                     }
                 })
                 .collect()
         };
+
+        // Log after releasing lock (same pattern as force_kill_all)
+        for language in failed_connections {
+            log::debug!(
+                target: "kakehashi::bridge",
+                "Shutting down {} connection (Failed → Closed)",
+                language
+            );
+        }
+        for language in already_closing {
+            log::debug!(
+                target: "kakehashi::bridge",
+                "Connection {} already shutting down or closed",
+                language
+            );
+        }
 
         if handles_to_shutdown.is_empty() {
             return;
@@ -889,8 +901,16 @@ impl LanguageServerPool {
                 });
             }
 
-            // Wait for all shutdowns to complete
-            while join_set.join_next().await.is_some() {}
+            // Wait for all shutdowns to complete, logging any task panics
+            while let Some(result) = join_set.join_next().await {
+                if let Err(e) = result {
+                    log::error!(
+                        target: "kakehashi::bridge",
+                        "Shutdown task panicked: {}",
+                        e
+                    );
+                }
+            }
         })
         .await;
 
@@ -976,8 +996,16 @@ impl LanguageServerPool {
             });
         }
 
-        // Wait for all force-kills to complete
-        while join_set.join_next().await.is_some() {}
+        // Wait for all force-kills to complete, logging any task panics
+        while let Some(result) = join_set.join_next().await {
+            if let Err(e) = result {
+                log::error!(
+                    target: "kakehashi::bridge",
+                    "Force-kill task panicked: {}",
+                    e
+                );
+            }
+        }
     }
 
     /// Get or create a connection for the specified language with custom timeout.
@@ -3632,7 +3660,8 @@ mod tests {
         );
 
         // 15s + 1 nanosecond rejected
-        let one_nano_over = GlobalShutdownTimeout::new(Duration::from_secs(15) + Duration::from_nanos(1));
+        let one_nano_over =
+            GlobalShutdownTimeout::new(Duration::from_secs(15) + Duration::from_nanos(1));
         assert!(
             one_nano_over.is_err(),
             "15s + 1ns should be rejected (ceiling is exactly 15s)"
