@@ -42,7 +42,7 @@ const INIT_TIMEOUT_SECS: u64 = 30;
 /// let timeout = GlobalShutdownTimeout::new(Duration::from_secs(10))?;
 /// pool.shutdown_all_with_timeout(timeout).await;
 /// ```
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GlobalShutdownTimeout(Duration);
 
 impl GlobalShutdownTimeout {
