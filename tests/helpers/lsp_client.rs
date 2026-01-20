@@ -3,6 +3,10 @@
 //! Provides a simple LSP client that communicates with kakehashi binary
 //! via stdin/stdout using JSON-RPC 2.0 protocol.
 
+// These methods are shared across multiple test binaries but not all tests use every method.
+// Allow dead_code to suppress per-binary warnings.
+#![allow(dead_code)]
+
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};

@@ -101,7 +101,7 @@ More text.
                 // The function definition starts at line 3 (0-indexed) in the markdown
                 // This verifies coordinate transformation is working
                 assert!(
-                    start_line >= 3 && start_line <= 5,
+                    (3..=5).contains(&start_line),
                     "Definition line should be in host coordinates (expected 3-5, got {})",
                     start_line
                 );
@@ -114,7 +114,7 @@ More text.
             let start_line = range["start"]["line"].as_u64().unwrap_or(0);
             println!("Definition found at line {}", start_line);
             assert!(
-                start_line >= 3 && start_line <= 5,
+                (3..=5).contains(&start_line),
                 "Definition line should be in host coordinates (expected 3-5, got {})",
                 start_line
             );

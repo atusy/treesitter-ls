@@ -3,6 +3,10 @@
 //! Provides reusable markdown file fixtures with Rust code blocks for testing
 //! different LSP features (hover, completion, references, etc.).
 
+// These functions are shared across multiple test binaries but not all tests use every function.
+// Allow dead_code to suppress per-binary warnings.
+#![allow(dead_code)]
+
 /// Create a temporary markdown file with Rust code block for hover testing.
 ///
 /// Content: fn main() { println!("Hello, world!"); }

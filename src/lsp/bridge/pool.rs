@@ -2575,8 +2575,9 @@ mod tests {
         {
             let versions = pool.document_versions.lock().await;
             assert!(
-                versions.get("lua").map_or(false, |docs| docs
-                    .contains_key(&virtual_uri.to_uri_string())),
+                versions
+                    .get("lua")
+                    .is_some_and(|docs| docs.contains_key(&virtual_uri.to_uri_string())),
                 "Document should be in document_versions"
             );
         }

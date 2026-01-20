@@ -30,7 +30,7 @@ use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings
 use crate::text::PositionMapper;
 use arc_swap::ArcSwap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
@@ -49,6 +49,21 @@ fn lsp_legend_modifiers() -> Vec<SemanticTokenModifier> {
         .iter()
         .map(|m| SemanticTokenModifier::new(m.as_str()))
         .collect()
+}
+
+/// Check if client capabilities indicate semantic tokens refresh support.
+///
+/// Extracted as a pure function for unit testability - the Kakehashi struct
+/// cannot be constructed in unit tests due to tower_lsp::Client dependency.
+///
+/// Returns `false` for any missing/null capability in the chain (defensive
+/// default per LSP spec @since 3.16.0).
+fn check_semantic_tokens_refresh_support(caps: &ClientCapabilities) -> bool {
+    caps.workspace
+        .as_ref()
+        .and_then(|w| w.semantic_tokens.as_ref())
+        .and_then(|st| st.refresh_support)
+        .unwrap_or(false)
 }
 
 /// Apply content changes to text and build tree-sitter InputEdits.
@@ -136,6 +151,10 @@ pub struct Kakehashi {
     root_path: ArcSwap<Option<PathBuf>>,
     /// Settings including auto_install flag
     settings: ArcSwap<WorkspaceSettings>,
+    /// Client capabilities from initialize() - immutable after initialization.
+    /// Uses OnceLock to enforce "set once, read many" semantics per LSP protocol.
+    /// Guards server-to-client requests (e.g., workspace/semanticTokens/refresh).
+    client_capabilities: OnceLock<ClientCapabilities>,
     /// Tracks languages currently being installed
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
@@ -160,6 +179,7 @@ impl std::fmt::Debug for Kakehashi {
             .field("injection_token_cache", &"InjectionTokenCache")
             .field("root_path", &"ArcSwap<Option<PathBuf>>")
             .field("settings", &"ArcSwap<WorkspaceSettings>")
+            .field("client_capabilities", &"OnceLock<ClientCapabilities>")
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
             .field("language_server_pool", &"LanguageServerPool")
@@ -189,12 +209,25 @@ impl Kakehashi {
             injection_token_cache: InjectionTokenCache::new(),
             root_path: ArcSwap::new(Arc::new(None)),
             settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
+            // Empty until initialize() sets actual client capabilities.
+            // OnceLock ensures this can only be set once (during initialize).
+            // Before initialize(), capability checks return false (defensive default).
+            client_capabilities: OnceLock::new(),
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
             semantic_request_tracker: SemanticRequestTracker::new(),
             language_server_pool,
             region_id_tracker: RegionIdTracker::new(),
         }
+    }
+
+    /// Returns true only if client declared workspace.semanticTokens.refreshSupport.
+    /// Returns false if initialize() hasn't been called yet (OnceLock is empty).
+    fn supports_semantic_tokens_refresh(&self) -> bool {
+        self.client_capabilities
+            .get()
+            .map(check_semantic_tokens_refresh_support)
+            .unwrap_or(false)
     }
 
     /// Initialize the failed parser registry with crash detection.
@@ -695,10 +728,20 @@ impl Kakehashi {
                     self.client.log_message(message_type, message.clone()).await;
                 }
                 LanguageEvent::SemanticTokensRefresh { language_id } => {
+                    // Only send refresh if client supports it (LSP @since 3.16.0 compliance).
+                    // Check MUST be before tokio::spawn - can't `continue` from async block.
+                    if !self.supports_semantic_tokens_refresh() {
+                        log::debug!(
+                            "Skipping semantic_tokens_refresh for {} - client does not support it",
+                            language_id
+                        );
+                        continue;
+                    }
+
                     // Fire-and-forget because the response is just null
                     //
                     // Keep the receiver alive without dropping by timeout in order to
-                    // avoid tower-lsp panics
+                    // avoid tower-lsp panics (see commit b902e28d)
                     //
                     // Trade-off: If a client never responds (e.g., vim-lsp), this causes:
                     // - A small memory leak in tower-lsp's pending requests map
@@ -1109,6 +1152,17 @@ impl Kakehashi {
 #[tower_lsp::async_trait]
 impl LanguageServer for Kakehashi {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        // Store client capabilities for LSP compliance checks (e.g., refresh support).
+        // OnceLock::set() returns Err if already set - ignore since LSP spec guarantees
+        // initialize() is called exactly once per session.
+        let _ = self.client_capabilities.set(params.capabilities.clone());
+
+        // Log capability state for troubleshooting client compatibility issues.
+        log::debug!(
+            "Client capabilities stored: semantic_tokens_refresh={}",
+            check_semantic_tokens_refresh_support(&params.capabilities)
+        );
+
         // Debug: Log initialization
         self.client
             .log_message(MessageType::INFO, "Received initialization request")
@@ -1594,6 +1648,92 @@ mod tests {
     use super::*;
     use crate::config::settings::BridgeLanguageConfig;
     use std::collections::HashMap;
+
+    // Tests for check_semantic_tokens_refresh_support pure function
+    // These test the capability checking logic without needing to construct Kakehashi
+
+    #[test]
+    fn test_check_refresh_support_when_true() {
+        let caps = ClientCapabilities {
+            workspace: Some(WorkspaceClientCapabilities {
+                semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
+                    refresh_support: Some(true),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(check_semantic_tokens_refresh_support(&caps));
+    }
+
+    #[test]
+    fn test_check_refresh_support_when_false() {
+        let caps = ClientCapabilities {
+            workspace: Some(WorkspaceClientCapabilities {
+                semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
+                    refresh_support: Some(false),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!check_semantic_tokens_refresh_support(&caps));
+    }
+
+    #[test]
+    fn test_check_refresh_support_when_refresh_support_none() {
+        // refreshSupport field is None (null in JSON)
+        let caps = ClientCapabilities {
+            workspace: Some(WorkspaceClientCapabilities {
+                semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
+                    refresh_support: None,
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!check_semantic_tokens_refresh_support(&caps));
+    }
+
+    #[test]
+    fn test_check_refresh_support_when_semantic_tokens_none() {
+        // semantic_tokens field is None
+        let caps = ClientCapabilities {
+            workspace: Some(WorkspaceClientCapabilities {
+                semantic_tokens: None,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!check_semantic_tokens_refresh_support(&caps));
+    }
+
+    #[test]
+    fn test_check_refresh_support_when_workspace_empty() {
+        // workspace is Some but empty (no semantic_tokens)
+        let caps = ClientCapabilities {
+            workspace: Some(WorkspaceClientCapabilities::default()),
+            ..Default::default()
+        };
+        assert!(!check_semantic_tokens_refresh_support(&caps));
+    }
+
+    #[test]
+    fn test_check_refresh_support_when_workspace_none() {
+        // workspace field is None (different from empty!)
+        let caps = ClientCapabilities {
+            workspace: None,
+            ..Default::default()
+        };
+        assert!(!check_semantic_tokens_refresh_support(&caps));
+    }
+
+    #[test]
+    fn test_check_refresh_support_when_capabilities_empty() {
+        // Completely empty capabilities (pre-init state)
+        let caps = ClientCapabilities::default();
+        assert!(!check_semantic_tokens_refresh_support(&caps));
+    }
 
     #[test]
     fn should_create_valid_url_from_file_path() {

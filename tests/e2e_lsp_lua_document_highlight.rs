@@ -139,7 +139,7 @@ More text.
                 println!("  - Highlight at line {}", start_line);
                 // The highlights should be in the Lua code block area (lines 3-9)
                 assert!(
-                    start_line >= 2 && start_line <= 10,
+                    (2..=10).contains(&start_line),
                     "Highlight line should be in host coordinates (expected 2-10, got {})",
                     start_line
                 );
@@ -299,7 +299,7 @@ More text.
             if let Some(range) = highlight.get("range") {
                 let start_line = range["start"]["line"].as_u64().unwrap_or(0);
                 assert!(
-                    start_line >= 2 && start_line <= 10,
+                    (2..=10).contains(&start_line),
                     "All highlights should be in host coordinates (expected 2-10, got {})",
                     start_line
                 );

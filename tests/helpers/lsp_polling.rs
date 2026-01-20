@@ -2,6 +2,10 @@
 //!
 //! Provides retry-with-timeout patterns for waiting on async LSP responses.
 
+// These functions are shared across multiple test binaries but not all tests use every function.
+// Allow dead_code to suppress per-binary warnings.
+#![allow(dead_code)]
+
 use std::time::Duration;
 
 use super::lsp_client::LspClient;
@@ -86,14 +90,14 @@ pub fn poll_for_lsp_result(
             continue;
         }
 
-        if let Some(result) = response.get("result") {
-            if !result.is_null() {
-                eprintln!(
-                    "{} succeeded on attempt {}/{}",
-                    method, attempt, max_attempts
-                );
-                return Some(response);
-            }
+        if let Some(result) = response.get("result")
+            && !result.is_null()
+        {
+            eprintln!(
+                "{} succeeded on attempt {}/{}",
+                method, attempt, max_attempts
+            );
+            return Some(response);
         }
 
         eprintln!(

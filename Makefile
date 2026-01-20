@@ -62,7 +62,7 @@ format:
 # Run linter (clippy)
 .PHONY: lint
 lint:
-	$(CARGO) clippy -- -D warnings
+	$(CARGO) clippy --all-targets --all-features -- -D warnings
 
 # Install the binary to ~/.cargo/bin
 .PHONY: install

@@ -133,7 +133,7 @@ More text.
                 println!("Declaration found at line {}", start_line);
                 // The declaration should be in the Lua code block area (lines 3-9)
                 assert!(
-                    start_line >= 2 && start_line <= 10,
+                    (2..=10).contains(&start_line),
                     "Declaration line should be in host coordinates (expected 2-10, got {})",
                     start_line
                 );
@@ -146,7 +146,7 @@ More text.
             let start_line = range["start"]["line"].as_u64().unwrap_or(0);
             println!("Declaration found at line {}", start_line);
             assert!(
-                start_line >= 2 && start_line <= 10,
+                (2..=10).contains(&start_line),
                 "Declaration line should be in host coordinates (expected 2-10, got {})",
                 start_line
             );
