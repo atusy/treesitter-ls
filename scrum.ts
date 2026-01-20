@@ -120,8 +120,8 @@ const scrum: ScrumDashboard = {
         test: "Integration test: all remaining connections receive SIGTERM then SIGKILL when global timeout expires",
         implementation: "Wire force_kill_all() as fallback in shutdown_all() timeout handler",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "23131874", message: "refactor(bridge): use force_kill_all() in shutdown timeout handler", phase: "green" }],
         notes: ["ADR-0017: force_kill_all(connections) on timeout expiry", "Verify process termination"],
       },
       // Phase 4: Cleanup (remove per-connection timeout)
