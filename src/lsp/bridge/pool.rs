@@ -944,11 +944,19 @@ impl LanguageServerPool {
                 .collect()
         };
 
-        // Force-kill each connection with SIGTERM->SIGKILL escalation
+        // Force-kill all connections in parallel with SIGTERM->SIGKILL escalation.
+        // Using JoinSet for parallel execution ensures O(1) force-kill time for N connections
+        // instead of O(N * 2s) when done sequentially (2s is SIGTERM->SIGKILL wait).
+        let mut join_set = tokio::task::JoinSet::new();
         for handle in handles {
-            handle.force_kill().await;
-            handle.complete_shutdown();
+            join_set.spawn(async move {
+                handle.force_kill().await;
+                handle.complete_shutdown();
+            });
         }
+
+        // Wait for all force-kills to complete
+        while join_set.join_next().await.is_some() {}
     }
 
     /// Get or create a connection for the specified language with custom timeout.
