@@ -5,7 +5,6 @@
 //! A `tests/helpers.rs` file would be compiled as a standalone test, which we don't want.
 
 pub mod lsp_client;
-pub mod lsp_init;
 pub mod lsp_polling;
 pub mod lua_bridge;
 pub mod sanitization;

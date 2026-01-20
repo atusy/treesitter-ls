@@ -3,6 +3,10 @@
 //! Provides helpers to normalize LSP responses by replacing non-deterministic
 //! data (file URIs, timestamps, etc.) with stable placeholders.
 
+// These functions are shared across multiple test binaries but not all tests use every function.
+// Allow dead_code to suppress per-binary warnings.
+#![allow(dead_code)]
+
 use regex::Regex;
 use serde_json::Value;
 use std::sync::OnceLock;
@@ -35,9 +39,10 @@ pub fn sanitize_hover_response(hover: &Value) -> Value {
 
     // Sanitize range if present
     if let Some(range) = sanitized.get_mut("range")
-        && let Some(uri) = range.get_mut("uri") {
-            *uri = Value::String("<TEST_FILE_URI>".to_string());
-        }
+        && let Some(uri) = range.get_mut("uri")
+    {
+        *uri = Value::String("<TEST_FILE_URI>".to_string());
+    }
 
     // Sanitize contents
     if let Some(contents) = sanitized.get_mut("contents") {
@@ -55,15 +60,17 @@ fn sanitize_hover_contents(contents: &Value) -> Value {
             let mut sanitized = obj.clone();
             // MarkupContent has "value" field
             if let Some(value) = sanitized.get_mut("value")
-                && let Some(s) = value.as_str() {
-                    *value = Value::String(sanitize_text(s));
-                }
+                && let Some(s) = value.as_str()
+            {
+                *value = Value::String(sanitize_text(s));
+            }
             // MarkedString has "language" and "value" fields
             if sanitized.get("language").is_some()
                 && let Some(value) = sanitized.get_mut("value")
-                    && let Some(s) = value.as_str() {
-                        *value = Value::String(sanitize_text(s));
-                    }
+                && let Some(s) = value.as_str()
+            {
+                *value = Value::String(sanitize_text(s));
+            }
             Value::Object(sanitized)
         }
         Value::Array(arr) => Value::Array(arr.iter().map(sanitize_hover_contents).collect()),
@@ -97,12 +104,9 @@ pub fn sanitize_references_response(references: &Value) -> Value {
 /// Sanitize definition response by normalizing URIs in Location/LocationLink objects.
 pub fn sanitize_definition_response(result: &Value) -> Value {
     match result {
-        Value::Array(locations) => Value::Array(
-            locations
-                .iter()
-                .map(sanitize_definition_object)
-                .collect(),
-        ),
+        Value::Array(locations) => {
+            Value::Array(locations.iter().map(sanitize_definition_object).collect())
+        }
         Value::Object(_) => sanitize_definition_object(result),
         _ => result.clone(),
     }
@@ -116,36 +120,40 @@ pub fn sanitize_signature_help_response(signature_help: &Value) -> Value {
 
     // Sanitize signatures array
     if let Some(signatures) = sanitized.get_mut("signatures")
-        && let Value::Array(sigs) = signatures {
-            for sig in sigs {
-                if let Value::Object(sig_obj) = sig {
-                    // Sanitize label
-                    if let Some(label) = sig_obj.get_mut("label")
-                        && let Some(s) = label.as_str() {
-                            *label = Value::String(sanitize_text(s));
-                        }
-                    // Sanitize documentation
-                    if let Some(doc) = sig_obj.get_mut("documentation") {
-                        *doc = sanitize_signature_documentation(doc);
-                    }
-                    // Sanitize parameters
-                    if let Some(params) = sig_obj.get_mut("parameters")
-                        && let Value::Array(param_arr) = params {
-                            for param in param_arr {
-                                if let Value::Object(param_obj) = param {
-                                    if let Some(label) = param_obj.get_mut("label")
-                                        && let Some(s) = label.as_str() {
-                                            *label = Value::String(sanitize_text(s));
-                                        }
-                                    if let Some(doc) = param_obj.get_mut("documentation") {
-                                        *doc = sanitize_signature_documentation(doc);
-                                    }
-                                }
+        && let Value::Array(sigs) = signatures
+    {
+        for sig in sigs {
+            if let Value::Object(sig_obj) = sig {
+                // Sanitize label
+                if let Some(label) = sig_obj.get_mut("label")
+                    && let Some(s) = label.as_str()
+                {
+                    *label = Value::String(sanitize_text(s));
+                }
+                // Sanitize documentation
+                if let Some(doc) = sig_obj.get_mut("documentation") {
+                    *doc = sanitize_signature_documentation(doc);
+                }
+                // Sanitize parameters
+                if let Some(params) = sig_obj.get_mut("parameters")
+                    && let Value::Array(param_arr) = params
+                {
+                    for param in param_arr {
+                        if let Value::Object(param_obj) = param {
+                            if let Some(label) = param_obj.get_mut("label")
+                                && let Some(s) = label.as_str()
+                            {
+                                *label = Value::String(sanitize_text(s));
+                            }
+                            if let Some(doc) = param_obj.get_mut("documentation") {
+                                *doc = sanitize_signature_documentation(doc);
                             }
                         }
+                    }
                 }
             }
         }
+    }
 
     sanitized
 }
@@ -157,9 +165,10 @@ fn sanitize_signature_documentation(doc: &Value) -> Value {
         Value::Object(obj) => {
             let mut sanitized = obj.clone();
             if let Some(value) = sanitized.get_mut("value")
-                && let Some(s) = value.as_str() {
-                    *value = Value::String(sanitize_text(s));
-                }
+                && let Some(s) = value.as_str()
+            {
+                *value = Value::String(sanitize_text(s));
+            }
             Value::Object(sanitized)
         }
         _ => doc.clone(),
@@ -244,10 +253,11 @@ fn sanitize_recursive(value: &Value, drop_data_field: bool) -> Value {
                     continue;
                 }
                 if key == "uri"
-                    && let Some(uri) = val.as_str() {
-                        map.insert(key.clone(), Value::String(sanitize_uri(uri)));
-                        continue;
-                    }
+                    && let Some(uri) = val.as_str()
+                {
+                    map.insert(key.clone(), Value::String(sanitize_uri(uri)));
+                    continue;
+                }
                 map.insert(key.clone(), sanitize_recursive(val, drop_data_field));
             }
             Value::Object(map)

@@ -273,14 +273,15 @@ More text.
 
         // Check if parameters are shown
         if let Some(signatures) = result.get("signatures").and_then(|s| s.as_array())
-            && let Some(first_sig) = signatures.first() {
-                if let Some(params) = first_sig.get("parameters").and_then(|p| p.as_array()) {
-                    println!("Parameters found: {}", params.len());
-                }
-                if let Some(label) = first_sig.get("label").and_then(|l| l.as_str()) {
-                    println!("Signature label: {}", label);
-                }
+            && let Some(first_sig) = signatures.first()
+        {
+            if let Some(params) = first_sig.get("parameters").and_then(|p| p.as_array()) {
+                println!("Parameters found: {}", params.len());
             }
+            if let Some(label) = first_sig.get("label").and_then(|l| l.as_str()) {
+                println!("Signature label: {}", label);
+            }
+        }
     } else if result.is_null() {
         println!("Note: lua-ls returned null (may still be loading)");
         println!("E2E: Bridge infrastructure working (request succeeded)");
