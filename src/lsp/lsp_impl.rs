@@ -728,10 +728,20 @@ impl Kakehashi {
                     self.client.log_message(message_type, message.clone()).await;
                 }
                 LanguageEvent::SemanticTokensRefresh { language_id } => {
+                    // Only send refresh if client supports it (LSP @since 3.16.0 compliance).
+                    // Check MUST be before tokio::spawn - can't `continue` from async block.
+                    if !self.supports_semantic_tokens_refresh() {
+                        log::debug!(
+                            "Skipping semantic_tokens_refresh for {} - client does not support it",
+                            language_id
+                        );
+                        continue;
+                    }
+
                     // Fire-and-forget because the response is just null
                     //
                     // Keep the receiver alive without dropping by timeout in order to
-                    // avoid tower-lsp panics
+                    // avoid tower-lsp panics (see commit b902e28d)
                     //
                     // Trade-off: If a client never responds (e.g., vim-lsp), this causes:
                     // - A small memory leak in tower-lsp's pending requests map
