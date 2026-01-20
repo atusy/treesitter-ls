@@ -51,6 +51,21 @@ fn lsp_legend_modifiers() -> Vec<SemanticTokenModifier> {
         .collect()
 }
 
+/// Check if client capabilities indicate semantic tokens refresh support.
+///
+/// Extracted as a pure function for unit testability - the Kakehashi struct
+/// cannot be constructed in unit tests due to tower_lsp::Client dependency.
+///
+/// Returns `false` for any missing/null capability in the chain (defensive
+/// default per LSP spec @since 3.16.0).
+fn check_semantic_tokens_refresh_support(caps: &ClientCapabilities) -> bool {
+    caps.workspace
+        .as_ref()
+        .and_then(|w| w.semantic_tokens.as_ref())
+        .and_then(|st| st.refresh_support)
+        .unwrap_or(false)
+}
+
 /// Apply content changes to text and build tree-sitter InputEdits.
 ///
 /// Processes LSP TextDocumentContentChangeEvent items, handling both:
@@ -1594,6 +1609,23 @@ mod tests {
     use super::*;
     use crate::config::settings::BridgeLanguageConfig;
     use std::collections::HashMap;
+
+    // Tests for check_semantic_tokens_refresh_support pure function
+    // These test the capability checking logic without needing to construct Kakehashi
+
+    #[test]
+    fn test_check_refresh_support_when_true() {
+        let caps = ClientCapabilities {
+            workspace: Some(WorkspaceClientCapabilities {
+                semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
+                    refresh_support: Some(true),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(check_semantic_tokens_refresh_support(&caps));
+    }
 
     #[test]
     fn should_create_valid_url_from_file_path() {
