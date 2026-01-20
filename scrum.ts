@@ -79,7 +79,7 @@ const scrum: ScrumDashboard = {
     number: 13,
     pbi_id: "pbi-global-shutdown-timeout",
     goal: "Implement global shutdown timeout with configurable ceiling and force-kill fallback",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       // Phase 1: Foundation (configurable timeout type)
       {
