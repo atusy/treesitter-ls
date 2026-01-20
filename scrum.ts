@@ -75,7 +75,75 @@ const scrum: ScrumDashboard = {
       status: "draft",
     },
   ],
-  sprint: null,
+  sprint: {
+    number: 13,
+    pbi_id: "pbi-global-shutdown-timeout",
+    goal: "Implement global shutdown timeout with configurable ceiling and force-kill fallback",
+    status: "planning",
+    subtasks: [
+      // Phase 1: Foundation (configurable timeout type)
+      {
+        test: "Unit test: GlobalShutdownTimeout type accepts 5-15s range, rejects out-of-range values",
+        implementation: "Add GlobalShutdownTimeout newtype with validation in config module",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0018: Global Shutdown 5-15s recommended range", "Consider Duration wrapper with From/Into traits"],
+      },
+      // Phase 2: Core Feature (global timeout wrapper)
+      {
+        test: "Unit test: shutdown_all completes within configured timeout even with hung servers",
+        implementation: "Wrap shutdown_all() parallel shutdowns in tokio::time::timeout(GLOBAL_TIMEOUT)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0017: Global timeout overrides all other timeouts", "Use JoinSet with timeout wrapper"],
+      },
+      {
+        test: "Integration test: multiple servers shut down concurrently, total time bounded by global timeout",
+        implementation: "Pass GlobalShutdownTimeout to shutdown_all() and enforce single ceiling",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Verify N servers complete in O(1) time, not O(N)", "Test with mock slow servers"],
+      },
+      // Phase 3: Force-kill fallback
+      {
+        test: "Unit test: force_kill_all() sends SIGTERM then SIGKILL to all remaining connections",
+        implementation: "Add force_kill_all() method to ConnectionPool that iterates connections",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Reuse existing force_kill_with_escalation() per connection", "Unix-only via cfg(unix)"],
+      },
+      {
+        test: "Integration test: all remaining connections receive SIGTERM then SIGKILL when global timeout expires",
+        implementation: "Wire force_kill_all() as fallback in shutdown_all() timeout handler",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0017: force_kill_all(connections) on timeout expiry", "Verify process termination"],
+      },
+      // Phase 4: Cleanup (remove per-connection timeout)
+      {
+        test: "Unit test: graceful_shutdown() has no internal timeout (relies on global ceiling)",
+        implementation: "Remove 5s SHUTDOWN_TIMEOUT constant from graceful_shutdown()",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0018: Global shutdown is the only ceiling", "Current hardcoded 5s in pool.rs:249"],
+      },
+      // Phase 5: Robustness (writer-idle budget verification)
+      {
+        test: "Unit test: writer idle wait (2s) counts against global budget, not additional time",
+        implementation: "Verify writer synchronization timeout is within graceful_shutdown() scope",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0017: 2s writer-idle counts against global budget", "Already implemented via Mutex-based sync"],
+      },
+    ],
+  },
   completed: [
     {
       number: 12,
