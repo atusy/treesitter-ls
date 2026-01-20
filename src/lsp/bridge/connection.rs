@@ -206,13 +206,31 @@ impl SplitConnectionWriter {
                 "Failed to send SIGTERM to process {}: {}",
                 pid, e
             );
-            // If SIGTERM fails, try SIGKILL directly
+            // If SIGTERM fails, try SIGKILL directly via start_kill()
             if let Err(kill_err) = self.child.start_kill() {
                 log::error!(
                     target: "kakehashi::bridge",
                     "Failed to send SIGTERM to process {}, and fallback SIGKILL also failed: {}",
                     pid, kill_err
                 );
+            } else {
+                // Wait for process to be reaped after fallback SIGKILL
+                match self.child.wait().await {
+                    Ok(status) => {
+                        log::debug!(
+                            target: "kakehashi::bridge",
+                            "Process {} terminated after fallback SIGKILL with status: {}",
+                            pid, status
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            target: "kakehashi::bridge",
+                            "Error waiting for process {} after fallback SIGKILL: {}",
+                            pid, e
+                        );
+                    }
+                }
             }
             return;
         }
@@ -281,8 +299,8 @@ impl SplitConnectionWriter {
 
     /// General (non-Unix) force-kill via direct process termination.
     ///
-    /// On Windows, terminates the process immediately via TerminateProcess.
-    /// No graceful period is available as Windows lacks SIGTERM equivalent.
+    /// On non-Unix platforms (e.g., Windows), terminates the process immediately.
+    /// No graceful period is available as these platforms lack SIGTERM equivalent.
     #[cfg(not(unix))]
     async fn force_kill_with_escalation_general(&mut self) {
         let Some(pid) = self.child.id() else {
@@ -295,7 +313,7 @@ impl SplitConnectionWriter {
 
         log::debug!(
             target: "kakehashi::bridge",
-            "Terminating process {} (Windows: TerminateProcess)",
+            "Terminating process {} (direct termination, no grace period)",
             pid
         );
 
