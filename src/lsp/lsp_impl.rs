@@ -1628,6 +1628,75 @@ mod tests {
     }
 
     #[test]
+    fn test_check_refresh_support_when_false() {
+        let caps = ClientCapabilities {
+            workspace: Some(WorkspaceClientCapabilities {
+                semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
+                    refresh_support: Some(false),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!check_semantic_tokens_refresh_support(&caps));
+    }
+
+    #[test]
+    fn test_check_refresh_support_when_refresh_support_none() {
+        // refreshSupport field is None (null in JSON)
+        let caps = ClientCapabilities {
+            workspace: Some(WorkspaceClientCapabilities {
+                semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
+                    refresh_support: None,
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!check_semantic_tokens_refresh_support(&caps));
+    }
+
+    #[test]
+    fn test_check_refresh_support_when_semantic_tokens_none() {
+        // semantic_tokens field is None
+        let caps = ClientCapabilities {
+            workspace: Some(WorkspaceClientCapabilities {
+                semantic_tokens: None,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!check_semantic_tokens_refresh_support(&caps));
+    }
+
+    #[test]
+    fn test_check_refresh_support_when_workspace_empty() {
+        // workspace is Some but empty (no semantic_tokens)
+        let caps = ClientCapabilities {
+            workspace: Some(WorkspaceClientCapabilities::default()),
+            ..Default::default()
+        };
+        assert!(!check_semantic_tokens_refresh_support(&caps));
+    }
+
+    #[test]
+    fn test_check_refresh_support_when_workspace_none() {
+        // workspace field is None (different from empty!)
+        let caps = ClientCapabilities {
+            workspace: None,
+            ..Default::default()
+        };
+        assert!(!check_semantic_tokens_refresh_support(&caps));
+    }
+
+    #[test]
+    fn test_check_refresh_support_when_capabilities_empty() {
+        // Completely empty capabilities (pre-init state)
+        let caps = ClientCapabilities::default();
+        assert!(!check_semantic_tokens_refresh_support(&caps));
+    }
+
+    #[test]
     fn should_create_valid_url_from_file_path() {
         let path = "/tmp/test.rs";
         let url = Url::from_file_path(path).unwrap();
