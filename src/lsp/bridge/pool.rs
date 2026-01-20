@@ -894,38 +894,43 @@ impl LanguageServerPool {
             return;
         }
 
-        // Shutdown all Ready/Initializing connections in parallel with global timeout
-        let graceful_result = tokio::time::timeout(timeout.as_duration(), async {
-            let mut join_set = tokio::task::JoinSet::new();
-            for (language, handle) in handles_to_shutdown {
-                join_set.spawn(async move {
-                    log::debug!(
+        // Spawn graceful shutdown tasks into JoinSet (outside timeout so we can abort on timeout)
+        let mut join_set = tokio::task::JoinSet::new();
+        for (language, handle) in handles_to_shutdown {
+            join_set.spawn(async move {
+                log::debug!(
+                    target: "kakehashi::bridge",
+                    "Performing graceful shutdown for {} connection",
+                    language
+                );
+                if let Err(e) = handle.graceful_shutdown().await {
+                    log::warn!(
                         target: "kakehashi::bridge",
-                        "Performing graceful shutdown for {} connection",
-                        language
+                        "Graceful shutdown failed for {}: {}",
+                        language, e
                     );
-                    if let Err(e) = handle.graceful_shutdown().await {
-                        log::warn!(
-                            target: "kakehashi::bridge",
-                            "Graceful shutdown failed for {}: {}",
-                            language, e
-                        );
-                    }
-                });
-            }
+                }
+            });
+        }
 
-            // Wait for all shutdowns to complete
-            Self::drain_join_set(&mut join_set, "Shutdown task").await;
-        })
+        // Wait for all shutdowns to complete with global timeout
+        let graceful_result = tokio::time::timeout(
+            timeout.as_duration(),
+            Self::drain_join_set(&mut join_set, "Shutdown task"),
+        )
         .await;
 
-        // Handle timeout: force-kill remaining connections
+        // Handle timeout: abort remaining tasks and force-kill connections
         if graceful_result.is_err() {
             log::warn!(
                 target: "kakehashi::bridge",
                 "Global shutdown timeout ({:?}) expired, force-killing remaining connections",
                 timeout.as_duration()
             );
+
+            // Abort still-running graceful shutdown tasks to avoid duplicate logs and wasted work.
+            // Note: force_kill is idempotent (returns early if process exited), so any race is harmless.
+            join_set.abort_all();
 
             self.force_kill_all().await;
         }
