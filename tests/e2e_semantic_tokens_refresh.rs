@@ -79,10 +79,10 @@ fn test_server_operates_with_refresh_capability_enabled() {
         }),
     );
 
-    // Server should respond (may be null result, but should not error)
+    // Server should respond without error (result may be null for hover)
     assert!(
-        hover.get("result").is_some() || hover.get("error").is_none(),
-        "Server should operate correctly with refresh capability enabled"
+        hover.get("error").is_none(),
+        "Server should respond without error when refresh capability is enabled"
     );
 }
 
@@ -127,10 +127,10 @@ fn test_server_operates_with_refresh_capability_disabled() {
         }),
     );
 
-    // Server should respond (may be null result, but should not error)
+    // Server should respond without error (result may be null for hover)
     assert!(
-        hover.get("result").is_some() || hover.get("error").is_none(),
-        "Server should operate correctly with refresh capability disabled"
+        hover.get("error").is_none(),
+        "Server should respond without error when refresh capability is disabled"
     );
 }
 
@@ -164,10 +164,10 @@ fn test_server_operates_with_empty_capabilities() {
         }),
     );
 
-    // Server should respond
+    // Server should respond without error (result may be null for hover)
     assert!(
-        hover.get("result").is_some() || hover.get("error").is_none(),
-        "Server should operate correctly with empty capabilities"
+        hover.get("error").is_none(),
+        "Server should respond without error with empty capabilities"
     );
 }
 
