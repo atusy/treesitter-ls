@@ -3624,4 +3624,54 @@ mod tests {
             );
         }
     }
+
+    /// Test that multiple servers shut down concurrently, total time bounded by global timeout.
+    ///
+    /// ADR-0017: N servers should shut down in O(1) time, not O(N).
+    /// This test verifies:
+    /// 1. Multiple hung servers all receive shutdown in parallel
+    /// 2. Total shutdown time is bounded by global timeout (not N * per-server)
+    #[tokio::test]
+    async fn multiple_servers_shutdown_concurrently_bounded_by_global_timeout() {
+        let pool = LanguageServerPool::new();
+
+        // Insert 3 hung servers - if sequential would be 3 * 5s = 15s
+        for i in 0..3 {
+            let handle = create_handle_with_state(ConnectionState::Ready).await;
+            pool.connections
+                .lock()
+                .await
+                .insert(format!("hung_server_{}", i), handle);
+        }
+
+        // Use 5s timeout - should complete in ~5s even with 3 servers
+        let timeout = GlobalShutdownTimeout::new(Duration::from_secs(5))
+            .expect("5s is valid");
+
+        let start = std::time::Instant::now();
+        pool.shutdown_all_with_timeout(timeout).await;
+        let elapsed = start.elapsed();
+
+        // Key assertion: total time should be O(1), not O(N)
+        // 3 servers would take 15s sequential, but should complete in ~5-7s parallel
+        assert!(
+            elapsed < Duration::from_secs(8),
+            "3 servers should shut down in O(1) time, not O(N). Elapsed: {:?}",
+            elapsed
+        );
+
+        // All connections should be in Closed state
+        let connections = pool.connections.lock().await;
+        for i in 0..3 {
+            let key = format!("hung_server_{}", i);
+            if let Some(handle) = connections.get(&key) {
+                assert_eq!(
+                    handle.state(),
+                    ConnectionState::Closed,
+                    "Connection {} should be Closed after parallel shutdown",
+                    key
+                );
+            }
+        }
+    }
 }
