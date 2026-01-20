@@ -66,6 +66,18 @@ impl GlobalShutdownTimeout {
     /// - `Ok(GlobalShutdownTimeout)` if duration is within valid range
     /// - `Err(String)` with description if duration is out of range
     ///
+    /// # Boundary Behavior
+    ///
+    /// Sub-second precision is supported within the valid range:
+    /// - `5.0s` to `15.0s` inclusive are valid
+    /// - `4.999s` is rejected (floor is 5 whole seconds)
+    /// - `15.001s` is rejected (ceiling is exactly 15 seconds)
+    /// - `5.5s`, `10.123s`, etc. are accepted
+    ///
+    /// This asymmetry is intentional: the minimum ensures adequate time for
+    /// LSP handshake (5 whole seconds), while the maximum strictly bounds
+    /// user wait time (not even 1ms over 15s).
+    ///
     /// # Note
     /// Currently only used in tests. Production code uses `default()`.
     /// This method will be used when configurable timeout is exposed via config.
@@ -74,7 +86,8 @@ impl GlobalShutdownTimeout {
         let secs = duration.as_secs();
         let has_subsec = duration.subsec_nanos() > 0;
 
-        // Check minimum (must be at least 5 seconds)
+        // Check minimum: must be at least 5 whole seconds
+        // 4.999s has secs=4, so it's rejected. 5.001s has secs=5, so it's accepted.
         if secs < Self::MIN_SECS {
             return Err(format!(
                 "Global shutdown timeout must be at least {}s, got {:?}",
@@ -83,8 +96,8 @@ impl GlobalShutdownTimeout {
             ));
         }
 
-        // Check maximum (must be at most 15 seconds)
-        // Allow exactly 15s but not 15.001s
+        // Check maximum: must be at most exactly 15 seconds
+        // 15.0s is accepted. 15.001s is rejected (has_subsec is true when secs=15).
         if secs > Self::MAX_SECS || (secs == Self::MAX_SECS && has_subsec) {
             return Err(format!(
                 "Global shutdown timeout must be at most {}s, got {:?}",
