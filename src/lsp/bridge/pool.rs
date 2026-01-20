@@ -3832,4 +3832,54 @@ mod tests {
         // Note: We can't easily test "waits indefinitely" without complex mocking,
         // but removing the constant achieves the architectural goal.
     }
+
+    // ============================================================
+    // Sprint 13: Phase 5 - Robustness (writer-idle budget verification)
+    // ============================================================
+
+    /// Test that writer synchronization is within graceful_shutdown scope.
+    ///
+    /// ADR-0017: Writer-idle wait (2s) counts against global budget, not additional time.
+    ///
+    /// The current Mutex-based architecture provides equivalent synchronization:
+    /// - graceful_shutdown() acquires writer lock via self.writer().await
+    /// - This blocks until any ongoing writes complete
+    /// - The wait is part of graceful_shutdown(), counting against global timeout
+    /// - No separate 2s timeout needed - the global timeout (shutdown_all_with_timeout) provides the ceiling
+    ///
+    /// This test verifies the architectural property that writer synchronization
+    /// happens INSIDE graceful_shutdown, not as a separate pre-step.
+    #[tokio::test]
+    async fn writer_synchronization_is_within_graceful_shutdown_scope() {
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+
+        // Hold the writer lock to simulate ongoing write
+        let _writer_guard = handle.writer().await;
+
+        // Spawn a task to perform graceful_shutdown (will block on writer lock)
+        let shutdown_handle = Arc::clone(&handle);
+        let shutdown_task = tokio::spawn(async move {
+            // This will block until writer lock is released
+            let _ = shutdown_handle.graceful_shutdown().await;
+        });
+
+        // Give the shutdown task a moment to start and block
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Shutdown is blocked waiting for writer lock
+        assert!(!shutdown_task.is_finished(), "Shutdown should be blocked on writer lock");
+
+        // Release the writer lock
+        drop(_writer_guard);
+
+        // Now shutdown should proceed
+        let _ = tokio::time::timeout(Duration::from_secs(2), shutdown_task).await;
+
+        // Verify shutdown completed (state is Closed)
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closed,
+            "State should be Closed after writer released and shutdown completed"
+        );
+    }
 }
