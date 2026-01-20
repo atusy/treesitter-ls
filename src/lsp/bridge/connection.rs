@@ -144,24 +144,39 @@ impl SplitConnectionWriter {
         self.writer.write_message(message).await
     }
 
-    /// Force kill the child process with SIGTERM -> SIGKILL escalation (Unix only).
+    /// Force-kill the child process with platform-appropriate escalation.
     ///
-    /// This method implements the signal escalation sequence:
+    /// # Platform-Specific Behavior
+    ///
+    /// **Unix (Linux, macOS)**:
     /// 1. Send SIGTERM to allow graceful termination
     /// 2. Wait for up to 2 seconds for the process to exit
     /// 3. If still alive, send SIGKILL for forced termination
     ///
-    /// # Platform Support
-    ///
-    /// This method is only available on Unix platforms.
-    ///
-    /// On Windows, graceful shutdown relies on the LSP shutdown/exit handshake
-    /// (ADR-0017). If the language server becomes unresponsive, the fallback is
-    /// `start_kill()` via `Drop`, which sends the equivalent of SIGKILL directly
-    /// without a SIGTERM grace period. This means Windows servers don't get the
-    /// 2-second grace period to clean up after an unresponsive shutdown.
-    #[cfg(unix)]
+    /// **Windows**:
+    /// - Directly calls `TerminateProcess` via `start_kill()`
+    /// - No graceful period (Windows has no SIGTERM equivalent)
+    /// - Language servers should handle cleanup via LSP shutdown/exit handshake (ADR-0017)
     pub(crate) async fn force_kill_with_escalation(&mut self) {
+        #[cfg(unix)]
+        {
+            self.force_kill_with_escalation_unix().await;
+        }
+
+        #[cfg(not(unix))]
+        {
+            self.force_kill_with_escalation_general().await;
+        }
+    }
+
+    /// Unix-specific force-kill with SIGTERM->SIGKILL escalation.
+    ///
+    /// Implements graceful shutdown with 2-second grace period:
+    /// 1. Send SIGTERM to allow graceful cleanup
+    /// 2. Wait up to 2 seconds for process exit
+    /// 3. Escalate to SIGKILL if still alive
+    #[cfg(unix)]
+    async fn force_kill_with_escalation_unix(&mut self) {
         use nix::sys::signal::{Signal, kill};
         use nix::unistd::Pid;
         use std::time::Duration;
@@ -191,13 +206,31 @@ impl SplitConnectionWriter {
                 "Failed to send SIGTERM to process {}: {}",
                 pid, e
             );
-            // If SIGTERM fails, try SIGKILL directly
+            // If SIGTERM fails, try SIGKILL directly via start_kill()
             if let Err(kill_err) = self.child.start_kill() {
                 log::error!(
                     target: "kakehashi::bridge",
                     "Failed to send SIGTERM to process {}, and fallback SIGKILL also failed: {}",
                     pid, kill_err
                 );
+            } else {
+                // Wait for process to be reaped after fallback SIGKILL
+                match self.child.wait().await {
+                    Ok(status) => {
+                        log::debug!(
+                            target: "kakehashi::bridge",
+                            "Process {} terminated after fallback SIGKILL with status: {}",
+                            pid, status
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            target: "kakehashi::bridge",
+                            "Error waiting for process {} after fallback SIGKILL: {}",
+                            pid, e
+                        );
+                    }
+                }
             }
             return;
         }
@@ -258,6 +291,54 @@ impl SplitConnectionWriter {
                 log::warn!(
                     target: "kakehashi::bridge",
                     "Error waiting for process {} after SIGKILL: {}",
+                    pid, e
+                );
+            }
+        }
+    }
+
+    /// General (non-Unix) force-kill via direct process termination.
+    ///
+    /// On non-Unix platforms (e.g., Windows), terminates the process immediately.
+    /// No graceful period is available as these platforms lack SIGTERM equivalent.
+    #[cfg(not(unix))]
+    async fn force_kill_with_escalation_general(&mut self) {
+        let Some(pid) = self.child.id() else {
+            log::debug!(
+                target: "kakehashi::bridge",
+                "force_kill_with_escalation: child process already exited"
+            );
+            return;
+        };
+
+        log::debug!(
+            target: "kakehashi::bridge",
+            "Terminating process {} (direct termination, no grace period)",
+            pid
+        );
+
+        if let Err(e) = self.child.start_kill() {
+            log::error!(
+                target: "kakehashi::bridge",
+                "Failed to terminate process {}: {}",
+                pid, e
+            );
+            return;
+        }
+
+        // Wait for process to be reaped
+        match self.child.wait().await {
+            Ok(status) => {
+                log::debug!(
+                    target: "kakehashi::bridge",
+                    "Process {} terminated with status: {}",
+                    pid, status
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    target: "kakehashi::bridge",
+                    "Error waiting for process {} after termination: {}",
                     pid, e
                 );
             }
