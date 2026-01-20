@@ -4,20 +4,10 @@
 
 **kakehashi** is a Tree-sitter-based language server that bridges the gap between languages, editors, and tooling.
 
-```
-┌─────────────┐                         ┌─────────────┐
-│             │◄── Syntax Highlight ───►│   Editor    │
-│  kakehashi  │◄── Selection Range  ───►│  (Any LSP   │
-│             │◄── Go-to Definition ───►│   Client)   │
-│             │◄──       ...        ───►│             │
-└────▲─▲─▲────┘                         └─────────────┘
-     │ │ │
-┌────▼─▼─▼────┐
-│  External   │
-│   Language  │
-│   Servers   │
-│ (Optional)  │
-└─────────────┘
+```mermaid
+flowchart TB
+    K[kakehashi] <-->|Syntax Highlight<br>Selection Range<br>Go-to Definition<br>...| E["Editor<br>(Any LSP Client)"]
+    K[kakehashi] <-.->|Optional bridging<br>for embedded<br>languages| LS["External<br>Language Servers"]
 ```
 
 ## What is kakehashi?
