@@ -221,6 +221,15 @@ impl Kakehashi {
         }
     }
 
+    /// Returns true only if client declared workspace.semanticTokens.refreshSupport.
+    /// Returns false if initialize() hasn't been called yet (OnceLock is empty).
+    fn supports_semantic_tokens_refresh(&self) -> bool {
+        self.client_capabilities
+            .get()
+            .map(check_semantic_tokens_refresh_support)
+            .unwrap_or(false)
+    }
+
     /// Initialize the failed parser registry with crash detection.
     ///
     /// Uses the default data directory for state storage.
