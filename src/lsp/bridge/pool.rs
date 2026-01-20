@@ -23,6 +23,82 @@ use super::protocol::{VirtualDocumentUri, build_bridge_didopen_notification};
 /// within this duration, the connection attempt fails with a timeout error.
 const INIT_TIMEOUT_SECS: u64 = 30;
 
+/// Global shutdown timeout for all connections (ADR-0018 Tier 3: 5-15s).
+///
+/// This is the single ceiling for the entire shutdown sequence across all
+/// connections. Per ADR-0017, all connections shut down in parallel under
+/// this global timeout. When the timeout expires, remaining connections
+/// receive force_kill_all() with SIGTERM->SIGKILL escalation.
+///
+/// # Valid Range
+///
+/// - Minimum: 5 seconds (allows graceful LSP handshake for fast servers)
+/// - Maximum: 15 seconds (bounds user wait time during shutdown)
+/// - Default: 10 seconds (balance between graceful exit and user experience)
+///
+/// # Usage
+///
+/// ```ignore
+/// let timeout = GlobalShutdownTimeout::new(Duration::from_secs(10))?;
+/// pool.shutdown_all_with_timeout(timeout).await;
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GlobalShutdownTimeout(Duration);
+
+impl GlobalShutdownTimeout {
+    /// Minimum valid timeout: 5 seconds
+    const MIN_SECS: u64 = 5;
+    /// Maximum valid timeout: 15 seconds
+    const MAX_SECS: u64 = 15;
+    /// Default timeout: 10 seconds
+    const DEFAULT_SECS: u64 = 10;
+
+    /// Create a new GlobalShutdownTimeout with validation.
+    ///
+    /// # Arguments
+    /// * `duration` - The timeout duration (must be 5-15 seconds)
+    ///
+    /// # Returns
+    /// - `Ok(GlobalShutdownTimeout)` if duration is within valid range
+    /// - `Err(String)` with description if duration is out of range
+    pub(crate) fn new(duration: Duration) -> Result<Self, String> {
+        let secs = duration.as_secs();
+        let has_subsec = duration.subsec_nanos() > 0;
+
+        // Check minimum (must be at least 5 seconds)
+        if secs < Self::MIN_SECS {
+            return Err(format!(
+                "Global shutdown timeout must be at least {}s, got {:?}",
+                Self::MIN_SECS,
+                duration
+            ));
+        }
+
+        // Check maximum (must be at most 15 seconds)
+        // Allow exactly 15s but not 15.001s
+        if secs > Self::MAX_SECS || (secs == Self::MAX_SECS && has_subsec) {
+            return Err(format!(
+                "Global shutdown timeout must be at most {}s, got {:?}",
+                Self::MAX_SECS,
+                duration
+            ));
+        }
+
+        Ok(Self(duration))
+    }
+
+    /// Get the inner Duration value.
+    pub(crate) fn as_duration(&self) -> Duration {
+        self.0
+    }
+}
+
+impl Default for GlobalShutdownTimeout {
+    fn default() -> Self {
+        Self(Duration::from_secs(Self::DEFAULT_SECS))
+    }
+}
+
 /// State of a downstream language server connection.
 ///
 /// Tracks the lifecycle of the LSP handshake per ADR-0015:
@@ -3310,6 +3386,90 @@ mod tests {
             err.to_string(),
             "bridge: connection closing",
             "Should return REQUEST_FAILED with connection closing message"
+        );
+    }
+
+    // ============================================================
+    // Sprint 13: Global Shutdown Timeout (PBI-global-shutdown-timeout)
+    // ============================================================
+
+    /// Test that GlobalShutdownTimeout type accepts values in 5-15s range.
+    ///
+    /// ADR-0018 specifies the global shutdown timeout should be 5-15s.
+    /// This test verifies the newtype validation accepts valid values.
+    #[test]
+    fn global_shutdown_timeout_accepts_valid_range() {
+        // Minimum valid: 5 seconds
+        let min_timeout = GlobalShutdownTimeout::new(Duration::from_secs(5));
+        assert!(
+            min_timeout.is_ok(),
+            "5s should be valid minimum"
+        );
+
+        // Maximum valid: 15 seconds
+        let max_timeout = GlobalShutdownTimeout::new(Duration::from_secs(15));
+        assert!(
+            max_timeout.is_ok(),
+            "15s should be valid maximum"
+        );
+
+        // Middle of range: 10 seconds
+        let mid_timeout = GlobalShutdownTimeout::new(Duration::from_secs(10));
+        assert!(
+            mid_timeout.is_ok(),
+            "10s should be valid"
+        );
+    }
+
+    /// Test that GlobalShutdownTimeout type rejects values outside 5-15s range.
+    ///
+    /// ADR-0018 specifies the global shutdown timeout should be 5-15s.
+    /// This test verifies the newtype validation rejects out-of-range values.
+    #[test]
+    fn global_shutdown_timeout_rejects_out_of_range() {
+        // Below minimum: 4 seconds
+        let too_short = GlobalShutdownTimeout::new(Duration::from_secs(4));
+        assert!(
+            too_short.is_err(),
+            "4s should be rejected as too short"
+        );
+
+        // Above maximum: 16 seconds
+        let too_long = GlobalShutdownTimeout::new(Duration::from_secs(16));
+        assert!(
+            too_long.is_err(),
+            "16s should be rejected as too long"
+        );
+
+        // Zero duration
+        let zero = GlobalShutdownTimeout::new(Duration::ZERO);
+        assert!(
+            zero.is_err(),
+            "0s should be rejected"
+        );
+    }
+
+    /// Test that GlobalShutdownTimeout provides access to inner Duration.
+    #[test]
+    fn global_shutdown_timeout_as_duration() {
+        let timeout = GlobalShutdownTimeout::new(Duration::from_secs(10))
+            .expect("10s is valid");
+
+        assert_eq!(timeout.as_duration(), Duration::from_secs(10));
+    }
+
+    /// Test default GlobalShutdownTimeout value.
+    ///
+    /// Default should be a reasonable middle value (10s) per ADR-0018 recommendation.
+    #[test]
+    fn global_shutdown_timeout_default() {
+        let default_timeout = GlobalShutdownTimeout::default();
+
+        // Default should be within valid range
+        let duration = default_timeout.as_duration();
+        assert!(
+            duration >= Duration::from_secs(5) && duration <= Duration::from_secs(15),
+            "Default should be within 5-15s range"
         );
     }
 }
