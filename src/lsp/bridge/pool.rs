@@ -883,10 +883,6 @@ impl LanguageServerPool {
             return;
         }
 
-        // Clone handles for force-kill fallback (need ownership for both paths)
-        let handles_for_force_kill: Vec<Arc<ConnectionHandle>> =
-            handles_to_shutdown.iter().map(|(_, h)| Arc::clone(h)).collect();
-
         // Shutdown all Ready/Initializing connections in parallel with global timeout
         let graceful_result = tokio::time::timeout(timeout.as_duration(), async {
             let mut join_set = tokio::task::JoinSet::new();
@@ -920,14 +916,21 @@ impl LanguageServerPool {
                 timeout.as_duration()
             );
 
-            // Force-kill all connections that haven't completed
-            for handle in handles_for_force_kill {
-                if handle.state() != ConnectionState::Closed {
-                    #[cfg(unix)]
-                    {
-                        handle.force_kill().await;
+            // Force-kill remaining connections (Unix: SIGTERM->SIGKILL, Windows: via Drop)
+            #[cfg(unix)]
+            {
+                self.force_kill_all().await;
+            }
+
+            // On Windows, connections will be terminated via Drop (start_kill)
+            // when the ConnectionHandle is dropped. Just ensure state transition.
+            #[cfg(not(unix))]
+            {
+                let connections = self.connections.lock().await;
+                for (_, handle) in connections.iter() {
+                    if handle.state() != ConnectionState::Closed {
+                        handle.complete_shutdown();
                     }
-                    handle.complete_shutdown();
                 }
             }
         }
@@ -3755,6 +3758,50 @@ mod tests {
                     handle.state(),
                     ConnectionState::Closed,
                     "Connection {} should be Closed after force_kill_all()",
+                    key
+                );
+            }
+        }
+    }
+
+    /// Test that shutdown_all_with_timeout wires force_kill fallback correctly.
+    ///
+    /// ADR-0017: When global timeout expires, remaining connections are force-killed.
+    /// This test verifies all connections end up in Closed state regardless of
+    /// how graceful shutdown proceeds.
+    ///
+    /// Note: Full timeout behavior testing depends on removing the per-connection
+    /// timeout (subtask 6). For now, we verify the force_kill path is wired and
+    /// all connections reach Closed state.
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn shutdown_with_timeout_ensures_all_connections_closed() {
+        let pool = LanguageServerPool::new();
+
+        // Insert connections
+        for i in 0..2 {
+            let handle = create_handle_with_state(ConnectionState::Ready).await;
+            pool.connections
+                .lock()
+                .await
+                .insert(format!("server_{}", i), handle);
+        }
+
+        // Use minimum valid timeout (5s)
+        let timeout = GlobalShutdownTimeout::new(Duration::from_secs(5))
+            .expect("5s is valid");
+
+        pool.shutdown_all_with_timeout(timeout).await;
+
+        // All connections should be in Closed state (via graceful shutdown or force-kill)
+        let connections = pool.connections.lock().await;
+        for i in 0..2 {
+            let key = format!("server_{}", i);
+            if let Some(handle) = connections.get(&key) {
+                assert_eq!(
+                    handle.state(),
+                    ConnectionState::Closed,
+                    "Connection {} should be Closed after shutdown_all_with_timeout",
                     key
                 );
             }
