@@ -274,6 +274,156 @@ impl LspClient {
             }
         }
     }
+
+    /// Receive a server-initiated request with a specific method name.
+    ///
+    /// Server-initiated requests have both "id" and "method" fields.
+    /// This method waits for such a request up to the given timeout.
+    ///
+    /// # Arguments
+    /// * `method` - The expected method name (e.g., "workspace/semanticTokens/refresh")
+    /// * `timeout` - Maximum time to wait for the request
+    ///
+    /// # Returns
+    /// * `Some(Value)` - The full request JSON if received
+    /// * `None` - If timeout elapsed without receiving the expected request
+    ///
+    /// # Note
+    /// This method collects and discards notifications (no "id") and responses
+    /// (no "method") while waiting for a server request.
+    pub(crate) fn receive_server_request(
+        &mut self,
+        method: &str,
+        timeout: Duration,
+    ) -> Option<Value> {
+        let start_time = Instant::now();
+
+        while start_time.elapsed() < timeout {
+            // Use a short internal timeout to allow checking elapsed time
+            let remaining = timeout.saturating_sub(start_time.elapsed());
+            if remaining.is_zero() {
+                return None;
+            }
+
+            // Try to receive a message with remaining timeout
+            match self.receive_message_with_timeout(remaining.min(Duration::from_millis(100))) {
+                Some(message) => {
+                    // Server request has both "id" and "method"
+                    if message.get("id").is_some() && message.get("method").is_some() {
+                        if message["method"].as_str() == Some(method) {
+                            return Some(message);
+                        }
+                        // Different server request - could queue it, but for now skip
+                    }
+                    // Otherwise it's a notification or response, continue waiting
+                }
+                None => {
+                    // Timeout on this iteration, continue checking overall timeout
+                    continue;
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Receive a message with timeout. Returns None if timeout expires.
+    ///
+    /// Unlike receive_message() which blocks indefinitely, this version
+    /// returns None when no message is available within the timeout.
+    ///
+    /// # Note
+    /// Due to BufReader::read_line being blocking, this implementation
+    /// uses a polling approach with short sleeps. For test purposes,
+    /// this limitation is acceptable.
+    fn receive_message_with_timeout(&mut self, timeout: Duration) -> Option<Value> {
+        use std::io::ErrorKind;
+
+        const MAX_HEADERS: u32 = 100;
+        const MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
+
+        let start_time = Instant::now();
+        let mut header_count = 0u32;
+        let mut header = String::new();
+
+        loop {
+            if start_time.elapsed() > timeout {
+                return None;
+            }
+
+            if header_count >= MAX_HEADERS {
+                return None;
+            }
+
+            header.clear();
+
+            // Note: BufReader::read_line is blocking. For proper timeout support,
+            // would need async I/O or platform-specific non-blocking reads.
+            // For tests, we accept this limitation and use short timeouts.
+            match self.stdout.read_line(&mut header) {
+                Ok(0) => return None, // EOF
+                Ok(_) => {}
+                Err(e) if e.kind() == ErrorKind::WouldBlock => continue,
+                Err(_) => return None,
+            }
+
+            header_count += 1;
+
+            if header == "\r\n" {
+                continue;
+            }
+
+            if header.starts_with("Content-Length:") {
+                let len: usize = header
+                    .trim_start_matches("Content-Length:")
+                    .trim()
+                    .parse()
+                    .ok()?;
+
+                if len > MAX_MESSAGE_SIZE || len == 0 {
+                    return None;
+                }
+
+                // Read empty line
+                let mut empty = String::new();
+                if self.stdout.read_line(&mut empty).ok()? == 0 {
+                    return None;
+                }
+
+                // Read body
+                let mut body = vec![0u8; len];
+                std::io::Read::read_exact(&mut self.stdout, &mut body).ok()?;
+
+                return serde_json::from_slice(&body).ok();
+            }
+        }
+    }
+
+    /// Send a response to a server-initiated request.
+    ///
+    /// Per LSP JSON-RPC 2.0, when the server sends a request (message with "id" and "method"),
+    /// the client MUST send a response. Failing to respond is a protocol violation.
+    ///
+    /// # Arguments
+    /// * `request_id` - The "id" from the server's request (accepts any JSON value per JSON-RPC 2.0)
+    /// * `result` - The result value (use `json!(null)` for void responses like refresh)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let refresh = client.receive_server_request("workspace/semanticTokens/refresh", timeout);
+    /// if let Some(request) = refresh {
+    ///     let id = request["id"].clone();
+    ///     client.respond_to_request(id, json!(null));  // void response
+    /// }
+    /// ```
+    pub(crate) fn respond_to_request(&mut self, request_id: Value, result: Value) {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": result
+        });
+        self.send_message(&response);
+    }
 }
 
 impl Drop for LspClient {
