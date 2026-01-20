@@ -3575,16 +3575,17 @@ mod tests {
 
     /// Test default GlobalShutdownTimeout value.
     ///
-    /// Default should be a reasonable middle value (10s) per ADR-0018 recommendation.
+    /// Default should be exactly 10s per ADR-0018 recommendation - a balance between
+    /// allowing graceful shutdown for fast servers and bounding user wait time.
     #[test]
     fn global_shutdown_timeout_default() {
         let default_timeout = GlobalShutdownTimeout::default();
 
-        // Default should be within valid range
-        let duration = default_timeout.as_duration();
-        assert!(
-            duration >= Duration::from_secs(5) && duration <= Duration::from_secs(15),
-            "Default should be within 5-15s range"
+        // Assert exact default value, not just range - ensures intentional changes
+        assert_eq!(
+            default_timeout.as_duration(),
+            Duration::from_secs(10),
+            "Default should be exactly 10s per ADR-0018"
         );
     }
 
