@@ -1266,6 +1266,12 @@ impl LanguageServer for Kakehashi {
                 e
             );
         }
+
+        // Graceful shutdown of all downstream language server connections (ADR-0017)
+        // - Transitions to Closing state, sends LSP shutdown/exit handshake
+        // - Escalates to SIGTERM/SIGKILL for unresponsive servers (Unix)
+        self.language_server_pool.shutdown_all().await;
+
         Ok(())
     }
 

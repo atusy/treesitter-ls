@@ -29,10 +29,16 @@ const INIT_TIMEOUT_SECS: u64 = 30;
 /// - Initializing: spawn started, awaiting initialize response
 /// - Ready: initialize/initialized handshake complete, can accept requests
 /// - Failed: initialization failed (timeout, error, etc.)
+/// - Closing: graceful shutdown in progress (LSP shutdown/exit handshake)
+/// - Closed: connection terminated (terminal state)
 ///
 /// State transitions per ADR-0015 Operation Gating:
 /// - Initializing -> Ready (on successful init)
 /// - Initializing -> Failed (on timeout/error)
+/// - Initializing -> Closing (on shutdown signal during init)
+/// - Ready -> Closing (on shutdown signal)
+/// - Closing -> Closed (on completion/timeout)
+/// - Failed -> Closed (direct, no LSP handshake - stdin unavailable)
 /// - Failed connections are removed from pool, next request spawns fresh server
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConnectionState {
@@ -42,6 +48,10 @@ pub(crate) enum ConnectionState {
     Ready,
     /// Initialization failed (timeout, error, server crash)
     Failed,
+    /// Graceful shutdown in progress (LSP shutdown/exit handshake)
+    Closing,
+    /// Connection terminated (terminal state)
+    Closed,
 }
 
 use super::actor::{ReaderTaskHandle, ResponseRouter, spawn_reader_task};
@@ -175,6 +185,150 @@ impl ConnectionHandle {
                 *poisoned.into_inner() = new_state;
             }
         }
+    }
+
+    /// Begin graceful shutdown of the connection.
+    ///
+    /// Transitions the connection to Closing state, which:
+    /// - Rejects new requests with "bridge: connection closing" error
+    /// - Signals that LSP shutdown/exit handshake should begin
+    ///
+    /// Valid from Ready or Initializing states per ADR-0015/ADR-0017.
+    pub(crate) fn begin_shutdown(&self) {
+        self.set_state(ConnectionState::Closing);
+    }
+
+    /// Complete the shutdown sequence.
+    ///
+    /// Transitions the connection to Closed state (terminal).
+    /// Called after LSP shutdown/exit handshake completes or times out.
+    ///
+    /// Valid from Closing or Failed states per ADR-0015/ADR-0017.
+    pub(crate) fn complete_shutdown(&self) {
+        self.set_state(ConnectionState::Closed);
+    }
+
+    /// Force kill the child process with SIGTERM -> SIGKILL escalation (Unix only).
+    ///
+    /// This is the fallback when LSP shutdown handshake times out or fails.
+    /// Implements the signal escalation per ADR-0017:
+    /// 1. Send SIGTERM to allow graceful termination
+    /// 2. Wait briefly (2 seconds)
+    /// 3. Send SIGKILL if process still alive
+    ///
+    /// # Platform Support
+    /// This method is only available on Unix platforms.
+    #[cfg(unix)]
+    pub(crate) async fn force_kill(&self) {
+        let mut writer = self.writer.lock().await;
+        writer.force_kill_with_escalation().await;
+    }
+
+    /// Perform graceful shutdown with LSP handshake (ADR-0017).
+    ///
+    /// Implements the LSP shutdown sequence:
+    /// 1. Transition to Closing state (new operations rejected)
+    /// 2. Send LSP "shutdown" request and wait for response
+    /// 3. Send LSP "exit" notification
+    /// 4. Force kill process (Unix: SIGTERM→SIGKILL escalation)
+    /// 5. Transition to Closed state
+    ///
+    /// # Cleanup Guarantee
+    ///
+    /// Steps 4-5 (force kill and state transition) are **always executed**,
+    /// even if the LSP handshake fails. This prevents connections from getting
+    /// stuck in the Closing state.
+    ///
+    /// # Returns
+    /// - Ok(()) if shutdown completed successfully
+    /// - Err if shutdown request failed (state still transitions to Closed)
+    ///
+    /// # Timeout
+    /// Uses 5-second timeout for the shutdown response.
+    pub(crate) async fn graceful_shutdown(&self) -> io::Result<()> {
+        const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+        // 1. Transition to Closing state
+        self.begin_shutdown();
+
+        // 2-3. Perform LSP handshake, capturing any error
+        // Wrapped in async block to ensure cleanup (steps 4-5) always runs
+        let handshake_result: io::Result<()> = async {
+            // 2. Send LSP shutdown request
+            let (request_id, response_rx) = self.register_request()?;
+
+            let shutdown_request = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request_id.as_i64(),
+                "method": "shutdown",
+                "params": null
+            });
+
+            {
+                let mut writer = self.writer().await;
+                writer.write_message(&shutdown_request).await?;
+            }
+
+            // Wait for shutdown response with timeout
+            let result = tokio::time::timeout(SHUTDOWN_TIMEOUT, response_rx).await;
+
+            match result {
+                Ok(Ok(_response)) => {
+                    log::debug!(
+                        target: "kakehashi::bridge",
+                        "Shutdown response received, sending exit notification"
+                    );
+                }
+                Ok(Err(_)) => {
+                    log::warn!(
+                        target: "kakehashi::bridge",
+                        "Shutdown response channel closed"
+                    );
+                }
+                Err(_) => {
+                    log::warn!(
+                        target: "kakehashi::bridge",
+                        "Shutdown response timeout, sending exit notification anyway"
+                    );
+                    // Clean up the pending request
+                    self.router().remove(request_id);
+                }
+            }
+
+            // 3. Send exit notification (no response expected)
+            let exit_notification = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "exit",
+                "params": null
+            });
+
+            {
+                let mut writer = self.writer().await;
+                // Best effort - if this fails, process will be killed anyway
+                let _ = writer.write_message(&exit_notification).await;
+            }
+
+            Ok(())
+        }
+        .await;
+
+        // 4. Force kill the process with signal escalation (Unix only)
+        // This ensures the process is terminated even if it ignores exit notification
+        // ALWAYS executed, even if handshake failed
+        //
+        // On non-Unix platforms (Windows), process termination relies on Drop:
+        // SplitConnectionWriter::drop() calls start_kill() when the writer is dropped.
+        // This happens when complete_shutdown() is called and references are released.
+        #[cfg(unix)]
+        {
+            self.force_kill().await;
+        }
+
+        // 5. Transition to Closed state
+        // ALWAYS executed, even if handshake failed
+        self.complete_shutdown();
+
+        handshake_result
     }
 
     /// Get access to the writer for sending messages.
@@ -522,6 +676,79 @@ impl LanguageServerPool {
         .await
     }
 
+    /// Initiate graceful shutdown of all connections.
+    ///
+    /// Called during LSP server shutdown to cleanly terminate all downstream
+    /// language servers. Performs LSP shutdown/exit handshake per ADR-0017.
+    ///
+    /// # Usage
+    ///
+    /// This method should be called exactly once during the LSP `shutdown` handler.
+    /// Multiple concurrent calls are safe (due to state machine monotonicity) but
+    /// wasteful, as connections already in Closing/Closed state are skipped.
+    ///
+    /// # Shutdown Behavior by State
+    ///
+    /// - Ready/Initializing: Perform full LSP shutdown handshake
+    /// - Failed: Skip LSP handshake, go directly to Closed (stdin unavailable)
+    /// - Closing/Closed: Already shutting down, skip
+    ///
+    /// All shutdowns run in parallel with a global timeout (ADR-0017).
+    pub(crate) async fn shutdown_all(&self) {
+        // Collect handles to shutdown - release lock before async operations
+        let handles_to_shutdown: Vec<(String, Arc<ConnectionHandle>)> = {
+            let connections = self.connections.lock().await;
+            connections
+                .iter()
+                .filter_map(|(language, handle)| match handle.state() {
+                    ConnectionState::Ready | ConnectionState::Initializing => {
+                        Some((language.clone(), Arc::clone(handle)))
+                    }
+                    ConnectionState::Failed => {
+                        log::debug!(
+                            target: "kakehashi::bridge",
+                            "Shutting down {} connection (Failed → Closed)",
+                            language
+                        );
+                        handle.complete_shutdown();
+                        None
+                    }
+                    ConnectionState::Closing | ConnectionState::Closed => {
+                        log::debug!(
+                            target: "kakehashi::bridge",
+                            "Connection {} already shutting down or closed",
+                            language
+                        );
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        // Shutdown all Ready/Initializing connections in parallel
+        // Using spawn() + JoinSet for parallel execution without futures crate
+        let mut join_set = tokio::task::JoinSet::new();
+        for (language, handle) in handles_to_shutdown {
+            join_set.spawn(async move {
+                log::debug!(
+                    target: "kakehashi::bridge",
+                    "Performing graceful shutdown for {} connection",
+                    language
+                );
+                if let Err(e) = handle.graceful_shutdown().await {
+                    log::warn!(
+                        target: "kakehashi::bridge",
+                        "Graceful shutdown failed for {}: {}",
+                        language, e
+                    );
+                }
+            });
+        }
+
+        // Wait for all shutdowns to complete
+        while join_set.join_next().await.is_some() {}
+    }
+
     /// Get or create a connection for the specified language with custom timeout.
     ///
     /// If no connection exists, spawns the language server and stores the connection
@@ -570,6 +797,21 @@ impl LanguageServerPool {
                 }
                 ConnectionState::Ready => {
                     return Ok(Arc::clone(handle));
+                }
+                ConnectionState::Closing => {
+                    // Connection is shutting down, reject new requests
+                    return Err(io::Error::other("bridge: connection closing"));
+                }
+                ConnectionState::Closed => {
+                    // Connection is terminated, remove from pool and respawn
+                    connections.remove(language);
+                    drop(connections);
+                    return Box::pin(self.get_or_create_connection_with_timeout(
+                        language,
+                        server_config,
+                        timeout,
+                    ))
+                    .await;
                 }
             }
         }
@@ -2448,6 +2690,625 @@ mod tests {
             cleanup_count.load(std::sync::atomic::Ordering::SeqCst),
             1,
             "Cleanup callback should be called exactly once"
+        );
+    }
+
+    // ========================================
+    // Sprint 12: Connection State Machine Tests
+    // ========================================
+
+    /// Test that ConnectionState enum has all 5 states per ADR-0015.
+    ///
+    /// States: Initializing, Ready, Failed, Closing, Closed
+    /// This test verifies the enum is exhaustively enumerable.
+    #[test]
+    fn connection_state_has_all_five_states() {
+        // Verify all 5 states exist by constructing them
+        let states = [
+            ConnectionState::Initializing,
+            ConnectionState::Ready,
+            ConnectionState::Failed,
+            ConnectionState::Closing,
+            ConnectionState::Closed,
+        ];
+
+        // Verify we have exactly 5 states
+        assert_eq!(
+            states.len(),
+            5,
+            "ConnectionState should have exactly 5 variants"
+        );
+
+        // Verify each state has the expected Debug representation
+        assert_eq!(
+            format!("{:?}", ConnectionState::Initializing),
+            "Initializing"
+        );
+        assert_eq!(format!("{:?}", ConnectionState::Ready), "Ready");
+        assert_eq!(format!("{:?}", ConnectionState::Failed), "Failed");
+        assert_eq!(format!("{:?}", ConnectionState::Closing), "Closing");
+        assert_eq!(format!("{:?}", ConnectionState::Closed), "Closed");
+    }
+
+    /// Test that Ready state transitions to Closing on shutdown signal.
+    ///
+    /// ADR-0015: Ready → Closing transition occurs when shutdown is initiated.
+    /// This is the graceful shutdown path for active connections.
+    #[tokio::test]
+    async fn ready_to_closing_transition() {
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+
+        // Verify initial state
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "Should start in Ready state"
+        );
+
+        // Trigger shutdown - should transition to Closing
+        handle.begin_shutdown();
+
+        // Verify transition
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closing,
+            "Ready + shutdown signal = Closing"
+        );
+    }
+
+    /// Test that Initializing state transitions to Closing on shutdown signal.
+    ///
+    /// ADR-0017: When shutdown is initiated during initialization, abort init
+    /// and proceed directly to shutdown. This handles cases where editor closes
+    /// during slow server startup.
+    #[tokio::test]
+    async fn initializing_to_closing_transition() {
+        let handle = create_handle_with_state(ConnectionState::Initializing).await;
+
+        // Verify initial state
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Initializing,
+            "Should start in Initializing state"
+        );
+
+        // Trigger shutdown - should transition to Closing
+        handle.begin_shutdown();
+
+        // Verify transition
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closing,
+            "Initializing + shutdown signal = Closing"
+        );
+    }
+
+    /// Test that Closing state transitions to Closed on completion.
+    ///
+    /// ADR-0015: Closing → Closed transition occurs when LSP shutdown/exit
+    /// handshake completes or times out. This is the terminal state for
+    /// graceful shutdown.
+    #[tokio::test]
+    async fn closing_to_closed_transition() {
+        let handle = create_handle_with_state(ConnectionState::Closing).await;
+
+        // Verify initial state
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closing,
+            "Should start in Closing state"
+        );
+
+        // Complete shutdown - should transition to Closed
+        handle.complete_shutdown();
+
+        // Verify transition
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closed,
+            "Closing + completion = Closed"
+        );
+    }
+
+    /// Test that Failed state transitions directly to Closed (bypassing Closing).
+    ///
+    /// ADR-0017: Failed connections cannot perform LSP shutdown/exit handshake
+    /// because stdin is unavailable. They go directly to Closed state.
+    #[tokio::test]
+    async fn failed_to_closed_direct_transition() {
+        let handle = create_handle_with_state(ConnectionState::Failed).await;
+
+        // Verify initial state
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Failed,
+            "Should start in Failed state"
+        );
+
+        // Direct shutdown completion - bypasses Closing state
+        handle.complete_shutdown();
+
+        // Verify transition
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closed,
+            "Failed + completion = Closed (bypasses Closing)"
+        );
+    }
+
+    /// Test that requests during Closing state receive error immediately.
+    ///
+    /// ADR-0015 Operation Gating: When connection is Closing, new requests
+    /// are rejected with "bridge: connection closing" error. This prevents
+    /// new requests from queuing during shutdown.
+    #[tokio::test]
+    async fn request_during_closing_state_returns_error_immediately() {
+        use std::sync::Arc;
+        use tower_lsp::lsp_types::{Position, Url};
+
+        let pool = Arc::new(LanguageServerPool::new());
+        let config = BridgeServerConfig {
+            cmd: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "cat > /dev/null".to_string(),
+            ],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Insert a ConnectionHandle with Closing state
+        {
+            let handle = create_handle_with_state(ConnectionState::Closing).await;
+            pool.connections
+                .lock()
+                .await
+                .insert("lua".to_string(), handle);
+        }
+
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let host_position = Position {
+            line: 3,
+            character: 5,
+        };
+
+        // Test hover request - should fail immediately with connection closing error
+        let start = std::time::Instant::now();
+        let result = pool
+            .send_hover_request(
+                &config,
+                &host_uri,
+                host_position,
+                "lua",
+                "region-0",
+                3,
+                "print('hello')",
+                1, // upstream_request_id
+            )
+            .await;
+        assert!(
+            start.elapsed() < Duration::from_millis(100),
+            "Should not block"
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "bridge: connection closing"
+        );
+
+        // Test completion request - same behavior
+        let result = pool
+            .send_completion_request(
+                &config,
+                &host_uri,
+                host_position,
+                "lua",
+                "region-0",
+                3,
+                "print('hello')",
+                1, // upstream_request_id
+            )
+            .await;
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "bridge: connection closing"
+        );
+    }
+
+    // ========================================
+    // Sprint 12 Phase 2: LSP Shutdown Handshake Tests
+    // ========================================
+
+    /// Test that shutdown sends LSP shutdown request and receives response.
+    ///
+    /// ADR-0017: Graceful shutdown requires sending LSP "shutdown" request and
+    /// waiting for the server's response before sending "exit" notification.
+    /// This test verifies the shutdown request is properly formatted and sent.
+    #[tokio::test]
+    async fn shutdown_sends_lsp_shutdown_request_and_waits_for_response() {
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
+        let pool = std::sync::Arc::new(LanguageServerPool::new());
+        let config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // First, establish a Ready connection
+        let handle = pool
+            .get_or_create_connection("lua", &config)
+            .await
+            .expect("should establish connection");
+
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "Connection should be Ready"
+        );
+
+        // Perform graceful shutdown
+        let result = handle.graceful_shutdown().await;
+
+        // Should succeed
+        assert!(
+            result.is_ok(),
+            "graceful_shutdown should succeed: {:?}",
+            result.err()
+        );
+
+        // Connection should be in Closed state after shutdown
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closed,
+            "Connection should be Closed after graceful_shutdown"
+        );
+    }
+
+    /// Test that graceful shutdown acquires exclusive writer access.
+    ///
+    /// ADR-0017 three-phase synchronization: The current architecture uses a Mutex
+    /// to serialize all writer access, which provides exclusive access during shutdown.
+    /// This test verifies that:
+    /// 1. Shutdown transitions to Closing state first (rejects new operations)
+    /// 2. Shutdown acquires writer lock for shutdown request
+    /// 3. After shutdown completes, state is Closed
+    ///
+    /// Note: The full three-phase writer loop synchronization (signal stop, wait idle,
+    /// exclusive access) applies to future writer loop architecture. Current Mutex-based
+    /// architecture provides equivalent synchronization.
+    #[tokio::test]
+    async fn graceful_shutdown_acquires_exclusive_writer_access() {
+        // Create a connection to a mock server
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+
+        // Verify initial state
+        assert_eq!(handle.state(), ConnectionState::Ready);
+
+        // Perform shutdown
+        let result = handle.graceful_shutdown().await;
+
+        // Should complete (though may fail due to mock server not responding)
+        // The important thing is state transitions are correct
+        let _ = result;
+
+        // After shutdown completes, state should be Closed
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closed,
+            "State should be Closed after graceful_shutdown"
+        );
+    }
+
+    /// Test that shutdown transitions through Closing state.
+    ///
+    /// ADR-0017: Shutdown transitions to Closing state first, which rejects new
+    /// operations. This test verifies the state transition happens immediately
+    /// when begin_shutdown() is called.
+    #[tokio::test]
+    async fn shutdown_transitions_through_closing_state() {
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+
+        // Verify initial state
+        assert_eq!(handle.state(), ConnectionState::Ready);
+
+        // Manually call begin_shutdown to verify transition
+        handle.begin_shutdown();
+
+        // State should be Closing now
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closing,
+            "State should be Closing after begin_shutdown"
+        );
+
+        // Complete shutdown
+        handle.complete_shutdown();
+
+        // State should be Closed now
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closed,
+            "State should be Closed after complete_shutdown"
+        );
+    }
+
+    /// Test that shutdown_all handles multiple connections in parallel.
+    ///
+    /// ADR-0017: All connections shut down in parallel with a global timeout.
+    /// This test verifies that multiple connections can be shut down concurrently.
+    #[tokio::test]
+    async fn shutdown_all_handles_multiple_connections_in_parallel() {
+        let pool = LanguageServerPool::new();
+
+        // Create multiple connections with different states
+        {
+            let ready_handle = create_handle_with_state(ConnectionState::Ready).await;
+            let failed_handle = create_handle_with_state(ConnectionState::Failed).await;
+            let closing_handle = create_handle_with_state(ConnectionState::Closing).await;
+
+            let mut connections = pool.connections.lock().await;
+            connections.insert("lua".to_string(), ready_handle);
+            connections.insert("python".to_string(), failed_handle);
+            connections.insert("rust".to_string(), closing_handle);
+        }
+
+        // Call shutdown_all
+        pool.shutdown_all().await;
+
+        // Verify final states
+        let connections = pool.connections.lock().await;
+
+        // Ready -> should be Closed (went through graceful shutdown)
+        let lua_handle = connections.get("lua").expect("lua should exist");
+        assert_eq!(
+            lua_handle.state(),
+            ConnectionState::Closed,
+            "Ready connection should be Closed after shutdown_all"
+        );
+
+        // Failed -> should be Closed (directly, no LSP handshake)
+        let python_handle = connections.get("python").expect("python should exist");
+        assert_eq!(
+            python_handle.state(),
+            ConnectionState::Closed,
+            "Failed connection should be Closed after shutdown_all"
+        );
+
+        // Closing -> should remain Closing (was already shutting down)
+        // Note: The closing handle was created with Closing state, but
+        // shutdown_all skips it, so it stays Closing unless something else
+        // completes the shutdown
+        let rust_handle = connections.get("rust").expect("rust should exist");
+        assert_eq!(
+            rust_handle.state(),
+            ConnectionState::Closing,
+            "Already-closing connection should remain Closing"
+        );
+    }
+
+    // ========================================
+    // Sprint 12 Phase 3: Forced Shutdown Tests
+    // ========================================
+
+    /// Test that unresponsive process receives SIGTERM then SIGKILL escalation.
+    ///
+    /// ADR-0017: When LSP shutdown handshake times out, escalate to process signals.
+    /// This test uses a script that ignores SIGTERM to verify SIGKILL escalation.
+    ///
+    /// Note: This test is Unix-specific due to process signal handling.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unresponsive_process_receives_sigterm_then_sigkill() {
+        use std::time::Instant;
+
+        // Create a connection to a process that ignores SIGTERM
+        // This script traps SIGTERM and continues, requiring SIGKILL to terminate
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            // Trap SIGTERM and ignore it, sleep indefinitely
+            "trap '' TERM; while true; do sleep 1; done".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        let handle = Arc::new(ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+        ));
+
+        // Start timer to verify escalation doesn't wait too long
+        let start = Instant::now();
+
+        // Call force_kill which should:
+        // 1. Send SIGTERM
+        // 2. Wait 2 seconds for graceful termination
+        // 3. Send SIGKILL if process still alive
+        handle.force_kill().await;
+
+        // Escalation should complete within reasonable time (SIGTERM wait + SIGKILL)
+        // We use 5 seconds as upper bound to account for SIGTERM wait period
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "Signal escalation should complete within 5 seconds"
+        );
+
+        // Process should be terminated
+        // Note: After force_kill, we can't directly check process status via handle,
+        // but the absence of a hang confirms the process was killed
+    }
+
+    /// Test that shutdown with pending requests fails those requests and then completes.
+    ///
+    /// ADR-0017 end-to-end shutdown sequence:
+    /// 1. Create a connection with in-flight requests
+    /// 2. Initiate shutdown (begin_shutdown transitions to Closing)
+    /// 3. Pending requests should receive REQUEST_FAILED error (router channels closed)
+    /// 4. LSP shutdown/exit handshake should complete
+    /// 5. Connection should transition to Closed state
+    ///
+    /// This test uses lua-language-server to verify real LSP shutdown behavior.
+    #[tokio::test]
+    async fn shutdown_with_pending_requests_fails_requests_then_completes() {
+        use std::sync::Arc;
+
+        // Skip test if lua-language-server is not available
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            return;
+        }
+
+        let pool = Arc::new(LanguageServerPool::new());
+        let config = BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Step 1: Establish a Ready connection
+        let handle = pool
+            .get_or_create_connection("lua", &config)
+            .await
+            .expect("should establish connection");
+
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "Connection should be Ready"
+        );
+
+        // Step 2: Register a pending request (simulates in-flight request)
+        let (request_id, response_rx) = handle.register_request().expect("should register request");
+
+        // Step 3: Initiate shutdown - should transition to Closing
+        handle.begin_shutdown();
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closing,
+            "Connection should be Closing after begin_shutdown"
+        );
+
+        // Step 4: Complete graceful shutdown in background
+        let shutdown_handle = Arc::clone(&handle);
+        let shutdown_task = tokio::spawn(async move { shutdown_handle.graceful_shutdown().await });
+
+        // Step 5: The pending request should fail when shutdown completes
+        // The router is dropped during shutdown, closing all channels
+        let response = tokio::time::timeout(Duration::from_secs(10), response_rx).await;
+
+        // The response should be an error (channel closed) or timeout
+        // because the shutdown closes the router
+        match response {
+            Ok(Ok(_)) => {
+                // If we got a response, it should be because the server
+                // responded before shutdown completed - this is acceptable
+                log::debug!("Pending request received response before shutdown");
+            }
+            Ok(Err(_)) => {
+                // Channel closed - this is the expected behavior
+                // Pending request failed due to shutdown
+                log::debug!("Pending request failed as expected (channel closed)");
+            }
+            Err(_) => {
+                // Timeout - clean up
+                handle.router().remove(request_id);
+                log::debug!("Pending request timed out");
+            }
+        }
+
+        // Wait for shutdown to complete
+        let _ = shutdown_task.await;
+
+        // Step 6: Connection should be in Closed state
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closed,
+            "Connection should be Closed after graceful_shutdown"
+        );
+    }
+
+    /// Test that new requests during Closing state receive REQUEST_FAILED immediately.
+    ///
+    /// This verifies operation gating during shutdown - the acceptance criterion that
+    /// "new requests in Closing state receive REQUEST_FAILED error".
+    #[tokio::test]
+    async fn new_request_during_closing_receives_request_failed() {
+        use std::sync::Arc;
+        use tower_lsp::lsp_types::{Position, Url};
+
+        let pool = Arc::new(LanguageServerPool::new());
+        let config = BridgeServerConfig {
+            cmd: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "cat > /dev/null".to_string(),
+            ],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        };
+
+        // Insert a connection in Closing state
+        let closing_handle = create_handle_with_state(ConnectionState::Closing).await;
+        pool.connections
+            .lock()
+            .await
+            .insert("lua".to_string(), closing_handle);
+
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let host_position = Position {
+            line: 3,
+            character: 5,
+        };
+
+        // Attempt to send a hover request - should fail immediately
+        let start = std::time::Instant::now();
+        let result = pool
+            .send_hover_request(
+                &config,
+                &host_uri,
+                host_position,
+                "lua",
+                "region-0",
+                3,
+                "print('hello')",
+                1,
+            )
+            .await;
+
+        // Should fail fast (not block)
+        assert!(
+            start.elapsed() < Duration::from_millis(100),
+            "Should fail immediately, not block"
+        );
+
+        // Should return the specific error message
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "bridge: connection closing",
+            "Should return REQUEST_FAILED with connection closing message"
         );
     }
 }

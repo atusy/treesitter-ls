@@ -37,6 +37,10 @@ ulid = "1"
 url = "2"
 percent-encoding = "2"
 
+# Unix-only dependencies (signal handling)
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", features = ["signal", "process"] }
+
 [features]
 e2e = []
 experimental = []

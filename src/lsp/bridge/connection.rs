@@ -143,6 +143,126 @@ impl SplitConnectionWriter {
     pub(crate) async fn write_message(&mut self, message: &serde_json::Value) -> io::Result<()> {
         self.writer.write_message(message).await
     }
+
+    /// Force kill the child process with SIGTERM -> SIGKILL escalation (Unix only).
+    ///
+    /// This method implements the signal escalation sequence:
+    /// 1. Send SIGTERM to allow graceful termination
+    /// 2. Wait for up to 2 seconds for the process to exit
+    /// 3. If still alive, send SIGKILL for forced termination
+    ///
+    /// # Platform Support
+    ///
+    /// This method is only available on Unix platforms.
+    ///
+    /// On Windows, graceful shutdown relies on the LSP shutdown/exit handshake
+    /// (ADR-0017). If the language server becomes unresponsive, the fallback is
+    /// `start_kill()` via `Drop`, which sends the equivalent of SIGKILL directly
+    /// without a SIGTERM grace period. This means Windows servers don't get the
+    /// 2-second grace period to clean up after an unresponsive shutdown.
+    #[cfg(unix)]
+    pub(crate) async fn force_kill_with_escalation(&mut self) {
+        use nix::sys::signal::{Signal, kill};
+        use nix::unistd::Pid;
+        use std::time::Duration;
+
+        const SIGTERM_WAIT: Duration = Duration::from_secs(2);
+
+        let Some(pid) = self.child.id() else {
+            log::debug!(
+                target: "kakehashi::bridge",
+                "force_kill_with_escalation: child process already exited"
+            );
+            return;
+        };
+
+        let nix_pid = Pid::from_raw(pid as i32);
+
+        // Step 1: Send SIGTERM
+        log::debug!(
+            target: "kakehashi::bridge",
+            "Sending SIGTERM to process {}",
+            pid
+        );
+
+        if let Err(e) = kill(nix_pid, Signal::SIGTERM) {
+            log::warn!(
+                target: "kakehashi::bridge",
+                "Failed to send SIGTERM to process {}: {}",
+                pid, e
+            );
+            // If SIGTERM fails, try SIGKILL directly
+            if let Err(kill_err) = self.child.start_kill() {
+                log::error!(
+                    target: "kakehashi::bridge",
+                    "Failed to send SIGTERM to process {}, and fallback SIGKILL also failed: {}",
+                    pid, kill_err
+                );
+            }
+            return;
+        }
+
+        // Step 2: Wait for process to exit with timeout
+        let wait_result = tokio::time::timeout(SIGTERM_WAIT, self.child.wait()).await;
+
+        match wait_result {
+            Ok(Ok(status)) => {
+                log::debug!(
+                    target: "kakehashi::bridge",
+                    "Process {} terminated after SIGTERM with status: {}",
+                    pid, status
+                );
+                return;
+            }
+            Ok(Err(e)) => {
+                log::warn!(
+                    target: "kakehashi::bridge",
+                    "Error waiting for process {} after SIGTERM: {}",
+                    pid, e
+                );
+            }
+            Err(_) => {
+                log::debug!(
+                    target: "kakehashi::bridge",
+                    "Process {} did not respond to SIGTERM within {:?}, escalating to SIGKILL",
+                    pid, SIGTERM_WAIT
+                );
+            }
+        }
+
+        // Step 3: Send SIGKILL
+        log::debug!(
+            target: "kakehashi::bridge",
+            "Sending SIGKILL to process {}",
+            pid
+        );
+
+        if let Err(e) = kill(nix_pid, Signal::SIGKILL) {
+            log::warn!(
+                target: "kakehashi::bridge",
+                "Failed to send SIGKILL to process {}: {}",
+                pid, e
+            );
+        }
+
+        // Wait for process to be reaped after SIGKILL
+        match self.child.wait().await {
+            Ok(status) => {
+                log::debug!(
+                    target: "kakehashi::bridge",
+                    "Process {} terminated after SIGKILL with status: {}",
+                    pid, status
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    target: "kakehashi::bridge",
+                    "Error waiting for process {} after SIGKILL: {}",
+                    pid, e
+                );
+            }
+        }
+    }
 }
 
 impl Drop for SplitConnectionWriter {
