@@ -787,6 +787,20 @@ impl LanguageServerPool {
         .await
     }
 
+    /// Drains a JoinSet, logging any task panics with the provided context.
+    async fn drain_join_set(join_set: &mut tokio::task::JoinSet<()>, task_context: &str) {
+        while let Some(result) = join_set.join_next().await {
+            if let Err(e) = result {
+                log::error!(
+                    target: "kakehashi::bridge",
+                    "{} panicked: {}",
+                    task_context,
+                    e
+                );
+            }
+        }
+    }
+
     /// Initiate graceful shutdown of all connections.
     ///
     /// Called during LSP server shutdown to cleanly terminate all downstream
@@ -901,16 +915,8 @@ impl LanguageServerPool {
                 });
             }
 
-            // Wait for all shutdowns to complete, logging any task panics
-            while let Some(result) = join_set.join_next().await {
-                if let Err(e) = result {
-                    log::error!(
-                        target: "kakehashi::bridge",
-                        "Shutdown task panicked: {}",
-                        e
-                    );
-                }
-            }
+            // Wait for all shutdowns to complete
+            Self::drain_join_set(&mut join_set, "Shutdown task").await;
         })
         .await;
 
@@ -996,16 +1002,8 @@ impl LanguageServerPool {
             });
         }
 
-        // Wait for all force-kills to complete, logging any task panics
-        while let Some(result) = join_set.join_next().await {
-            if let Err(e) = result {
-                log::error!(
-                    target: "kakehashi::bridge",
-                    "Force-kill task panicked: {}",
-                    e
-                );
-            }
-        }
+        // Wait for all force-kills to complete
+        Self::drain_join_set(&mut join_set, "Force-kill task").await;
     }
 
     /// Get or create a connection for the specified language with custom timeout.
@@ -1194,6 +1192,59 @@ mod tests {
     const TEST_ULID_LUA_1: &str = "01JPMQ8ZYYQA1W3AVPW4JDRZFS";
     const TEST_ULID_PYTHON_0: &str = "01JPMQ8ZYYQA1W3AVPW4JDRZFT";
 
+    // ============================================================
+    // Test Helpers
+    // ============================================================
+
+    /// Check if lua-language-server is available. Returns false and logs skip message if not.
+    ///
+    /// Use at the beginning of tests that require a real LSP server:
+    /// ```ignore
+    /// if !lua_ls_available() { return; }
+    /// ```
+    fn lua_ls_available() -> bool {
+        if std::process::Command::new("lua-language-server")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test: lua-language-server not found");
+            false
+        } else {
+            true
+        }
+    }
+
+    /// Create a BridgeServerConfig for lua-language-server.
+    fn lua_ls_config() -> BridgeServerConfig {
+        BridgeServerConfig {
+            cmd: vec!["lua-language-server".to_string()],
+            languages: vec!["lua".to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        }
+    }
+
+    /// Create a BridgeServerConfig for a mock server that discards input.
+    /// Useful for testing timeout behavior or when no response is expected.
+    fn devnull_config() -> BridgeServerConfig {
+        devnull_config_for_language("lua")
+    }
+
+    /// Create a BridgeServerConfig for a mock server with a specific language.
+    fn devnull_config_for_language(language: &str) -> BridgeServerConfig {
+        BridgeServerConfig {
+            cmd: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "cat > /dev/null".to_string(),
+            ],
+            languages: vec![language.to_string()],
+            initialization_options: None,
+            workspace_type: None,
+        }
+    }
+
     /// Test that ConnectionHandle provides unique request IDs via atomic counter.
     ///
     /// Each call to next_request_id() should return a unique, incrementing value.
@@ -1321,16 +1372,7 @@ mod tests {
         use tower_lsp::lsp_types::{Position, Url};
 
         let pool = Arc::new(LanguageServerPool::new());
-        let config = BridgeServerConfig {
-            cmd: vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                "cat > /dev/null".to_string(),
-            ],
-            languages: vec!["lua".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        let config = devnull_config();
 
         // Insert a ConnectionHandle with Initializing state
         {
@@ -1402,23 +1444,12 @@ mod tests {
         use std::sync::Arc;
         use tower_lsp::lsp_types::{Position, Url};
 
-        // Skip test if lua-language-server is not available
-        if std::process::Command::new("lua-language-server")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("Skipping test: lua-language-server not found");
+        if !lua_ls_available() {
             return;
         }
 
         let pool = Arc::new(LanguageServerPool::new());
-        let config = BridgeServerConfig {
-            cmd: vec!["lua-language-server".to_string()],
-            languages: vec!["lua".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        let config = lua_ls_config();
 
         // Insert a ConnectionHandle with Failed state
         {
@@ -1492,23 +1523,12 @@ mod tests {
         use std::sync::Arc;
         use tower_lsp::lsp_types::{Position, Url};
 
-        // Skip test if lua-language-server is not available
-        if std::process::Command::new("lua-language-server")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("Skipping test: lua-language-server not found");
+        if !lua_ls_available() {
             return;
         }
 
         let pool = Arc::new(LanguageServerPool::new());
-        let config = BridgeServerConfig {
-            cmd: vec!["lua-language-server".to_string()],
-            languages: vec!["lua".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        let config = lua_ls_config();
 
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
         let host_position = Position {
@@ -1578,16 +1598,7 @@ mod tests {
     #[tokio::test]
     async fn connection_transitions_to_failed_state_on_timeout() {
         let pool = LanguageServerPool::new();
-        let config = BridgeServerConfig {
-            cmd: vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                "cat > /dev/null".to_string(),
-            ],
-            languages: vec!["test".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        let config = devnull_config_for_language("test");
 
         // Attempt connection with short timeout (will fail)
         let result = pool
@@ -1623,18 +1634,8 @@ mod tests {
     #[tokio::test]
     async fn init_times_out_when_server_unresponsive() {
         let pool = LanguageServerPool::new();
-        let config = BridgeServerConfig {
-            // sh -c 'cat > /dev/null': reads stdin but writes nothing to stdout
-            // This simulates an unresponsive server that never sends a response
-            cmd: vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                "cat > /dev/null".to_string(),
-            ],
-            languages: vec!["test".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        // devnull_config simulates an unresponsive server that never sends a response
+        let config = devnull_config_for_language("test");
 
         let start = std::time::Instant::now();
 
@@ -1663,16 +1664,7 @@ mod tests {
     #[tokio::test]
     async fn init_timeout_returns_timed_out_error_kind() {
         let pool = LanguageServerPool::new();
-        let config = BridgeServerConfig {
-            cmd: vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                "cat > /dev/null".to_string(),
-            ],
-            languages: vec!["test".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        let config = devnull_config_for_language("test");
 
         let result = pool
             .get_or_create_connection_with_timeout("test", &config, Duration::from_millis(100))
@@ -1712,13 +1704,7 @@ mod tests {
     /// - Phase 2: Call get_or_create_connection, expect it to spawn new server
     #[tokio::test]
     async fn failed_connection_retry_removes_cache_and_spawns_new_server() {
-        // Skip test if lua-language-server is not available
-        if std::process::Command::new("lua-language-server")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("Skipping test: lua-language-server not found");
+        if !lua_ls_available() {
             return;
         }
 
@@ -1741,12 +1727,7 @@ mod tests {
         }
 
         // Phase 2: Request connection - should remove failed entry and spawn new server
-        let config = BridgeServerConfig {
-            cmd: vec!["lua-language-server".to_string()],
-            languages: vec!["lua".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        let config = lua_ls_config();
 
         let result = pool
             .get_or_create_connection_with_timeout("lua", &config, Duration::from_secs(30))
@@ -1790,13 +1771,7 @@ mod tests {
     /// and user's subsequent request triggers recovery with a working server.
     #[tokio::test]
     async fn recovery_works_after_initialization_timeout() {
-        // Skip test if lua-language-server is not available
-        if std::process::Command::new("lua-language-server")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("Skipping test: lua-language-server not found");
+        if !lua_ls_available() {
             return;
         }
 
@@ -1842,12 +1817,7 @@ mod tests {
         }
 
         // Phase 2: Second attempt with working server - should succeed immediately
-        let working_config = BridgeServerConfig {
-            cmd: vec!["lua-language-server".to_string()],
-            languages: vec!["lua".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        let working_config = lua_ls_config();
 
         let result = pool
             .get_or_create_connection_with_timeout("lua", &working_config, Duration::from_secs(30))
@@ -2009,23 +1979,12 @@ mod tests {
     /// can be used for other requests.
     #[tokio::test]
     async fn send_didclose_notification_keeps_connection_open() {
-        // Skip test if lua-language-server is not available
-        if std::process::Command::new("lua-language-server")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("Skipping test: lua-language-server not found");
+        if !lua_ls_available() {
             return;
         }
 
         let pool = std::sync::Arc::new(LanguageServerPool::new());
-        let config = BridgeServerConfig {
-            cmd: vec!["lua-language-server".to_string()],
-            languages: vec!["lua".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        let config = lua_ls_config();
 
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
         let host_position = tower_lsp::lsp_types::Position {
@@ -2077,23 +2036,12 @@ mod tests {
     /// didClose notifications and be cleaned up from tracking structures.
     #[tokio::test]
     async fn close_host_document_sends_didclose_for_all_virtual_docs() {
-        // Skip test if lua-language-server is not available
-        if std::process::Command::new("lua-language-server")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("Skipping test: lua-language-server not found");
+        if !lua_ls_available() {
             return;
         }
 
         let pool = std::sync::Arc::new(LanguageServerPool::new());
-        let config = BridgeServerConfig {
-            cmd: vec!["lua-language-server".to_string()],
-            languages: vec!["lua".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        let config = lua_ls_config();
 
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
@@ -2412,16 +2360,7 @@ mod tests {
     #[tokio::test]
     async fn connection_handle_transitions_to_failed_after_timeout() {
         let pool = LanguageServerPool::new();
-        let config = BridgeServerConfig {
-            cmd: vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                "cat > /dev/null".to_string(),
-            ],
-            languages: vec!["test".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        let config = devnull_config_for_language("test");
 
         // First attempt - should timeout
         let result = pool
@@ -3107,16 +3046,7 @@ mod tests {
         use tower_lsp::lsp_types::{Position, Url};
 
         let pool = Arc::new(LanguageServerPool::new());
-        let config = BridgeServerConfig {
-            cmd: vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                "cat > /dev/null".to_string(),
-            ],
-            languages: vec!["lua".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        let config = devnull_config();
 
         // Insert a ConnectionHandle with Closing state
         {
@@ -3186,23 +3116,12 @@ mod tests {
     /// This test verifies the shutdown request is properly formatted and sent.
     #[tokio::test]
     async fn shutdown_sends_lsp_shutdown_request_and_waits_for_response() {
-        // Skip test if lua-language-server is not available
-        if std::process::Command::new("lua-language-server")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("Skipping test: lua-language-server not found");
+        if !lua_ls_available() {
             return;
         }
 
         let pool = std::sync::Arc::new(LanguageServerPool::new());
-        let config = BridgeServerConfig {
-            cmd: vec!["lua-language-server".to_string()],
-            languages: vec!["lua".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        let config = lua_ls_config();
 
         // First, establish a Ready connection
         let handle = pool
@@ -3428,23 +3347,12 @@ mod tests {
     async fn shutdown_with_pending_requests_fails_requests_then_completes() {
         use std::sync::Arc;
 
-        // Skip test if lua-language-server is not available
-        if std::process::Command::new("lua-language-server")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("Skipping test: lua-language-server not found");
+        if !lua_ls_available() {
             return;
         }
 
         let pool = Arc::new(LanguageServerPool::new());
-        let config = BridgeServerConfig {
-            cmd: vec!["lua-language-server".to_string()],
-            languages: vec!["lua".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        let config = lua_ls_config();
 
         // Step 1: Establish a Ready connection
         let handle = pool
@@ -3518,16 +3426,7 @@ mod tests {
         use tower_lsp::lsp_types::{Position, Url};
 
         let pool = Arc::new(LanguageServerPool::new());
-        let config = BridgeServerConfig {
-            cmd: vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                "cat > /dev/null".to_string(),
-            ],
-            languages: vec!["lua".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        };
+        let config = devnull_config();
 
         // Insert a connection in Closing state
         let closing_handle = create_handle_with_state(ConnectionState::Closing).await;
