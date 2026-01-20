@@ -103,8 +103,8 @@ const scrum: ScrumDashboard = {
         test: "Integration test: multiple servers shut down concurrently, total time bounded by global timeout",
         implementation: "Pass GlobalShutdownTimeout to shutdown_all() and enforce single ceiling",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "7e88b266", message: "test(bridge): add integration test for concurrent parallel shutdown", phase: "green" }],
         notes: ["Verify N servers complete in O(1) time, not O(N)", "Test with mock slow servers"],
       },
       // Phase 3: Force-kill fallback
