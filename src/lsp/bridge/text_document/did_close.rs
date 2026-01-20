@@ -5,8 +5,8 @@
 
 use std::io;
 use std::sync::Arc;
-use tower_lsp::lsp_types::Url;
 use ulid::Ulid;
+use url::Url;
 
 use super::super::pool::{ConnectionState, LanguageServerPool, OpenedVirtualDoc};
 use super::super::protocol::VirtualDocumentUri;

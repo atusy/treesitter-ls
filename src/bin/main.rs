@@ -522,7 +522,7 @@ async fn run_lsp_server() {
     use env_logger::Builder;
     use kakehashi::lsp::{Kakehashi, RequestIdCapture};
     use tokio::io::{stdin, stdout};
-    use tower_lsp::{LspService, Server};
+    use tower_lsp_server::{LspService, Server};
 
     // Initialize logging to stderr (CRITICAL: stdout is used for LSP JSON-RPC)
     // Configure via RUST_LOG, e.g.: RUST_LOG=kakehashi=debug

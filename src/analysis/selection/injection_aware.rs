@@ -5,7 +5,7 @@
 //! These functions manage coordinate translation between injection and host documents,
 //! and build proper selection hierarchies that respect injection boundaries.
 
-use tower_lsp::lsp_types::{Position, Range, SelectionRange};
+use tower_lsp_server::ls_types::{Position, Range, SelectionRange};
 use tree_sitter::Node;
 
 use super::range_builder::node_to_range;

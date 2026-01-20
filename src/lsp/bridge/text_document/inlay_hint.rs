@@ -10,7 +10,8 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp::lsp_types::{Range, Url};
+use tower_lsp_server::ls_types::Range;
+use url::Url;
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
@@ -49,8 +50,11 @@ impl LanguageServerPool {
             .get_or_create_connection(injection_language, server_config)
             .await?;
 
+        // Convert host_uri to lsp_types::Uri for bridge protocol functions
+        let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri);
+
         // Build virtual document URI
-        let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+        let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
         let virtual_uri_string = virtual_uri.to_uri_string();
 
         // Register request with router to get oneshot receiver
@@ -59,7 +63,7 @@ impl LanguageServerPool {
         // Build inlay hint request
         // Note: request builder transforms host_range to virtual coordinates
         let request = build_bridge_inlay_hint_request(
-            host_uri,
+            &host_uri_lsp,
             host_range,
             injection_language,
             region_id,

@@ -31,8 +31,8 @@ use super::virtual_uri::VirtualDocumentUri;
 /// when the cursor position falls within a detected injection region's line range.
 /// Violation would cause underflow in debug builds (wrapping in release).
 fn build_position_based_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    host_position: tower_lsp::lsp_types::Position,
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
@@ -43,7 +43,7 @@ fn build_position_based_request(
     let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
 
     // Translate position from host to virtual coordinates
-    let virtual_position = tower_lsp::lsp_types::Position {
+    let virtual_position = tower_lsp_server::ls_types::Position {
         line: host_position.line - region_start_line,
         character: host_position.character,
     };
@@ -66,8 +66,8 @@ fn build_position_based_request(
 
 /// Build a JSON-RPC hover request for a downstream language server.
 pub(crate) fn build_bridge_hover_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    host_position: tower_lsp::lsp_types::Position,
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
@@ -86,8 +86,8 @@ pub(crate) fn build_bridge_hover_request(
 
 /// Build a JSON-RPC signature help request for a downstream language server.
 pub(crate) fn build_bridge_signature_help_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    host_position: tower_lsp::lsp_types::Position,
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
@@ -106,8 +106,8 @@ pub(crate) fn build_bridge_signature_help_request(
 
 /// Build a JSON-RPC completion request for a downstream language server.
 pub(crate) fn build_bridge_completion_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    host_position: tower_lsp::lsp_types::Position,
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
@@ -126,8 +126,8 @@ pub(crate) fn build_bridge_completion_request(
 
 /// Build a JSON-RPC definition request for a downstream language server.
 pub(crate) fn build_bridge_definition_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    host_position: tower_lsp::lsp_types::Position,
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
@@ -146,8 +146,8 @@ pub(crate) fn build_bridge_definition_request(
 
 /// Build a JSON-RPC typeDefinition request for a downstream language server.
 pub(crate) fn build_bridge_type_definition_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    host_position: tower_lsp::lsp_types::Position,
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
@@ -166,8 +166,8 @@ pub(crate) fn build_bridge_type_definition_request(
 
 /// Build a JSON-RPC implementation request for a downstream language server.
 pub(crate) fn build_bridge_implementation_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    host_position: tower_lsp::lsp_types::Position,
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
@@ -186,8 +186,8 @@ pub(crate) fn build_bridge_implementation_request(
 
 /// Build a JSON-RPC declaration request for a downstream language server.
 pub(crate) fn build_bridge_declaration_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    host_position: tower_lsp::lsp_types::Position,
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
@@ -206,8 +206,8 @@ pub(crate) fn build_bridge_declaration_request(
 
 /// Build a JSON-RPC document highlight request for a downstream language server.
 pub(crate) fn build_bridge_document_highlight_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    host_position: tower_lsp::lsp_types::Position,
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
@@ -229,8 +229,8 @@ pub(crate) fn build_bridge_document_highlight_request(
 /// Note: References request has an additional `context.includeDeclaration` parameter
 /// that other position-based requests don't have.
 pub(crate) fn build_bridge_references_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    host_position: tower_lsp::lsp_types::Position,
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
@@ -262,8 +262,8 @@ pub(crate) fn build_bridge_references_request(
 /// Note: Rename request has an additional `newName` parameter that specifies
 /// the new name for the symbol being renamed.
 pub(crate) fn build_bridge_rename_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    host_position: tower_lsp::lsp_types::Position,
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
@@ -303,7 +303,7 @@ pub(crate) fn build_bridge_rename_request(
 /// * `request_id` - The JSON-RPC request ID
 /// * `method` - The LSP method name (e.g., "textDocument/documentLink")
 fn build_whole_document_request(
-    host_uri: &tower_lsp::lsp_types::Url,
+    host_uri: &tower_lsp_server::ls_types::Uri,
     injection_language: &str,
     region_id: &str,
     request_id: RequestId,
@@ -335,7 +335,7 @@ fn build_whole_document_request(
 /// * `region_id` - The unique region ID for this injection
 /// * `request_id` - The JSON-RPC request ID
 pub(crate) fn build_bridge_document_link_request(
-    host_uri: &tower_lsp::lsp_types::Url,
+    host_uri: &tower_lsp_server::ls_types::Uri,
     injection_language: &str,
     region_id: &str,
     request_id: RequestId,
@@ -360,7 +360,7 @@ pub(crate) fn build_bridge_document_link_request(
 /// * `region_id` - The unique region ID for this injection
 /// * `request_id` - The JSON-RPC request ID
 pub(crate) fn build_bridge_document_symbol_request(
-    host_uri: &tower_lsp::lsp_types::Url,
+    host_uri: &tower_lsp_server::ls_types::Uri,
     injection_language: &str,
     region_id: &str,
     request_id: RequestId,
@@ -395,8 +395,8 @@ pub(crate) fn build_bridge_document_symbol_request(
 /// the injection region. This is guaranteed by callers which only invoke bridge requests
 /// when the range falls within a detected injection region's line range.
 pub(crate) fn build_bridge_inlay_hint_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    host_range: tower_lsp::lsp_types::Range,
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_range: tower_lsp_server::ls_types::Range,
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
@@ -406,12 +406,12 @@ pub(crate) fn build_bridge_inlay_hint_request(
     let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
 
     // Translate range from host to virtual coordinates
-    let virtual_range = tower_lsp::lsp_types::Range {
-        start: tower_lsp::lsp_types::Position {
+    let virtual_range = tower_lsp_server::ls_types::Range {
+        start: tower_lsp_server::ls_types::Position {
             line: host_range.start.line - region_start_line,
             character: host_range.start.character,
         },
-        end: tower_lsp::lsp_types::Position {
+        end: tower_lsp_server::ls_types::Position {
             line: host_range.end.line - region_start_line,
             character: host_range.end.character,
         },
@@ -460,8 +460,8 @@ pub(crate) fn build_bridge_inlay_hint_request(
 /// when the range falls within a detected injection region's line range.
 #[cfg(feature = "experimental")]
 pub(crate) fn build_bridge_color_presentation_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    host_range: tower_lsp::lsp_types::Range,
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_range: tower_lsp_server::ls_types::Range,
     color: &serde_json::Value,
     injection_language: &str,
     region_id: &str,
@@ -472,12 +472,12 @@ pub(crate) fn build_bridge_color_presentation_request(
     let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
 
     // Translate range from host to virtual coordinates
-    let virtual_range = tower_lsp::lsp_types::Range {
-        start: tower_lsp::lsp_types::Position {
+    let virtual_range = tower_lsp_server::ls_types::Range {
+        start: tower_lsp_server::ls_types::Position {
             line: host_range.start.line - region_start_line,
             character: host_range.start.character,
         },
-        end: tower_lsp::lsp_types::Position {
+        end: tower_lsp_server::ls_types::Position {
             line: host_range.end.line - region_start_line,
             character: host_range.end.character,
         },
@@ -508,8 +508,8 @@ pub(crate) fn build_bridge_color_presentation_request(
 
 /// Build a JSON-RPC moniker request for a downstream language server.
 pub(crate) fn build_bridge_moniker_request(
-    host_uri: &tower_lsp::lsp_types::Url,
-    host_position: tower_lsp::lsp_types::Position,
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
     injection_language: &str,
     region_id: &str,
     region_start_line: u32,
@@ -538,7 +538,7 @@ pub(crate) fn build_bridge_moniker_request(
 /// * `request_id` - The JSON-RPC request ID
 #[cfg(feature = "experimental")]
 pub(crate) fn build_bridge_document_color_request(
-    host_uri: &tower_lsp::lsp_types::Url,
+    host_uri: &tower_lsp_server::ls_types::Uri,
     injection_language: &str,
     region_id: &str,
     request_id: RequestId,
@@ -583,7 +583,7 @@ pub(crate) fn build_bridge_didopen_notification(
 /// Uses full text sync (TextDocumentSyncKind::Full) which sends the entire
 /// document content on each change. This is simpler and sufficient for bridge use.
 pub(crate) fn build_bridge_didchange_notification(
-    host_uri: &tower_lsp::lsp_types::Url,
+    host_uri: &tower_lsp_server::ls_types::Uri,
     injection_language: &str,
     region_id: &str,
     new_content: &str,
@@ -612,7 +612,8 @@ pub(crate) fn build_bridge_didchange_notification(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tower_lsp::lsp_types::{Position, Url};
+    use tower_lsp_server::ls_types::{Position, Uri};
+    use url::Url;
 
     // ==========================================================================
     // Test helpers
@@ -624,8 +625,9 @@ mod tests {
     }
 
     /// Standard test host URI used across most tests.
-    fn test_host_uri() -> Url {
-        Url::parse("file:///project/doc.md").unwrap()
+    fn test_host_uri() -> Uri {
+        let url = Url::parse("file:///project/doc.md").unwrap();
+        crate::lsp::lsp_impl::url_to_uri(&url)
     }
 
     /// Standard test position (line 5, character 10).
@@ -1231,7 +1233,7 @@ mod tests {
 
     #[test]
     fn inlay_hint_request_uses_virtual_uri() {
-        use tower_lsp::lsp_types::Range;
+        use tower_lsp_server::ls_types::Range;
 
         let host_range = Range {
             start: Position {
@@ -1257,7 +1259,7 @@ mod tests {
 
     #[test]
     fn inlay_hint_request_has_correct_method_and_structure() {
-        use tower_lsp::lsp_types::Range;
+        use tower_lsp_server::ls_types::Range;
 
         let host_range = Range {
             start: Position {
@@ -1294,7 +1296,7 @@ mod tests {
 
     #[test]
     fn inlay_hint_request_transforms_range_to_virtual_coordinates() {
-        use tower_lsp::lsp_types::Range;
+        use tower_lsp_server::ls_types::Range;
 
         // Host range: lines 5-10, region starts at line 3
         // Virtual range should be: lines 2-7 (5-3=2, 10-3=7)
@@ -1338,7 +1340,7 @@ mod tests {
 
     #[test]
     fn inlay_hint_request_at_region_start_becomes_line_zero() {
-        use tower_lsp::lsp_types::Range;
+        use tower_lsp_server::ls_types::Range;
 
         // When range starts at region_start_line, virtual start should be 0
         let host_range = Range {
@@ -1415,7 +1417,7 @@ mod tests {
     #[test]
     #[cfg(feature = "experimental")]
     fn color_presentation_request_uses_virtual_uri() {
-        use tower_lsp::lsp_types::Range;
+        use tower_lsp_server::ls_types::Range;
 
         let host_range = Range {
             start: Position {
@@ -1449,7 +1451,7 @@ mod tests {
     #[test]
     #[cfg(feature = "experimental")]
     fn color_presentation_request_transforms_range_to_virtual_coordinates() {
-        use tower_lsp::lsp_types::Range;
+        use tower_lsp_server::ls_types::Range;
 
         // Host range: line 5, region starts at line 3
         // Virtual range should be: line 2 (5-3=2)
@@ -1501,7 +1503,7 @@ mod tests {
     #[test]
     #[cfg(feature = "experimental")]
     fn color_presentation_request_includes_color() {
-        use tower_lsp::lsp_types::Range;
+        use tower_lsp_server::ls_types::Range;
 
         let host_range = Range {
             start: Position {

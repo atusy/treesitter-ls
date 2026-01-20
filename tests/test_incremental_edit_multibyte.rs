@@ -23,7 +23,7 @@ fn test_position_to_point_with_multibyte_chars() {
     // Position at "x" (after 3 Japanese chars)
     // UTF-16: line 0, character 3 (after 3 UTF-16 code units)
     // Byte: line 0, column 9 (after 9 bytes: 3×3)
-    let lsp_position = tower_lsp::lsp_types::Position::new(0, 3);
+    let lsp_position = tower_lsp_server::ls_types::Position::new(0, 3);
 
     let point = mapper.position_to_point(lsp_position);
     assert!(point.is_some(), "Should be able to convert position");
@@ -68,8 +68,8 @@ fn test_incremental_edit_with_multibyte_preserves_parsing() {
     //
     // In UTF-16: "あいう" is 3 code units (each hiragana is 1 UTF-16 code unit)
     // But wait - the prefix `let x = "` is 9 ASCII chars
-    let start_position = tower_lsp::lsp_types::Position::new(0, 9);
-    let end_position = tower_lsp::lsp_types::Position::new(0, 12);
+    let start_position = tower_lsp_server::ls_types::Position::new(0, 9);
+    let end_position = tower_lsp_server::ls_types::Position::new(0, 12);
 
     // Get byte offsets
     let start_byte = mapper.position_to_byte(start_position).unwrap();
@@ -129,7 +129,7 @@ fn test_incremental_edit_with_multibyte_preserves_parsing() {
 /// This test documents the bug behavior that was previously in the codebase
 #[test]
 fn test_old_position_to_point_is_incorrect_for_multibyte() {
-    use tower_lsp::lsp_types::Position;
+    use tower_lsp_server::ls_types::Position;
     use tree_sitter::Point;
 
     // This is the BUGGY implementation that was previously exported.

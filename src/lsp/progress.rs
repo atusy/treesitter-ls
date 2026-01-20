@@ -3,7 +3,7 @@
 //! This module provides helpers for creating WorkDoneProgress notifications
 //! to inform users about background operations like parser auto-installation.
 
-use tower_lsp::lsp_types::{
+use tower_lsp_server::ls_types::{
     NumberOrString, ProgressParams, ProgressParamsValue, WorkDoneProgress, WorkDoneProgressBegin,
     WorkDoneProgressEnd,
 };

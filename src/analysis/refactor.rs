@@ -76,10 +76,10 @@ impl<'a> CodeActionOptions<'a> {
     }
 }
 
-use tower_lsp::lsp_types::{
+use tower_lsp_server::ls_types::{
     CodeAction, CodeActionDisabled, CodeActionKind, CodeActionOrCommand, DocumentChanges, OneOf,
-    OptionalVersionedTextDocumentIdentifier, Position, Range, TextDocumentEdit, TextEdit,
-    Url as Uri, WorkspaceEdit,
+    OptionalVersionedTextDocumentIdentifier, Position, Range, TextDocumentEdit, TextEdit, Uri,
+    WorkspaceEdit,
 };
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 use url::Url;
@@ -895,7 +895,7 @@ fn ordinal(n: usize) -> String {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use tower_lsp::lsp_types::CodeActionOrCommand;
+    use tower_lsp_server::ls_types::CodeActionOrCommand;
     use tree_sitter::Parser;
 
     #[test]

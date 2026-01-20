@@ -5,7 +5,7 @@
 
 use std::io;
 use std::sync::Arc;
-use tower_lsp::lsp_types::Url;
+use url::Url;
 
 use super::super::pool::{ConnectionHandle, ConnectionState, LanguageServerPool};
 use super::super::protocol::VirtualDocumentUri;
@@ -31,9 +31,12 @@ impl LanguageServerPool {
         host_uri: &Url,
         injections: &[(String, String, String)], // (language, region_id, content)
     ) {
+        // Convert host_uri to lsp_types::Uri for bridge protocol functions
+        let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri);
+
         // For each injection, check if it's actually opened and send didChange
         for (language, region_id, content) in injections {
-            let virtual_uri = VirtualDocumentUri::new(host_uri, language, region_id);
+            let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, language, region_id);
 
             // Check if this virtual doc has ACTUALLY been opened (didOpen sent to downstream)
             // per ADR-0015. This prevents sending didChange before didOpen.

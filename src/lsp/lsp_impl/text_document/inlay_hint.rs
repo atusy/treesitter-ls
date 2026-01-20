@@ -1,21 +1,27 @@
 //! Inlay hint method for Kakehashi.
 
-use tower_lsp::jsonrpc::{Id, Result};
-use tower_lsp::lsp_types::*;
+use tower_lsp_server::jsonrpc::{Id, Result};
+use tower_lsp_server::ls_types::*;
 
 use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
-use super::super::Kakehashi;
+use super::super::{Kakehashi, uri_to_url};
 
 impl Kakehashi {
     pub(crate) async fn inlay_hint_impl(
         &self,
         params: InlayHintParams,
     ) -> Result<Option<Vec<InlayHint>>> {
-        let uri = params.text_document.uri;
+        let lsp_uri = params.text_document.uri;
         let range = params.range;
+
+        // Convert ls_types::Uri to url::Url for internal use
+        let Ok(uri) = uri_to_url(&lsp_uri) else {
+            log::warn!("Invalid URI in inlayHint: {}", lsp_uri.as_str());
+            return Ok(None);
+        };
 
         self.client
             .log_message(

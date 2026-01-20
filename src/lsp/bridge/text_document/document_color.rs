@@ -9,7 +9,7 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp::lsp_types::Url;
+use url::Url;
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
@@ -42,13 +42,16 @@ impl LanguageServerPool {
         virtual_content: &str,
         _upstream_request_id: i64,
     ) -> io::Result<serde_json::Value> {
+        // Convert url::Url to ls_types::Uri for protocol functions
+        let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri);
+
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(injection_language, server_config)
             .await?;
 
         // Build virtual document URI
-        let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+        let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
 
         // Register request with router to get oneshot receiver
         let (request_id, response_rx) = handle.register_request()?;
@@ -56,7 +59,7 @@ impl LanguageServerPool {
         // Build document color request
         // Note: document color doesn't need position - it operates on the whole document
         let request = build_bridge_document_color_request(
-            host_uri,
+            &host_uri_lsp,
             injection_language,
             region_id,
             request_id,

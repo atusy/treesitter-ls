@@ -3,9 +3,10 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Duration;
 
-use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
+use tower_lsp_server::jsonrpc::Result;
+use tower_lsp_server::ls_types::*;
 use tree_sitter::Tree;
+use url::Url;
 
 use crate::analysis::{
     IncrementalDecision, collect_injection_languages, compute_incremental_tokens,
@@ -14,7 +15,7 @@ use crate::analysis::{
     next_result_id,
 };
 
-use super::super::Kakehashi;
+use super::super::{Kakehashi, uri_to_url};
 
 /// Timeout for spawn_blocking parse operations to prevent hangs on pathological inputs.
 const PARSE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -179,7 +180,13 @@ impl Kakehashi {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        let uri = params.text_document.uri;
+        let lsp_uri = params.text_document.uri;
+
+        // Convert ls_types::Uri to url::Url for internal use
+        let Ok(uri) = uri_to_url(&lsp_uri) else {
+            log::warn!("Invalid URI in semanticTokens/full: {}", lsp_uri.as_str());
+            return Ok(None);
+        };
 
         // Start tracking this request - supersedes any previous request for this URI
         let request_id = self.semantic_request_tracker.start_request(&uri);
@@ -352,16 +359,16 @@ impl Kakehashi {
         }
 
         let mut tokens_with_id = match result.unwrap_or_else(|| {
-            tower_lsp::lsp_types::SemanticTokensResult::Tokens(
-                tower_lsp::lsp_types::SemanticTokens {
+            tower_lsp_server::ls_types::SemanticTokensResult::Tokens(
+                tower_lsp_server::ls_types::SemanticTokens {
                     result_id: None,
                     data: Vec::new(),
                 },
             )
         }) {
-            tower_lsp::lsp_types::SemanticTokensResult::Tokens(tokens) => tokens,
-            tower_lsp::lsp_types::SemanticTokensResult::Partial(_) => {
-                tower_lsp::lsp_types::SemanticTokens {
+            tower_lsp_server::ls_types::SemanticTokensResult::Tokens(tokens) => tokens,
+            tower_lsp_server::ls_types::SemanticTokensResult::Partial(_) => {
+                tower_lsp_server::ls_types::SemanticTokens {
                     result_id: None,
                     data: Vec::new(),
                 }
@@ -391,8 +398,17 @@ impl Kakehashi {
         &self,
         params: SemanticTokensDeltaParams,
     ) -> Result<Option<SemanticTokensFullDeltaResult>> {
-        let uri = params.text_document.uri;
+        let lsp_uri = params.text_document.uri;
         let previous_result_id = params.previous_result_id;
+
+        // Convert ls_types::Uri to url::Url for internal use
+        let Ok(uri) = uri_to_url(&lsp_uri) else {
+            log::warn!(
+                "Invalid URI in semanticTokens/full/delta: {}",
+                lsp_uri.as_str()
+            );
+            return Ok(None);
+        };
 
         // Start tracking this request - supersedes any previous request for this URI
         let request_id = self.semantic_request_tracker.start_request(&uri);
@@ -631,8 +647,8 @@ impl Kakehashi {
         }; // doc reference is dropped here
 
         let domain_result = result.unwrap_or_else(|| {
-            tower_lsp::lsp_types::SemanticTokensFullDeltaResult::Tokens(
-                tower_lsp::lsp_types::SemanticTokens {
+            tower_lsp_server::ls_types::SemanticTokensFullDeltaResult::Tokens(
+                tower_lsp_server::ls_types::SemanticTokens {
                     result_id: None,
                     data: Vec::new(),
                 },
@@ -659,7 +675,7 @@ impl Kakehashi {
         );
 
         match domain_result {
-            tower_lsp::lsp_types::SemanticTokensFullDeltaResult::Tokens(tokens) => {
+            tower_lsp_server::ls_types::SemanticTokensFullDeltaResult::Tokens(tokens) => {
                 let mut tokens_with_id = tokens;
                 // Use atomic sequential ID for efficient cache validation
                 tokens_with_id.result_id = Some(next_result_id());
@@ -677,8 +693,15 @@ impl Kakehashi {
         &self,
         params: SemanticTokensRangeParams,
     ) -> Result<Option<SemanticTokensRangeResult>> {
-        let uri = params.text_document.uri;
+        let lsp_uri = params.text_document.uri;
         let range = params.range;
+
+        // Convert ls_types::Uri to url::Url for internal use
+        let Ok(uri) = uri_to_url(&lsp_uri) else {
+            log::warn!("Invalid URI in semanticTokens/range: {}", lsp_uri.as_str());
+            return Ok(None);
+        };
+
         let domain_range = range;
 
         let Some(language_name) = self.get_language_for_document(&uri) else {
@@ -728,18 +751,18 @@ impl Kakehashi {
 
         // Convert to RangeResult, treating partial responses as empty for now
         let domain_range_result = match result.unwrap_or_else(|| {
-            tower_lsp::lsp_types::SemanticTokensResult::Tokens(
-                tower_lsp::lsp_types::SemanticTokens {
+            tower_lsp_server::ls_types::SemanticTokensResult::Tokens(
+                tower_lsp_server::ls_types::SemanticTokens {
                     result_id: None,
                     data: Vec::new(),
                 },
             )
         }) {
-            tower_lsp::lsp_types::SemanticTokensResult::Tokens(tokens) => {
-                tower_lsp::lsp_types::SemanticTokensRangeResult::from(tokens)
+            tower_lsp_server::ls_types::SemanticTokensResult::Tokens(tokens) => {
+                tower_lsp_server::ls_types::SemanticTokensRangeResult::from(tokens)
             }
-            tower_lsp::lsp_types::SemanticTokensResult::Partial(partial) => {
-                tower_lsp::lsp_types::SemanticTokensRangeResult::from(partial)
+            tower_lsp_server::ls_types::SemanticTokensResult::Partial(partial) => {
+                tower_lsp_server::ls_types::SemanticTokensRangeResult::from(partial)
             }
         };
 
@@ -751,7 +774,8 @@ impl Kakehashi {
 mod tests {
     use super::*;
     use tokio::time::{Duration, sleep, timeout};
-    use tower_lsp::LspService;
+    use tower_lsp_server::LspService;
+    use url::Url;
 
     #[tokio::test]
     async fn semantic_tokens_delta_does_not_overwrite_newer_text() {
@@ -786,7 +810,9 @@ mod tests {
         };
 
         let params = SemanticTokensDeltaParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text_document: TextDocumentIdentifier {
+                uri: crate::lsp::lsp_impl::url_to_uri(&uri),
+            },
             previous_result_id: "0".to_string(),
             work_done_progress_params: WorkDoneProgressParams::default(),
             partial_result_params: PartialResultParams::default(),
@@ -836,7 +862,9 @@ mod tests {
         server.documents.mark_parse_started(&uri);
 
         let params = SemanticTokensParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            text_document: TextDocumentIdentifier {
+                uri: crate::lsp::lsp_impl::url_to_uri(&uri),
+            },
             work_done_progress_params: WorkDoneProgressParams::default(),
             partial_result_params: PartialResultParams::default(),
         };

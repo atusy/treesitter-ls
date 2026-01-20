@@ -193,6 +193,8 @@ impl RegionIdTracker {
 
         // NOTE: Explicit two-step pattern to avoid DashMap lifetime ambiguity.
         let mut entry = self.entries.entry(uri.clone()).or_default();
+        // We need Ulid::new() to generate unique IDs, not Ulid::default() which returns Ulid(0)
+        #[allow(clippy::unwrap_or_default)]
         *entry.entry(key).or_insert_with(Ulid::new)
     }
 

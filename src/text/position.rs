@@ -1,5 +1,5 @@
 use line_index::{LineIndex, WideEncoding, WideLineCol};
-use tower_lsp::lsp_types::{Position, Range};
+use tower_lsp_server::ls_types::{Position, Range};
 
 /// Position mapper for converting between LSP positions and byte offsets
 pub struct PositionMapper {

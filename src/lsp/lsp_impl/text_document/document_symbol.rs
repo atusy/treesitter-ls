@@ -1,19 +1,25 @@
 //! Document symbol method for Kakehashi.
 
-use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
+use tower_lsp_server::jsonrpc::Result;
+use tower_lsp_server::ls_types::*;
 
 use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;
 
-use super::super::Kakehashi;
+use super::super::{Kakehashi, uri_to_url};
 
 impl Kakehashi {
     pub(crate) async fn document_symbol_impl(
         &self,
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
-        let uri = params.text_document.uri;
+        let lsp_uri = params.text_document.uri;
+
+        // Convert ls_types::Uri to url::Url for internal use
+        let Ok(uri) = uri_to_url(&lsp_uri) else {
+            log::warn!("Invalid URI in documentSymbol: {}", lsp_uri.as_str());
+            return Ok(None);
+        };
 
         self.client
             .log_message(
@@ -63,7 +69,7 @@ impl Kakehashi {
 
         // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
         let upstream_request_id = match get_current_request_id() {
-            Some(tower_lsp::jsonrpc::Id::Number(n)) => n,
+            Some(tower_lsp_server::jsonrpc::Id::Number(n)) => n,
             // For string IDs or no ID, use 0 as fallback
             _ => 0,
         };

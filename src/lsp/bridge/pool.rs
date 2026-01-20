@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use log::warn;
 use tokio::sync::Mutex;
-use tower_lsp::lsp_types::Url;
+use url::Url;
 
 use super::protocol::{VirtualDocumentUri, build_bridge_didopen_notification};
 
@@ -1229,6 +1229,11 @@ mod tests {
         }
     }
 
+    // Helper function to convert url::Url to tower_lsp_server::ls_types::Uri for tests
+    fn url_to_uri(url: &Url) -> tower_lsp_server::ls_types::Uri {
+        crate::lsp::lsp_impl::url_to_uri(url)
+    }
+
     /// Test that ConnectionHandle provides unique request IDs via atomic counter.
     ///
     /// Each call to next_request_id() should return a unique, incrementing value.
@@ -1353,7 +1358,7 @@ mod tests {
     #[tokio::test]
     async fn request_during_init_returns_error_immediately() {
         use std::sync::Arc;
-        use tower_lsp::lsp_types::{Position, Url};
+        use tower_lsp_server::ls_types::Position;
 
         let pool = Arc::new(LanguageServerPool::new());
         let config = devnull_config();
@@ -1426,7 +1431,7 @@ mod tests {
     #[tokio::test]
     async fn request_during_failed_triggers_retry_with_new_server() {
         use std::sync::Arc;
-        use tower_lsp::lsp_types::{Position, Url};
+        use tower_lsp_server::ls_types::Position;
 
         if !lua_ls_available() {
             return;
@@ -1505,7 +1510,7 @@ mod tests {
     #[tokio::test]
     async fn request_succeeds_when_state_is_ready() {
         use std::sync::Arc;
-        use tower_lsp::lsp_types::{Position, Url};
+        use tower_lsp_server::ls_types::Position;
 
         if !lua_ls_available() {
             return;
@@ -1844,7 +1849,7 @@ mod tests {
         use super::OpenedVirtualDoc;
 
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "region-0");
         let doc = OpenedVirtualDoc {
             virtual_uri: virtual_uri.clone(),
         };
@@ -1878,7 +1883,7 @@ mod tests {
 
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "lua-0");
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "lua-0");
 
         // First call should return true (document not opened yet)
         let result = pool.should_send_didopen(&host_uri, &virtual_uri).await;
@@ -1906,12 +1911,12 @@ mod tests {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
         // Open first Lua block
-        let virtual_uri_0 = VirtualDocumentUri::new(&host_uri, "lua", "lua-0");
+        let virtual_uri_0 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "lua-0");
         let result = pool.should_send_didopen(&host_uri, &virtual_uri_0).await;
         assert!(result, "First Lua block should return true");
 
         // Open second Lua block
-        let virtual_uri_1 = VirtualDocumentUri::new(&host_uri, "lua", "lua-1");
+        let virtual_uri_1 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "lua-1");
         let result = pool.should_send_didopen(&host_uri, &virtual_uri_1).await;
         assert!(result, "Second Lua block should return true");
 
@@ -1935,7 +1940,7 @@ mod tests {
 
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "lua-0");
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "lua-0");
 
         // First call - should return true and record mapping
         let result = pool.should_send_didopen(&host_uri, &virtual_uri).await;
@@ -1971,7 +1976,7 @@ mod tests {
         let config = lua_ls_config();
 
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let host_position = tower_lsp::lsp_types::Position {
+        let host_position = tower_lsp_server::ls_types::Position {
             line: 3,
             character: 5,
         };
@@ -1992,7 +1997,7 @@ mod tests {
         assert!(result.is_ok(), "Hover request should succeed");
 
         // Get the virtual URI that was opened
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         // Send didClose notification
         let result = pool.send_didclose_notification(&virtual_uri).await;
@@ -2035,7 +2040,7 @@ mod tests {
             .send_hover_request(
                 &config,
                 &host_uri,
-                tower_lsp::lsp_types::Position {
+                tower_lsp_server::ls_types::Position {
                     line: 4,
                     character: 5,
                 },
@@ -2052,7 +2057,7 @@ mod tests {
             .send_hover_request(
                 &config,
                 &host_uri,
-                tower_lsp::lsp_types::Position {
+                tower_lsp_server::ls_types::Position {
                     line: 8,
                     character: 5,
                 },
@@ -2129,7 +2134,7 @@ mod tests {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
         // Generate the virtual URI the same way forward_didchange_to_opened_docs does
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         // Open a virtual document (simulate first hover/completion request)
         let opened = pool.should_send_didopen(&host_uri, &virtual_uri).await;
@@ -2195,7 +2200,7 @@ mod tests {
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
         let opened = pool.should_send_didopen(&host_uri, &virtual_uri).await;
         assert!(opened, "First call should open the document");
         // Also mark as opened (simulating successful didOpen write)
@@ -2282,7 +2287,8 @@ mod tests {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
         // Open only the first Lua block
-        let lua_virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let lua_virtual_uri =
+            VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
         let opened = pool.should_send_didopen(&host_uri, &lua_virtual_uri).await;
         assert!(opened, "First call should open the document");
         // Also mark as opened (simulating successful didOpen write)
@@ -2381,8 +2387,9 @@ mod tests {
 
         // Register some virtual docs using should_send_didopen
         // Use VirtualDocumentUri for proper type safety
-        let virtual_uri_1 = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
-        let virtual_uri_2 = VirtualDocumentUri::new(&host_uri, "python", TEST_ULID_PYTHON_0);
+        let virtual_uri_1 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
+        let virtual_uri_2 =
+            VirtualDocumentUri::new(&url_to_uri(&host_uri), "python", TEST_ULID_PYTHON_0);
 
         pool.should_send_didopen(&host_uri, &virtual_uri_1).await;
         pool.should_send_didopen(&host_uri, &virtual_uri_2).await;
@@ -2427,7 +2434,7 @@ mod tests {
         let host_uri = test_host_uri("phase3_no_match");
 
         // Register a virtual doc
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
         pool.should_send_didopen(&host_uri, &virtual_uri).await;
 
         // Try to take a different ULID
@@ -2463,7 +2470,7 @@ mod tests {
         let host_uri = test_host_uri("phase3_empty_ulids");
 
         // Register a virtual doc
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
         pool.should_send_didopen(&host_uri, &virtual_uri).await;
 
         // Take with empty ULID list (fast path)
@@ -2485,9 +2492,10 @@ mod tests {
         let host_uri = test_host_uri("phase3_multiple");
 
         // Register multiple virtual docs using VirtualDocumentUri for proper type safety
-        let virtual_uri_1 = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
-        let virtual_uri_2 = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_1);
-        let virtual_uri_3 = VirtualDocumentUri::new(&host_uri, "python", TEST_ULID_PYTHON_0);
+        let virtual_uri_1 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
+        let virtual_uri_2 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_1);
+        let virtual_uri_3 =
+            VirtualDocumentUri::new(&url_to_uri(&host_uri), "python", TEST_ULID_PYTHON_0);
 
         pool.should_send_didopen(&host_uri, &virtual_uri_1).await;
         pool.should_send_didopen(&host_uri, &virtual_uri_2).await;
@@ -2529,7 +2537,7 @@ mod tests {
 
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         // Before marking, should return false
         assert!(
@@ -2545,7 +2553,7 @@ mod tests {
 
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         // Mark the document as opened
         pool.mark_document_opened(&virtual_uri);
@@ -2568,7 +2576,7 @@ mod tests {
 
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         // Call should_send_didopen - this reserves the version but doesn't mark as opened
         let should_open = pool.should_send_didopen(&host_uri, &virtual_uri).await;
@@ -2595,7 +2603,7 @@ mod tests {
 
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
         let virtual_content = "print('hello')";
 
         // Create a mock writer using cat (will discard our didOpen notification)
@@ -2667,7 +2675,7 @@ mod tests {
 
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
         let virtual_content = "print('hello')";
 
         // Pre-open the document (simulate previous didOpen)
@@ -2743,7 +2751,7 @@ mod tests {
 
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
         let virtual_content = "print('hello')";
 
         // Simulate another request having called should_send_didopen but NOT mark_document_opened
@@ -2834,7 +2842,7 @@ mod tests {
 
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", TEST_ULID_LUA_0);
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
         let virtual_content = "print('hello')";
 
         // Simulate pending didOpen state (inconsistent state)
@@ -3027,7 +3035,7 @@ mod tests {
     #[tokio::test]
     async fn request_during_closing_state_returns_error_immediately() {
         use std::sync::Arc;
-        use tower_lsp::lsp_types::{Position, Url};
+        use tower_lsp_server::ls_types::Position;
 
         let pool = Arc::new(LanguageServerPool::new());
         let config = devnull_config();
@@ -3407,7 +3415,7 @@ mod tests {
     #[tokio::test]
     async fn new_request_during_closing_receives_request_failed() {
         use std::sync::Arc;
-        use tower_lsp::lsp_types::{Position, Url};
+        use tower_lsp_server::ls_types::Position;
 
         let pool = Arc::new(LanguageServerPool::new());
         let config = devnull_config();

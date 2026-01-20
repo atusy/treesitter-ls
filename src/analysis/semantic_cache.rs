@@ -39,7 +39,7 @@
 use crate::language::injection::CacheableInjectionRegion;
 use dashmap::DashMap;
 use rust_lapper::{Interval, Lapper};
-use tower_lsp::lsp_types::SemanticTokens;
+use tower_lsp_server::ls_types::SemanticTokens;
 use url::Url;
 
 /// Thread-safe semantic token cache.
@@ -261,7 +261,7 @@ impl Default for InjectionTokenCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tower_lsp::lsp_types::SemanticToken;
+    use tower_lsp_server::ls_types::SemanticToken;
 
     #[test]
     fn test_semantic_cache_store_retrieve() {

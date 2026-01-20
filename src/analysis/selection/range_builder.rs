@@ -20,7 +20,7 @@
 //!       └── Failure → build_unparsed_fallback()
 //! ```
 
-use tower_lsp::lsp_types::{Position, Range, SelectionRange};
+use tower_lsp_server::ls_types::{Position, Range, SelectionRange};
 use tree_sitter::Node;
 
 use super::context::{DocumentContext, InjectionContext};

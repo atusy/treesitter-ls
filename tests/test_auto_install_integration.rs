@@ -8,8 +8,8 @@ use kakehashi::language::LanguageCoordinator;
 use kakehashi::language::injection::collect_all_injections;
 use kakehashi::lsp::auto_install::InstallingLanguages;
 use std::collections::HashSet;
-use tower_lsp::lsp_types::Url;
 use tree_sitter::{Parser, Query};
+use url::Url;
 
 #[test]
 fn test_did_open_should_call_check_injected_languages_after_parsing() {
