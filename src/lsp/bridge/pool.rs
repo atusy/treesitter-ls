@@ -933,6 +933,51 @@ impl LanguageServerPool {
         }
     }
 
+    /// Force-kill all connections with SIGTERM->SIGKILL escalation.
+    ///
+    /// This is the fallback when global shutdown timeout expires.
+    /// Per ADR-0017, this method:
+    /// 1. Sends SIGTERM to all remaining connections
+    /// 2. Waits briefly for graceful termination
+    /// 3. Sends SIGKILL to any still-alive connections
+    /// 4. Transitions all connections to Closed state
+    ///
+    /// # Platform Support
+    ///
+    /// This method is only available on Unix platforms.
+    ///
+    /// On Windows, connections are terminated via Drop which calls start_kill()
+    /// directly (equivalent to SIGKILL without grace period).
+    #[cfg(unix)]
+    pub(crate) async fn force_kill_all(&self) {
+        // Collect handles to force-kill
+        let handles: Vec<Arc<ConnectionHandle>> = {
+            let connections = self.connections.lock().await;
+            connections
+                .iter()
+                .filter_map(|(language, handle)| {
+                    if handle.state() != ConnectionState::Closed {
+                        log::debug!(
+                            target: "kakehashi::bridge",
+                            "Force-killing {} connection (state: {:?})",
+                            language,
+                            handle.state()
+                        );
+                        Some(Arc::clone(handle))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        // Force-kill each connection with SIGTERM->SIGKILL escalation
+        for handle in handles {
+            handle.force_kill().await;
+            handle.complete_shutdown();
+        }
+    }
+
     /// Get or create a connection for the specified language with custom timeout.
     ///
     /// If no connection exists, spawns the language server and stores the connection
@@ -3669,6 +3714,47 @@ mod tests {
                     handle.state(),
                     ConnectionState::Closed,
                     "Connection {} should be Closed after parallel shutdown",
+                    key
+                );
+            }
+        }
+    }
+
+    // ============================================================
+    // Sprint 13: Phase 3 - Force-kill fallback
+    // ============================================================
+
+    /// Test that force_kill_all() sends signals to all remaining connections.
+    ///
+    /// ADR-0017: When global timeout expires, force_kill_all() is called.
+    /// This test verifies force_kill_all() method exists and transitions
+    /// all connections to Closed state.
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn force_kill_all_terminates_all_connections() {
+        let pool = LanguageServerPool::new();
+
+        // Insert multiple connections in Ready state
+        for i in 0..2 {
+            let handle = create_handle_with_state(ConnectionState::Ready).await;
+            pool.connections
+                .lock()
+                .await
+                .insert(format!("server_{}", i), handle);
+        }
+
+        // Call force_kill_all directly
+        pool.force_kill_all().await;
+
+        // All connections should be in Closed state
+        let connections = pool.connections.lock().await;
+        for i in 0..2 {
+            let key = format!("server_{}", i);
+            if let Some(handle) = connections.get(&key) {
+                assert_eq!(
+                    handle.state(),
+                    ConnectionState::Closed,
+                    "Connection {} should be Closed after force_kill_all()",
                     key
                 );
             }
