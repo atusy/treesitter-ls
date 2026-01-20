@@ -19,32 +19,6 @@ const scrum: ScrumDashboard = {
   },
   product_backlog: [
     {
-      id: "pbi-global-shutdown-timeout",
-      story: {
-        role: "editor plugin author integrating tree-sitter-ls",
-        capability: "have bounded shutdown time for all connections",
-        benefit: "editor shutdown is predictable and never hangs indefinitely",
-      },
-      acceptance_criteria: [
-        { criterion: "Global shutdown timeout (5-15s configurable) wraps shutdown_all()", verification: "Unit test: shutdown_all completes within configured timeout even with hung servers" },
-        { criterion: "Parallel shutdown of all connections under single global ceiling", verification: "Integration test: multiple servers shut down concurrently, total time bounded by global timeout (not N * per-server)" },
-        { criterion: "force_kill_all() called when global timeout expires", verification: "Integration test: all remaining connections receive SIGTERM then SIGKILL when global timeout expires" },
-        { criterion: "Writer-idle timeout (2s fixed) counts against global budget", verification: "Unit test: writer idle wait is part of graceful_shutdown(), not additional to global timeout" },
-      ],
-      status: "done",
-      refinement_notes: [
-        "ALREADY IMPLEMENTED: graceful_shutdown() with 5s hardcoded timeout per connection (pool.rs:249)",
-        "ALREADY IMPLEMENTED: shutdown_all() runs connections in parallel via JoinSet (pool.rs:697-749)",
-        "ALREADY IMPLEMENTED: force_kill_with_escalation() with SIGTERM->SIGKILL (connection.rs:164-265)",
-        "ALREADY IMPLEMENTED: Mutex-based writer synchronization (equivalent to writer-idle wait)",
-        "TO IMPLEMENT: Wrap shutdown_all() parallel shutdowns in tokio::time::timeout(GLOBAL_TIMEOUT)",
-        "TO IMPLEMENT: Add force_kill_all() fallback when global timeout expires per ADR-0017",
-        "TO IMPLEMENT: Make global timeout configurable (5-15s range per ADR-0018)",
-        "ARCHITECTURE NOTE: Per ADR-0017, no per-connection budget allocation - fast servers complete quickly, slow servers use remaining time",
-        "ARCHITECTURE NOTE: Current per-connection 5s timeout should be removed; global timeout is the only ceiling",
-      ],
-    },
-    {
       id: "pbi-liveness-timeout",
       story: {
         role: "developer using tree-sitter-ls with multiple embedded languages",
@@ -146,107 +120,7 @@ const scrum: ScrumDashboard = {
       },
     ],
     },
-    {
-      number: 12,
-      pbi_id: "pbi-lsp-shutdown",
-      goal: "Implement connection lifecycle with graceful LSP shutdown handshake",
-      status: "done",
-      subtasks: [
-      // Phase 1: State Machine (foundation) - COMPLETED
-      {
-        test: "Unit test: ConnectionState enum has 5 states (Initializing, Ready, Failed, Closing, Closed)",
-        implementation: "Add Closing and Closed variants to ConnectionState enum in pool.rs",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "b3a8ec61", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
-        notes: ["Verify all call sites handle new variants (Sprint 11 retrospective)"],
-      },
-      {
-        test: "Unit test: Ready state + shutdown signal = Closing state",
-        implementation: "Add Ready to Closing transition in set_state() with shutdown trigger",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "b3a8ec61", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
-        notes: ["ADR-0015 state machine diagram", "Implemented via begin_shutdown() method"],
-      },
-      {
-        test: "Unit test: Initializing state + shutdown signal = Closing state",
-        implementation: "Add Initializing to Closing transition for shutdown during init",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "b3a8ec61", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
-        notes: ["ADR-0017: abort initialization, proceed to shutdown", "Uses same begin_shutdown() method as Ready transition"],
-      },
-      {
-        test: "Unit test: Closing state completes gracefully or times out to Closed",
-        implementation: "Add Closing to Closed transition on completion/timeout",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "b3a8ec61", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
-        notes: ["Terminal state for graceful shutdown path", "Implemented via complete_shutdown() method"],
-      },
-      {
-        test: "Unit test: Failed state transitions directly to Closed (bypass Closing)",
-        implementation: "Add Failed to Closed direct transition, skip LSP handshake",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "b3a8ec61", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
-        notes: ["ADR-0017: stdin unavailable in Failed state", "Uses same complete_shutdown() method, bypasses Closing"],
-      },
-      {
-        test: "Unit test: new requests in Closing state receive REQUEST_FAILED error",
-        implementation: "Add operation gating for Closing state in request handling",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "b3a8ec61", message: "feat(bridge): add Closing and Closed states to ConnectionState enum", phase: "green" }],
-        notes: ["Error message: 'bridge: connection closing'", "Wired via shutdown_all() in LSP shutdown handler"],
-      },
-      // Phase 2: LSP Handshake (makes states reachable) - COMPLETED
-      {
-        test: "Integration test: shutdown request sent, response received before exit",
-        implementation: "Implement shutdown() method that sends LSP shutdown request and awaits response",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "f22f2d5e", message: "feat(bridge): implement graceful shutdown with LSP handshake", phase: "green" }],
-        notes: ["LSP spec: shutdown request before exit notification", "Implemented graceful_shutdown() with 5s timeout"],
-      },
-      {
-        test: "Integration test: exit notification sent after shutdown response",
-        implementation: "Send exit notification after receiving shutdown response",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "f22f2d5e", message: "feat(bridge): implement graceful shutdown with LSP handshake", phase: "green" }],
-        notes: ["LSP two-phase shutdown sequence", "Exit notification sent in graceful_shutdown() after shutdown response"],
-      },
-      {
-        test: "Unit test: signal stop, wait idle (2s timeout), exclusive access sequence",
-        implementation: "Implement three-phase writer loop synchronization for shutdown",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "9f0901fc", message: "test(bridge): add writer synchronization tests for graceful shutdown", phase: "green" }],
-        notes: ["ADR-0017: prevents stdin corruption during concurrent writes", "Current Mutex-based architecture provides equivalent synchronization"],
-      },
-      // Phase 3: Forced Shutdown (robustness)
-      {
-        test: "Integration test: unresponsive process receives SIGTERM, then SIGKILL",
-        implementation: "Add SIGTERM/SIGKILL escalation for unresponsive servers",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "4492ef88", message: "feat(bridge): add SIGTERM/SIGKILL signal escalation for unresponsive servers", phase: "green" }],
-        notes: ["Fallback when LSP handshake times out", "Unix-only via nix crate", "Wired into graceful_shutdown() flow"],
-      },
-      {
-        test: "Integration test: in-flight requests receive REQUEST_FAILED, then shutdown completes",
-        implementation: "Fail pending requests on shutdown, then complete LSP handshake",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "9ebc6b4b", message: "test(bridge): add E2E shutdown sequence integration tests", phase: "green" }],
-        notes: ["End-to-end shutdown sequence with pending requests", "Verifies operation gating during Closing state"],
-      },
-    ],
-    },
-    { number: 10, pbi_id: "pbi-color-presentation-e2e", goal: "Add E2E test coverage for textDocument/colorPresentation", status: "done", subtasks: [] },
-    { number: 11, pbi_id: "pbi-inlay-hint-label-part-location", goal: "Transform InlayHintLabelPart.location for full LSP compliance", status: "done", subtasks: [] },
+    { number: 12, pbi_id: "pbi-lsp-shutdown", goal: "Implement connection lifecycle with graceful LSP shutdown handshake", status: "done", subtasks: [] },
   ],
   definition_of_done: {
     checks: [
@@ -257,13 +131,13 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
-    { sprint: 12, improvements: [
-      { action: "Document pattern for phased feature implementation (Foundation -> Core -> Robustness) in project guidelines", timing: "product", status: "active", outcome: null },
-      { action: "When adding enum variants, explicitly document whether call sites need updates or existing behavior is correct", timing: "sprint", status: "active", outcome: null },
-      { action: "Document pattern for platform-conditional feature implementation (Unix-only signals, etc.)", timing: "product", status: "active", outcome: null },
+    { sprint: 13, improvements: [
+      { action: "Add CLAUDE.md conventions: Document architecture patterns in ADRs BEFORE implementation, tests verify ADR compliance", timing: "sprint", status: "active", outcome: null },
+      { action: "Create project guidelines documentation capturing phased implementation pattern (Foundation -> Core -> Robustness)", timing: "product", status: "active", outcome: null },
+      { action: "Consider extraction: GlobalShutdownTimeout validation logic could be generalized as BoundedDuration(min, max) for reuse with init/liveness timeouts", timing: "product", status: "active", outcome: null },
     ] },
-    { sprint: 11, improvements: [
-      { action: "Document pattern for handling LSP types with nested optional Location fields in array properties", timing: "product", status: "active", outcome: null },
+    { sprint: 12, improvements: [
+      { action: "When adding enum variants, explicitly document whether call sites need updates or existing behavior is correct", timing: "sprint", status: "active", outcome: null },
     ] },
   ],
 };
