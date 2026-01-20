@@ -1133,6 +1133,17 @@ impl Kakehashi {
 #[tower_lsp::async_trait]
 impl LanguageServer for Kakehashi {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        // Store client capabilities for LSP compliance checks (e.g., refresh support).
+        // OnceLock::set() returns Err if already set - ignore since LSP spec guarantees
+        // initialize() is called exactly once per session.
+        let _ = self.client_capabilities.set(params.capabilities.clone());
+
+        // Log capability state for troubleshooting client compatibility issues.
+        log::debug!(
+            "Client capabilities stored: semantic_tokens_refresh={}",
+            check_semantic_tokens_refresh_support(&params.capabilities)
+        );
+
         // Debug: Log initialization
         self.client
             .log_message(MessageType::INFO, "Received initialization request")
