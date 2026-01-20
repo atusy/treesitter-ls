@@ -112,8 +112,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test: force_kill_all() sends SIGTERM then SIGKILL to all remaining connections",
         implementation: "Add force_kill_all() method to ConnectionPool that iterates connections",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "4155548f", message: "feat(bridge): add force_kill_all() for SIGTERM->SIGKILL escalation", phase: "green" }],
         notes: ["Reuse existing force_kill_with_escalation() per connection", "Unix-only via cfg(unix)"],
       },
       {
