@@ -315,6 +315,10 @@ impl ConnectionHandle {
         // 4. Force kill the process with signal escalation (Unix only)
         // This ensures the process is terminated even if it ignores exit notification
         // ALWAYS executed, even if handshake failed
+        //
+        // On non-Unix platforms (Windows), process termination relies on Drop:
+        // SplitConnectionWriter::drop() calls start_kill() when the writer is dropped.
+        // This happens when complete_shutdown() is called and references are released.
         #[cfg(unix)]
         {
             self.force_kill().await;
