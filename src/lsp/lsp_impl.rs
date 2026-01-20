@@ -37,11 +37,6 @@ use super::auto_install::{InstallingLanguages, get_injected_languages};
 use super::progress::{create_progress_begin, create_progress_end};
 use super::semantic_request_tracker::SemanticRequestTracker;
 
-/// Timeout for semantic tokens refresh requests in milliseconds.
-/// This timeout prevents deadlock with clients (e.g., vim-lsp) that don't respond
-/// to workspace/semanticTokens/refresh, and prevents memory leaks from accumulated pending requests.
-const SEMANTIC_TOKENS_REFRESH_TIMEOUT_MS: u64 = 500;
-
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
         .iter()
@@ -700,29 +695,19 @@ impl Kakehashi {
                     self.client.log_message(message_type, message.clone()).await;
                 }
                 LanguageEvent::SemanticTokensRefresh { language_id } => {
-                    // Fire-and-forget with timeout to prevent deadlock with clients
-                    // that don't respond to workspace/semanticTokens/refresh (e.g., vim-lsp).
-                    // Timeout prevents memory leak from accumulated pending requests.
+                    // Fire-and-forget because the response is just null
+                    //
+                    // Keep the receiver alive without dropping by timeout in order to
+                    // avoid tower-lsp panics
+                    //
+                    // Trade-off: If a client never responds (e.g., vim-lsp), this causes:
+                    // - A small memory leak in tower-lsp's pending requests map
+                    // - A spawned task waiting indefinitely
                     let client = self.client.clone();
                     let lang_id = language_id.clone();
                     tokio::spawn(async move {
-                        match tokio::time::timeout(
-                            std::time::Duration::from_millis(SEMANTIC_TOKENS_REFRESH_TIMEOUT_MS),
-                            client.semantic_tokens_refresh(),
-                        )
-                        .await
-                        {
-                            Ok(Ok(())) => {}
-                            Ok(Err(err)) => {
-                                log::debug!(
-                                    "semantic_tokens_refresh failed for {}: {}",
-                                    lang_id,
-                                    err
-                                );
-                            }
-                            Err(_) => {
-                                log::debug!("semantic_tokens_refresh timed out for {}", lang_id);
-                            }
+                        if let Err(err) = client.semantic_tokens_refresh().await {
+                            log::debug!("semantic_tokens_refresh failed for {}: {}", lang_id, err);
                         }
                     });
                 }
