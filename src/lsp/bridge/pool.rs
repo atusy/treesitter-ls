@@ -312,17 +312,20 @@ impl ConnectionHandle {
         self.set_state(ConnectionState::Closed);
     }
 
-    /// Force kill the child process with SIGTERM -> SIGKILL escalation (Unix only).
+    /// Force kill the child process with platform-appropriate escalation.
     ///
     /// This is the fallback when LSP shutdown handshake times out or fails.
-    /// Implements the signal escalation per ADR-0017:
-    /// 1. Send SIGTERM to allow graceful termination
-    /// 2. Wait briefly (2 seconds)
-    /// 3. Send SIGKILL if process still alive
     ///
-    /// # Platform Support
-    /// This method is only available on Unix platforms.
-    #[cfg(unix)]
+    /// # Platform-Specific Behavior
+    ///
+    /// **Unix (Linux, macOS)**:
+    /// 1. Send SIGTERM to allow graceful termination
+    /// 2. Wait for up to 2 seconds for the process to exit
+    /// 3. If still alive, send SIGKILL for forced termination
+    ///
+    /// **Windows**:
+    /// - Directly calls `TerminateProcess` via `start_kill()`
+    /// - No graceful period (Windows has no SIGTERM equivalent)
     pub(crate) async fn force_kill(&self) {
         let mut writer = self.writer.lock().await;
         writer.force_kill_with_escalation().await;
@@ -413,17 +416,13 @@ impl ConnectionHandle {
         }
         .await;
 
-        // 4. Force kill the process with signal escalation (Unix only)
+        // 4. Force kill the process with platform-appropriate escalation
         // This ensures the process is terminated even if it ignores exit notification
         // ALWAYS executed, even if handshake failed
         //
-        // On non-Unix platforms (Windows), process termination relies on Drop:
-        // SplitConnectionWriter::drop() calls start_kill() when the writer is dropped.
-        // This happens when complete_shutdown() is called and references are released.
-        #[cfg(unix)]
-        {
-            self.force_kill().await;
-        }
+        // Unix: SIGTERM->SIGKILL escalation with 2s grace period
+        // Windows: TerminateProcess directly (no grace period)
+        self.force_kill().await;
 
         // 5. Transition to Closed state
         // ALWAYS executed, even if handshake failed
