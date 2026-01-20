@@ -929,20 +929,15 @@ impl LanguageServerPool {
     /// directly (equivalent to SIGKILL without grace period).
     #[cfg(unix)]
     pub(crate) async fn force_kill_all(&self) {
-        // Collect handles to force-kill
-        let handles: Vec<Arc<ConnectionHandle>> = {
+        // Collect handles to force-kill (minimize lock duration - no logging inside lock)
+        let handles_with_info: Vec<(String, ConnectionState, Arc<ConnectionHandle>)> = {
             let connections = self.connections.lock().await;
             connections
                 .iter()
                 .filter_map(|(language, handle)| {
-                    if handle.state() != ConnectionState::Closed {
-                        log::debug!(
-                            target: "kakehashi::bridge",
-                            "Force-killing {} connection (state: {:?})",
-                            language,
-                            handle.state()
-                        );
-                        Some(Arc::clone(handle))
+                    let state = handle.state();
+                    if state != ConnectionState::Closed {
+                        Some((language.clone(), state, Arc::clone(handle)))
                     } else {
                         None
                     }
@@ -950,11 +945,21 @@ impl LanguageServerPool {
                 .collect()
         };
 
+        // Log after releasing lock
+        for (language, state, _) in &handles_with_info {
+            log::debug!(
+                target: "kakehashi::bridge",
+                "Force-killing {} connection (state: {:?})",
+                language,
+                state
+            );
+        }
+
         // Force-kill all connections in parallel with SIGTERM->SIGKILL escalation.
         // Using JoinSet for parallel execution ensures O(1) force-kill time for N connections
         // instead of O(N * 2s) when done sequentially (2s is SIGTERM->SIGKILL wait).
         let mut join_set = tokio::task::JoinSet::new();
-        for handle in handles {
+        for (_, _, handle) in handles_with_info {
             join_set.spawn(async move {
                 handle.force_kill().await;
                 handle.complete_shutdown();
