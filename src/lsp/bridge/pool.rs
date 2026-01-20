@@ -825,6 +825,114 @@ impl LanguageServerPool {
         while join_set.join_next().await.is_some() {}
     }
 
+    /// Initiate graceful shutdown of all connections with a global timeout.
+    ///
+    /// This is the primary shutdown method per ADR-0017. It wraps parallel shutdown
+    /// of all connections under a single global ceiling. When the timeout expires,
+    /// remaining connections are force-killed with SIGTERM->SIGKILL escalation.
+    ///
+    /// # Arguments
+    /// * `timeout` - Global shutdown timeout (5-15s per ADR-0018)
+    ///
+    /// # Behavior
+    ///
+    /// 1. All Ready/Initializing connections begin graceful shutdown in parallel
+    /// 2. Failed connections transition directly to Closed (skip LSP handshake)
+    /// 3. If global timeout expires before all complete:
+    ///    - Remaining connections receive force_kill (SIGTERM->SIGKILL on Unix)
+    ///    - All connections transition to Closed state
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let timeout = GlobalShutdownTimeout::new(Duration::from_secs(10))?;
+    /// pool.shutdown_all_with_timeout(timeout).await;
+    /// ```
+    pub(crate) async fn shutdown_all_with_timeout(&self, timeout: GlobalShutdownTimeout) {
+        // Collect handles to shutdown - release lock before async operations
+        let handles_to_shutdown: Vec<(String, Arc<ConnectionHandle>)> = {
+            let connections = self.connections.lock().await;
+            connections
+                .iter()
+                .filter_map(|(language, handle)| match handle.state() {
+                    ConnectionState::Ready | ConnectionState::Initializing => {
+                        Some((language.clone(), Arc::clone(handle)))
+                    }
+                    ConnectionState::Failed => {
+                        log::debug!(
+                            target: "kakehashi::bridge",
+                            "Shutting down {} connection (Failed → Closed)",
+                            language
+                        );
+                        handle.complete_shutdown();
+                        None
+                    }
+                    ConnectionState::Closing | ConnectionState::Closed => {
+                        log::debug!(
+                            target: "kakehashi::bridge",
+                            "Connection {} already shutting down or closed",
+                            language
+                        );
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        if handles_to_shutdown.is_empty() {
+            return;
+        }
+
+        // Clone handles for force-kill fallback (need ownership for both paths)
+        let handles_for_force_kill: Vec<Arc<ConnectionHandle>> =
+            handles_to_shutdown.iter().map(|(_, h)| Arc::clone(h)).collect();
+
+        // Shutdown all Ready/Initializing connections in parallel with global timeout
+        let graceful_result = tokio::time::timeout(timeout.as_duration(), async {
+            let mut join_set = tokio::task::JoinSet::new();
+            for (language, handle) in handles_to_shutdown {
+                join_set.spawn(async move {
+                    log::debug!(
+                        target: "kakehashi::bridge",
+                        "Performing graceful shutdown for {} connection",
+                        language
+                    );
+                    if let Err(e) = handle.graceful_shutdown().await {
+                        log::warn!(
+                            target: "kakehashi::bridge",
+                            "Graceful shutdown failed for {}: {}",
+                            language, e
+                        );
+                    }
+                });
+            }
+
+            // Wait for all shutdowns to complete
+            while join_set.join_next().await.is_some() {}
+        })
+        .await;
+
+        // Handle timeout: force-kill remaining connections
+        if graceful_result.is_err() {
+            log::warn!(
+                target: "kakehashi::bridge",
+                "Global shutdown timeout ({:?}) expired, force-killing remaining connections",
+                timeout.as_duration()
+            );
+
+            // Force-kill all connections that haven't completed
+            for handle in handles_for_force_kill {
+                if handle.state() != ConnectionState::Closed {
+                    #[cfg(unix)]
+                    {
+                        handle.force_kill().await;
+                    }
+                    handle.complete_shutdown();
+                }
+            }
+        }
+    }
+
     /// Get or create a connection for the specified language with custom timeout.
     ///
     /// If no connection exists, spawns the language server and stores the connection
@@ -3471,5 +3579,49 @@ mod tests {
             duration >= Duration::from_secs(5) && duration <= Duration::from_secs(15),
             "Default should be within 5-15s range"
         );
+    }
+
+    /// Test that shutdown_all completes within configured timeout even with hung servers.
+    ///
+    /// ADR-0017: Global timeout wraps all parallel shutdowns.
+    /// This test verifies that:
+    /// 1. shutdown_all_with_timeout() accepts a GlobalShutdownTimeout
+    /// 2. Shutdown completes within the timeout even if servers hang
+    #[tokio::test]
+    async fn shutdown_all_completes_within_global_timeout_with_hung_servers() {
+        let pool = LanguageServerPool::new();
+
+        // Insert a connection that will hang (cat > /dev/null never responds)
+        {
+            let handle = create_handle_with_state(ConnectionState::Ready).await;
+            pool.connections
+                .lock()
+                .await
+                .insert("hung_server".to_string(), handle);
+        }
+
+        let timeout = GlobalShutdownTimeout::new(Duration::from_secs(5))
+            .expect("5s is valid");
+
+        let start = std::time::Instant::now();
+        pool.shutdown_all_with_timeout(timeout).await;
+        let elapsed = start.elapsed();
+
+        // Should complete within timeout + small buffer for overhead
+        assert!(
+            elapsed < Duration::from_secs(7),
+            "Shutdown should complete within global timeout. Elapsed: {:?}",
+            elapsed
+        );
+
+        // All connections should be in Closed state
+        let connections = pool.connections.lock().await;
+        if let Some(handle) = connections.get("hung_server") {
+            assert_eq!(
+                handle.state(),
+                ConnectionState::Closed,
+                "Connection should be Closed after shutdown timeout"
+            );
+        }
     }
 }
