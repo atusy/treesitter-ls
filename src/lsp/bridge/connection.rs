@@ -192,7 +192,13 @@ impl SplitConnectionWriter {
                 pid, e
             );
             // If SIGTERM fails, try SIGKILL directly
-            let _ = self.child.start_kill();
+            if let Err(kill_err) = self.child.start_kill() {
+                log::error!(
+                    target: "kakehashi::bridge",
+                    "Failed to send SIGTERM to process {}, and fallback SIGKILL also failed: {}",
+                    pid, kill_err
+                );
+            }
             return;
         }
 
