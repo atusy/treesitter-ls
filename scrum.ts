@@ -31,7 +31,7 @@ const scrum: ScrumDashboard = {
         { criterion: "force_kill_all() called when global timeout expires", verification: "Integration test: all remaining connections receive SIGTERM then SIGKILL when global timeout expires" },
         { criterion: "Writer-idle timeout (2s fixed) counts against global budget", verification: "Unit test: writer idle wait is part of graceful_shutdown(), not additional to global timeout" },
       ],
-      status: "ready",
+      status: "done",
       refinement_notes: [
         "ALREADY IMPLEMENTED: graceful_shutdown() with 5s hardcoded timeout per connection (pool.rs:249)",
         "ALREADY IMPLEMENTED: shutdown_all() runs connections in parallel via JoinSet (pool.rs:697-749)",
@@ -75,12 +75,14 @@ const scrum: ScrumDashboard = {
       status: "draft",
     },
   ],
-  sprint: {
-    number: 13,
-    pbi_id: "pbi-global-shutdown-timeout",
-    goal: "Implement global shutdown timeout with configurable ceiling and force-kill fallback",
-    status: "review",
-    subtasks: [
+  sprint: null,
+  completed: [
+    {
+      number: 13,
+      pbi_id: "pbi-global-shutdown-timeout",
+      goal: "Implement global shutdown timeout with configurable ceiling and force-kill fallback",
+      status: "done",
+      subtasks: [
       // Phase 1: Foundation (configurable timeout type)
       {
         test: "Unit test: GlobalShutdownTimeout type accepts 5-15s range, rejects out-of-range values",
@@ -143,8 +145,7 @@ const scrum: ScrumDashboard = {
         notes: ["ADR-0017: 2s writer-idle counts against global budget", "Already implemented via Mutex-based sync"],
       },
     ],
-  },
-  completed: [
+    },
     {
       number: 12,
       pbi_id: "pbi-lsp-shutdown",
