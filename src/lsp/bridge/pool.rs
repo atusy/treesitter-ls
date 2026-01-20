@@ -928,42 +928,22 @@ impl LanguageServerPool {
                 timeout.as_duration()
             );
 
-            // Force-kill remaining connections (Unix: SIGTERM->SIGKILL, Windows: via Drop)
-            #[cfg(unix)]
-            {
-                self.force_kill_all().await;
-            }
-
-            // On Windows, connections will be terminated via Drop (start_kill)
-            // when the ConnectionHandle is dropped. Just ensure state transition.
-            #[cfg(not(unix))]
-            {
-                let connections = self.connections.lock().await;
-                for (_, handle) in connections.iter() {
-                    if handle.state() != ConnectionState::Closed {
-                        handle.complete_shutdown();
-                    }
-                }
-            }
+            self.force_kill_all().await;
         }
     }
 
-    /// Force-kill all connections with SIGTERM->SIGKILL escalation.
+    /// Force-kill all connections with platform-appropriate escalation.
     ///
     /// This is the fallback when global shutdown timeout expires.
-    /// Per ADR-0017, this method:
-    /// 1. Sends SIGTERM to all remaining connections
-    /// 2. Waits briefly for graceful termination
-    /// 3. Sends SIGKILL to any still-alive connections
-    /// 4. Transitions all connections to Closed state
+    /// Per ADR-0017, this method terminates all non-closed connections and
+    /// transitions them to Closed state.
     ///
-    /// # Platform Support
+    /// # Platform-Specific Behavior
     ///
-    /// This method is only available on Unix platforms.
+    /// **Unix**: Uses SIGTERM->SIGKILL escalation (2s grace period)
+    /// **Windows**: Uses TerminateProcess directly (no grace period)
     ///
-    /// On Windows, connections are terminated via Drop which calls start_kill()
-    /// directly (equivalent to SIGKILL without grace period).
-    #[cfg(unix)]
+    /// The method executes kills in parallel to minimize total shutdown time.
     pub(crate) async fn force_kill_all(&self) {
         // Collect handles to force-kill (minimize lock duration - no logging inside lock)
         let handles_with_info: Vec<(String, ConnectionState, Arc<ConnectionHandle>)> = {

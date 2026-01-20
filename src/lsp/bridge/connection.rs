@@ -144,24 +144,22 @@ impl SplitConnectionWriter {
         self.writer.write_message(message).await
     }
 
-    /// Force kill the child process with SIGTERM -> SIGKILL escalation (Unix only).
+    /// Force-kill the child process with platform-appropriate escalation.
     ///
-    /// This method implements the signal escalation sequence:
+    /// # Platform-Specific Behavior
+    ///
+    /// **Unix (Linux, macOS)**:
     /// 1. Send SIGTERM to allow graceful termination
     /// 2. Wait for up to 2 seconds for the process to exit
     /// 3. If still alive, send SIGKILL for forced termination
     ///
-    /// # Platform Support
-    ///
-    /// This method is only available on Unix platforms.
-    ///
-    /// On Windows, graceful shutdown relies on the LSP shutdown/exit handshake
-    /// (ADR-0017). If the language server becomes unresponsive, the fallback is
-    /// `start_kill()` via `Drop`, which sends the equivalent of SIGKILL directly
-    /// without a SIGTERM grace period. This means Windows servers don't get the
-    /// 2-second grace period to clean up after an unresponsive shutdown.
-    #[cfg(unix)]
+    /// **Windows**:
+    /// - Directly calls `TerminateProcess` via `start_kill()`
+    /// - No graceful period (Windows has no SIGTERM equivalent)
+    /// - Language servers should handle cleanup via LSP shutdown/exit handshake (ADR-0017)
     pub(crate) async fn force_kill_with_escalation(&mut self) {
+        #[cfg(unix)]
+        {
         use nix::sys::signal::{Signal, kill};
         use nix::unistd::Pid;
         use std::time::Duration;
@@ -260,6 +258,52 @@ impl SplitConnectionWriter {
                     "Error waiting for process {} after SIGKILL: {}",
                     pid, e
                 );
+            }
+        }
+        }
+
+        #[cfg(not(unix))]
+        {
+            // Windows: Direct kill via TerminateProcess (no graceful signal support)
+            let Some(pid) = self.child.id() else {
+                log::debug!(
+                    target: "kakehashi::bridge",
+                    "force_kill_with_escalation: child process already exited"
+                );
+                return;
+            };
+
+            log::debug!(
+                target: "kakehashi::bridge",
+                "Terminating process {} (Windows: TerminateProcess)",
+                pid
+            );
+
+            if let Err(e) = self.child.start_kill() {
+                log::error!(
+                    target: "kakehashi::bridge",
+                    "Failed to terminate process {}: {}",
+                    pid, e
+                );
+                return;
+            }
+
+            // Wait for process to be reaped
+            match self.child.wait().await {
+                Ok(status) => {
+                    log::debug!(
+                        target: "kakehashi::bridge",
+                        "Process {} terminated with status: {}",
+                        pid, status
+                    );
+                }
+                Err(e) => {
+                    log::warn!(
+                        target: "kakehashi::bridge",
+                        "Error waiting for process {} after termination: {}",
+                        pid, e
+                    );
+                }
             }
         }
     }
