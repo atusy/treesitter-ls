@@ -404,6 +404,126 @@ mod tests {
     }
 
     // ========================================
+    // increment_document_version tests
+    // ========================================
+
+    /// Test that increment_document_version returns None for unopened document.
+    #[tokio::test]
+    async fn increment_document_version_returns_none_for_unopened() {
+        let tracker = DocumentTracker::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
+
+        // Document was never opened via should_send_didopen
+        let version = tracker.increment_document_version(&virtual_uri).await;
+        assert!(
+            version.is_none(),
+            "increment_document_version should return None for unopened document"
+        );
+    }
+
+    /// Test that increment_document_version increments and returns new version.
+    #[tokio::test]
+    async fn increment_document_version_increments_after_open() {
+        let tracker = DocumentTracker::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
+
+        // Open the document (sets version to 1)
+        tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+
+        // First increment: 1 -> 2
+        let version = tracker.increment_document_version(&virtual_uri).await;
+        assert_eq!(version, Some(2), "First increment should return 2");
+
+        // Second increment: 2 -> 3
+        let version = tracker.increment_document_version(&virtual_uri).await;
+        assert_eq!(version, Some(3), "Second increment should return 3");
+    }
+
+    // ========================================
+    // untrack_document tests
+    // ========================================
+
+    /// Test that untrack_document removes from document_versions.
+    #[tokio::test]
+    async fn untrack_document_removes_from_versions() {
+        let tracker = DocumentTracker::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
+
+        // Open the document
+        tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+
+        // Verify version exists
+        let version = tracker.increment_document_version(&virtual_uri).await;
+        assert!(
+            version.is_some(),
+            "Document should have version before untrack"
+        );
+
+        // Untrack the document
+        tracker.untrack_document(&virtual_uri).await;
+
+        // Version should no longer exist
+        let version = tracker.increment_document_version(&virtual_uri).await;
+        assert!(
+            version.is_none(),
+            "Document should not have version after untrack"
+        );
+    }
+
+    /// Test that untrack_document removes from opened_documents.
+    #[tokio::test]
+    async fn untrack_document_removes_from_opened() {
+        let tracker = DocumentTracker::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
+
+        // Open and mark as opened
+        tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        tracker.mark_document_opened(&virtual_uri);
+        assert!(
+            tracker.is_document_opened(&virtual_uri),
+            "Document should be opened before untrack"
+        );
+
+        // Untrack the document
+        tracker.untrack_document(&virtual_uri).await;
+
+        // Should no longer be marked as opened
+        assert!(
+            !tracker.is_document_opened(&virtual_uri),
+            "Document should not be opened after untrack"
+        );
+    }
+
+    /// Test that untrack_document does NOT remove from host_to_virtual.
+    ///
+    /// The host_to_virtual cleanup is handled separately by remove_host_virtual_docs
+    /// or remove_matching_virtual_docs, which are called before untrack_document.
+    #[tokio::test]
+    async fn untrack_document_does_not_remove_from_host_to_virtual() {
+        let tracker = DocumentTracker::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
+
+        // Open the document (adds to host_to_virtual)
+        tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+
+        // Untrack the document
+        tracker.untrack_document(&virtual_uri).await;
+
+        // host_to_virtual should still have the entry
+        let host_map = tracker.host_to_virtual.lock().await;
+        let docs = host_map.get(&host_uri);
+        assert!(
+            docs.is_some() && !docs.unwrap().is_empty(),
+            "untrack_document should NOT remove from host_to_virtual"
+        );
+    }
+
+    // ========================================
     // remove_matching_virtual_docs tests
     // ========================================
 
