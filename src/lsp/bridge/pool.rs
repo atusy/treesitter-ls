@@ -27,7 +27,10 @@ use tokio::sync::Mutex;
 use url::Url;
 
 use super::connection::SplitConnectionWriter;
-use super::protocol::{VirtualDocumentUri, build_bridge_didopen_notification};
+use super::protocol::{
+    VirtualDocumentUri, build_bridge_didopen_notification, build_initialize_request,
+    build_initialized_notification,
+};
 
 /// Timeout for LSP initialize handshake (ADR-0018 Tier 0: 30-60s recommended).
 ///
@@ -634,20 +637,8 @@ impl LanguageServerPool {
         let init_options = server_config.initialization_options.clone();
 
         let init_result = tokio::time::timeout(timeout, async move {
-            // Build initialize request with pre-registered ID
-            let init_request = serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": init_request_id.as_i64(),
-                "method": "initialize",
-                "params": {
-                    "processId": std::process::id(),
-                    "rootUri": null,
-                    "capabilities": {},
-                    "initializationOptions": init_options
-                }
-            });
-
-            // Send initialize request
+            // Build and send initialize request
+            let init_request = build_initialize_request(init_request_id, init_options);
             {
                 let mut writer = init_handle.writer().await;
                 writer.write_message(&init_request).await?;
@@ -672,12 +663,7 @@ impl LanguageServerPool {
             }
 
             // Send initialized notification
-            let initialized = serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "initialized",
-                "params": {}
-            });
-
+            let initialized = build_initialized_notification();
             {
                 let mut writer = init_handle.writer().await;
                 writer.write_message(&initialized).await?;
