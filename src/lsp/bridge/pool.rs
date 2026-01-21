@@ -5,6 +5,10 @@
 //!
 //! Phase 1: Single-LS-per-Language routing (language → single server).
 
+mod connection_state;
+
+pub(crate) use connection_state::ConnectionState;
+
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
@@ -125,37 +129,6 @@ impl Default for GlobalShutdownTimeout {
     fn default() -> Self {
         Self(Duration::from_secs(Self::DEFAULT_SECS))
     }
-}
-
-/// State of a downstream language server connection.
-///
-/// Tracks the lifecycle of the LSP handshake per ADR-0015:
-/// - Initializing: spawn started, awaiting initialize response
-/// - Ready: initialize/initialized handshake complete, can accept requests
-/// - Failed: initialization failed (timeout, error, etc.)
-/// - Closing: graceful shutdown in progress (LSP shutdown/exit handshake)
-/// - Closed: connection terminated (terminal state)
-///
-/// State transitions per ADR-0015 Operation Gating:
-/// - Initializing -> Ready (on successful init)
-/// - Initializing -> Failed (on timeout/error)
-/// - Initializing -> Closing (on shutdown signal during init)
-/// - Ready -> Closing (on shutdown signal)
-/// - Closing -> Closed (on completion/timeout)
-/// - Failed -> Closed (direct, no LSP handshake - stdin unavailable)
-/// - Failed connections are removed from pool, next request spawns fresh server
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConnectionState {
-    /// Server spawned, initialize request sent, awaiting response
-    Initializing,
-    /// Initialize/initialized handshake complete, ready for requests
-    Ready,
-    /// Initialization failed (timeout, error, server crash)
-    Failed,
-    /// Graceful shutdown in progress (LSP shutdown/exit handshake)
-    Closing,
-    /// Connection terminated (terminal state)
-    Closed,
 }
 
 use super::actor::{ReaderTaskHandle, ResponseRouter, spawn_reader_task};
