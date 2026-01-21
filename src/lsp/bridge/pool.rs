@@ -64,8 +64,8 @@ impl LanguageServerPool {
         Self {
             connections: Mutex::new(HashMap::new()),
             document_tracker: DocumentTracker::new(),
-        }
     }
+}
 
     /// Get access to the connections map.
     ///
@@ -240,8 +240,8 @@ impl LanguageServerPool {
                     e
                 );
             }
-        }
     }
+}
 
     /// Initiate graceful shutdown of all connections.
     ///
@@ -376,8 +376,8 @@ impl LanguageServerPool {
             join_set.abort_all();
 
             self.force_kill_all().await;
-        }
     }
+}
 
     /// Force-kill all connections with platform-appropriate escalation.
     ///
@@ -466,9 +466,31 @@ impl LanguageServerPool {
             .await
             .map_err(|_| io::Error::other("bridge: initialize response channel closed"))?;
 
-        // 3. Check for error response and validate result
-        // Lenient interpretation: prioritize error if present (non-null),
-        // otherwise check for result. Rejects only when neither is usable.
+        // 3. Validate response
+        Self::validate_initialize_response(&response)?;
+
+        // 4. Send initialized notification
+        let initialized = build_initialized_notification();
+        {
+            let mut writer = handle.writer().await;
+            writer.write_message(&initialized).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Validates a JSON-RPC initialize response.
+    ///
+    /// Uses lenient interpretation to maximize compatibility with non-conformant servers:
+    /// - Prioritizes error field if present and non-null
+    /// - Accepts result with null error field (`{"result": {...}, "error": null}`)
+    /// - Rejects null or missing result field
+    ///
+    /// # Returns
+    /// * `Ok(())` - Response is valid (has non-null result, no error)
+    /// * `Err(e)` - Response has error or missing/null result
+    fn validate_initialize_response(response: &serde_json::Value) -> io::Result<()> {
+        // 1. Check for error response (prioritize error if present)
         if let Some(error) = response.get("error").filter(|e| !e.is_null()) {
             // Error field is non-null: treat as error regardless of result
             let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
@@ -483,23 +505,164 @@ impl LanguageServerPool {
             )));
         }
 
-        // Reject if result is absent or null
+        // 2. Reject if result is absent or null
         if response.get("result").filter(|r| !r.is_null()).is_none() {
             return Err(io::Error::other(
                 "bridge: initialize response missing valid result",
             ));
         }
 
-        // 4. Send initialized notification
-        let initialized = build_initialized_notification();
-        {
-            let mut writer = handle.writer().await;
-            writer.write_message(&initialized).await?;
-        }
-
         Ok(())
     }
 
+}
+
+#[cfg(test)]
+mod validate_initialize_response_tests {
+    use super::*;
+    use serde_json::json;
+
+        #[test]
+    fn accepts_valid_result_without_error() {
+        let response = json!({"result": {"capabilities": {}}});
+        assert!(LanguageServerPool::validate_initialize_response(&response).is_ok());
+    }
+
+    #[test]
+    fn accepts_valid_result_with_null_error() {
+        let response = json!({"result": {"capabilities": {}}, "error": null});
+        assert!(LanguageServerPool::validate_initialize_response(&response).is_ok());
+        }
+
+    #[test]
+    fn rejects_error_response() {
+        let response = json!({
+                "error": {
+                    "code": -32600,
+                    "message": "Invalid Request"
+                }
+            });
+        let result = LanguageServerPool::validate_initialize_response(&response);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("code -32600"));
+        assert!(err_msg.contains("Invalid Request"));
+        }
+
+    #[test]
+    fn rejects_error_response_even_with_result() {
+        let response = json!({
+                "result": {"capabilities": {}},
+                "error": {
+                    "code": -32603,
+                    "message": "Internal error"
+                }
+            });
+        let result = LanguageServerPool::validate_initialize_response(&response);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("code -32603"));
+        assert!(err_msg.contains("Internal error"));
+        }
+
+    #[test]
+    fn rejects_null_result() {
+        let response = json!({"result": null});
+        let result = LanguageServerPool::validate_initialize_response(&response);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing valid result"));
+        }
+
+    #[test]
+    fn rejects_missing_result_and_error() {
+        let response = json!({});
+        let result = LanguageServerPool::validate_initialize_response(&response);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing valid result"));
+        }
+
+    #[test]
+    fn rejects_null_result_with_null_error() {
+        let response = json!({"result": null, "error": null});
+        let result = LanguageServerPool::validate_initialize_response(&response);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing valid result"));
+        }
+
+    #[test]
+    fn handles_malformed_error_missing_code() {
+        let response = json!({
+                "error": {
+                    "message": "Something went wrong"
+                }
+            });
+        let result = LanguageServerPool::validate_initialize_response(&response);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("code -1")); // Default code
+        assert!(err_msg.contains("Something went wrong"));
+        }
+
+    #[test]
+    fn handles_malformed_error_missing_message() {
+        let response = json!({
+                "error": {
+                    "code": -32700
+                }
+            });
+        let result = LanguageServerPool::validate_initialize_response(&response);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("code -32700"));
+        assert!(err_msg.contains("unknown error")); // Default message
+        }
+
+    #[test]
+    fn handles_malformed_error_empty_object() {
+        let response = json!({"error": {}});
+        let result = LanguageServerPool::validate_initialize_response(&response);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("code -1"));
+        assert!(err_msg.contains("unknown error"));
+        }
+
+    #[test]
+    fn handles_malformed_error_wrong_types() {
+        let response = json!({
+                "error": {
+                    "code": "not-a-number",
+                    "message": 123
+                }
+            });
+        let result = LanguageServerPool::validate_initialize_response(&response);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("code -1")); // Can't parse string as i64
+        assert!(err_msg.contains("unknown error")); // Can't parse number as str
+        }
+
+    #[test]
+    fn accepts_complex_result_object() {
+        let response = json!({
+                "result": {
+                    "capabilities": {
+                        "textDocumentSync": 1,
+                        "completionProvider": {
+                            "triggerCharacters": ["."]
+                        }
+                    },
+                    "serverInfo": {
+                        "name": "test-server",
+                        "version": "1.0.0"
+                    }
+                }
+            });
+        assert!(LanguageServerPool::validate_initialize_response(&response).is_ok());
+    }
+}
+
+impl LanguageServerPool {
     /// Get or create a connection for the specified language with custom timeout.
     ///
     /// If no connection exists, spawns the language server and stores the connection
@@ -628,8 +791,8 @@ impl LanguageServerPool {
                     "bridge: initialize timeout",
                 ))
             }
-        }
     }
+}
 }
 
 #[cfg(test)]
@@ -988,8 +1151,8 @@ mod tests {
                     msg
                 );
             }
-        }
     }
+}
 
     /// Test that failed connection is removed from cache and new server is spawned on retry.
     ///
@@ -1056,8 +1219,8 @@ mod tests {
                 ConnectionState::Ready,
                 "Cached handle should be the new Ready one"
             );
-        }
     }
+}
 
     /// Test recovery after initialization timeout.
     ///
@@ -1146,8 +1309,8 @@ mod tests {
                 ConnectionState::Ready,
                 "Cached handle should be Ready after recovery"
             );
-        }
     }
+}
 
     /// Test that send_didclose_notification sends notification without closing connection.
     ///
@@ -1203,8 +1366,8 @@ mod tests {
                 ConnectionState::Ready,
                 "Connection should remain Ready after didClose"
             );
-        }
     }
+}
 
     /// Test that close_host_document sends didClose for all virtual documents.
     ///
@@ -1281,8 +1444,8 @@ mod tests {
                 ConnectionState::Ready,
                 "Connection should remain Ready after close_host_document"
             );
-        }
     }
+}
 
     /// Test that forward_didchange_to_opened_docs does not block on a busy connection.
     ///
@@ -2135,8 +2298,8 @@ mod tests {
                 ConnectionState::Closed,
                 "Connection should be Closed after shutdown timeout"
             );
-        }
     }
+}
 
     /// Test that multiple servers shut down concurrently, total time bounded by global timeout.
     ///
@@ -2186,8 +2349,8 @@ mod tests {
                     key
                 );
             }
-        }
     }
+}
 
     // ============================================================
     // Sprint 13: Phase 3 - Force-kill fallback
@@ -2227,8 +2390,8 @@ mod tests {
                     key
                 );
             }
-        }
     }
+}
 
     /// Test that shutdown_all_with_timeout wires force_kill fallback correctly.
     ///
@@ -2270,8 +2433,8 @@ mod tests {
                     key
                 );
             }
-        }
     }
+}
 
     // ============================================================
     // Sprint 13: Phase 4 - Cleanup (remove per-connection timeout)
