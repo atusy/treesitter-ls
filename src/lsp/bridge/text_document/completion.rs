@@ -6,7 +6,8 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp::lsp_types::{Position, Url};
+use tower_lsp_server::ls_types::Position;
+use url::Url;
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
@@ -43,15 +44,19 @@ impl LanguageServerPool {
             .get_or_create_connection(injection_language, server_config)
             .await?;
 
+        // Convert host_uri to lsp_types::Uri for bridge protocol functions
+        let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+
         // Build virtual document URI
-        let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+        let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
 
         // Register request with router to get oneshot receiver
         let (request_id, response_rx) = handle.register_request()?;
 
         // Build completion request
         let completion_request = build_bridge_completion_request(
-            host_uri,
+            &host_uri_lsp,
             host_position,
             injection_language,
             region_id,
@@ -83,7 +88,7 @@ impl LanguageServerPool {
                 && let Some(version) = self.increment_document_version(&virtual_uri).await
             {
                 let did_change = build_bridge_didchange_notification(
-                    host_uri,
+                    &host_uri_lsp,
                     injection_language,
                     region_id,
                     virtual_content,

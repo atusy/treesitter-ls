@@ -2,12 +2,12 @@
 
 use std::time::Duration;
 
-use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
+use tower_lsp_server::jsonrpc::Result;
+use tower_lsp_server::ls_types::{SelectionRange, SelectionRangeParams};
 
 use crate::analysis::handle_selection_range;
 
-use super::super::Kakehashi;
+use super::super::{Kakehashi, uri_to_url};
 
 /// Timeout for spawn_blocking parse operations to prevent hangs on pathological inputs.
 const PARSE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -17,8 +17,14 @@ impl Kakehashi {
         &self,
         params: SelectionRangeParams,
     ) -> Result<Option<Vec<SelectionRange>>> {
-        let uri = params.text_document.uri;
+        let lsp_uri = params.text_document.uri;
         let positions = params.positions;
+
+        // Convert ls_types::Uri to url::Url for internal use
+        let Ok(uri) = uri_to_url(&lsp_uri) else {
+            log::warn!("Invalid URI in selectionRange: {}", lsp_uri.as_str());
+            return Ok(None);
+        };
 
         // Get language for document
         let Some(language_name) = self.get_language_for_document(&uri) else {

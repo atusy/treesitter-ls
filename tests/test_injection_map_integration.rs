@@ -318,9 +318,9 @@ fn test_edit_outside_injection_preserves_all_caches() {
 
     // Store tokens for the lua injection
     let lua_region = &regions[0];
-    let lua_tokens = tower_lsp::lsp_types::SemanticTokens {
+    let lua_tokens = tower_lsp_server::ls_types::SemanticTokens {
         result_id: Some("lua-tokens-1".to_string()),
-        data: vec![tower_lsp::lsp_types::SemanticToken {
+        data: vec![tower_lsp_server::ls_types::SemanticToken {
             delta_line: 0,
             delta_start: 0,
             length: 5,
@@ -386,7 +386,7 @@ fn test_edit_in_footer_preserves_all_caches() {
     let lua_region = &regions[0];
 
     // Store tokens
-    let lua_tokens = tower_lsp::lsp_types::SemanticTokens {
+    let lua_tokens = tower_lsp_server::ls_types::SemanticTokens {
         result_id: Some("lua-tokens-2".to_string()),
         data: vec![],
     };
@@ -465,11 +465,11 @@ def foo():
     let python_region = regions.iter().find(|r| r.language == "python").unwrap();
 
     // Store tokens for both
-    let lua_tokens = tower_lsp::lsp_types::SemanticTokens {
+    let lua_tokens = tower_lsp_server::ls_types::SemanticTokens {
         result_id: Some("lua-tokens".to_string()),
         data: vec![],
     };
-    let python_tokens = tower_lsp::lsp_types::SemanticTokens {
+    let python_tokens = tower_lsp_server::ls_types::SemanticTokens {
         result_id: Some("python-tokens".to_string()),
         data: vec![],
     };
@@ -665,11 +665,11 @@ def foo():
         .find(|r| r.language == "python")
         .unwrap();
 
-    let lua_tokens = tower_lsp::lsp_types::SemanticTokens {
+    let lua_tokens = tower_lsp_server::ls_types::SemanticTokens {
         result_id: Some("lua-tokens".to_string()),
         data: vec![],
     };
-    let python_tokens = tower_lsp::lsp_types::SemanticTokens {
+    let python_tokens = tower_lsp_server::ls_types::SemanticTokens {
         result_id: Some("python-tokens".to_string()),
         data: vec![],
     };
@@ -992,9 +992,9 @@ Footer text
     let initial_result_id = initial_regions[0].result_id.clone();
 
     // Store tokens for the lua injection using the result_id
-    let lua_tokens = tower_lsp::lsp_types::SemanticTokens {
+    let lua_tokens = tower_lsp_server::ls_types::SemanticTokens {
         result_id: Some(initial_result_id.clone()),
-        data: vec![tower_lsp::lsp_types::SemanticToken {
+        data: vec![tower_lsp_server::ls_types::SemanticToken {
             delta_line: 0,
             delta_start: 0,
             length: 5,

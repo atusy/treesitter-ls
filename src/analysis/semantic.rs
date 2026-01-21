@@ -1,6 +1,6 @@
 use crate::config::{CaptureMappings, WILDCARD_KEY};
 use crate::text::convert_byte_to_utf16_in_line;
-use tower_lsp::lsp_types::{
+use tower_lsp_server::ls_types::{
     Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
     SemanticTokensDelta, SemanticTokensEdit, SemanticTokensFullDeltaResult, SemanticTokensResult,
 };
@@ -1153,7 +1153,7 @@ mod tests {
 
     #[test]
     fn test_semantic_tokens_range() {
-        use tower_lsp::lsp_types::Position;
+        use tower_lsp_server::ls_types::Position;
 
         // Create mock tokens for a document
         let all_tokens = SemanticTokens {
@@ -1987,7 +1987,7 @@ let y = "hello""#;
         // Test that handle_semantic_tokens_range works when
         // coordinator and parser_pool are None - it should behave like
         // returning host-only tokens without injection processing.
-        use tower_lsp::lsp_types::Position;
+        use tower_lsp_server::ls_types::Position;
         use tree_sitter::{Parser, Query};
 
         let text = r#"let x = "あいうえお"

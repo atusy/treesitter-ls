@@ -1,22 +1,28 @@
 //! Color presentation method for Kakehashi.
 
-use tower_lsp::jsonrpc::{Id, Result};
-use tower_lsp::lsp_types::*;
+use tower_lsp_server::jsonrpc::{Id, Result};
+use tower_lsp_server::ls_types::{ColorPresentation, ColorPresentationParams, MessageType};
 
 use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
-use super::super::Kakehashi;
+use super::super::{Kakehashi, uri_to_url};
 
 impl Kakehashi {
     pub(crate) async fn color_presentation_impl(
         &self,
         params: ColorPresentationParams,
     ) -> Result<Vec<ColorPresentation>> {
-        let uri = params.text_document.uri;
+        let lsp_uri = params.text_document.uri;
         let range = params.range;
         let color = params.color;
+
+        // Convert ls_types::Uri to url::Url for internal use
+        let Ok(uri) = uri_to_url(&lsp_uri) else {
+            log::warn!("Invalid URI in colorPresentation: {}", lsp_uri.as_str());
+            return Ok(vec![]);
+        };
 
         self.client
             .log_message(

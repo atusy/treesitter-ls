@@ -3,7 +3,7 @@
 //! This module provides pure functions for comparing and chaining LSP SelectionRange
 //! hierarchies, including range comparison utilities and parent chain manipulation.
 
-use tower_lsp::lsp_types::{Range, SelectionRange};
+use tower_lsp_server::ls_types::{Range, SelectionRange};
 
 /// Check if two ranges are equal.
 ///
@@ -103,7 +103,7 @@ pub fn chain_injected_to_host(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tower_lsp::lsp_types::Position;
+    use tower_lsp_server::ls_types::Position;
 
     // Helper to create a simple SelectionRange
     fn make_selection(

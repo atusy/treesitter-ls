@@ -9,7 +9,7 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp::lsp_types::Url;
+use url::Url;
 
 use super::super::pool::LanguageServerPool;
 use super::super::protocol::{
@@ -47,8 +47,12 @@ impl LanguageServerPool {
             .get_or_create_connection(injection_language, server_config)
             .await?;
 
+        // Convert host_uri to lsp_types::Uri for bridge protocol functions
+        let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+
         // Build virtual document URI
-        let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+        let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
         let virtual_uri_string = virtual_uri.to_uri_string();
 
         // Register request with router to get oneshot receiver
@@ -57,7 +61,7 @@ impl LanguageServerPool {
         // Build document symbol request
         // Note: document symbol doesn't need position - it operates on the whole document
         let request = build_bridge_document_symbol_request(
-            host_uri,
+            &host_uri_lsp,
             injection_language,
             region_id,
             request_id,

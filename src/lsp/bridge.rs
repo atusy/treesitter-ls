@@ -30,7 +30,8 @@ pub(crate) use pool::LanguageServerPool;
 mod tests {
     use super::pool::LanguageServerPool;
     use crate::config::settings::BridgeServerConfig;
-    use tower_lsp::lsp_types::{Position, Url};
+    use tower_lsp_server::ls_types::Position;
+    use url::Url;
 
     /// Integration test: LanguageServerPool sends hover request to lua-language-server
     #[tokio::test]

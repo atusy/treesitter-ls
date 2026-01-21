@@ -18,7 +18,7 @@ pub use range_builder::{
 use crate::document::DocumentHandle;
 use crate::language::{DocumentParserPool, LanguageCoordinator};
 use context::{DocumentContext, InjectionContext};
-use tower_lsp::lsp_types::{Position, Range, SelectionRange};
+use tower_lsp_server::ls_types::{Position, Range, SelectionRange};
 
 /// Handle textDocument/selectionRange request with full injection parsing support.
 ///
@@ -594,8 +594,8 @@ array: ["xxxx"]"#;
     fn test_selection_range_maintains_position_alignment() {
         use crate::document::store::DocumentStore;
         use crate::language::LanguageCoordinator;
-        use tower_lsp::lsp_types::Url;
         use tree_sitter::Parser;
+        use url::Url;
 
         let mut parser = Parser::new();
         let language = tree_sitter_rust::LANGUAGE.into();
@@ -647,8 +647,8 @@ array: ["xxxx"]"#;
     fn test_selection_range_handles_empty_document() {
         use crate::document::store::DocumentStore;
         use crate::language::LanguageCoordinator;
-        use tower_lsp::lsp_types::Url;
         use tree_sitter::Parser;
+        use url::Url;
 
         let mut parser = Parser::new();
         let language = tree_sitter_rust::LANGUAGE.into();

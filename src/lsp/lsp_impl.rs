@@ -1,14 +1,42 @@
 mod text_document;
 
-use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::notification::Progress;
-use tower_lsp::lsp_types::request::{
+use tower_lsp_server::jsonrpc::Result;
+use tower_lsp_server::ls_types::notification::Progress;
+use tower_lsp_server::ls_types::request::{
     GotoDeclarationParams, GotoDeclarationResponse, GotoImplementationParams,
     GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
 };
-use tower_lsp::lsp_types::*;
-use tower_lsp::{Client, LanguageServer};
+use tower_lsp_server::ls_types::{
+    ClientCapabilities, CompletionOptions, CompletionParams, CompletionResponse,
+    DeclarationCapability, DidChangeConfigurationParams, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentHighlight,
+    DocumentHighlightParams, DocumentLink, DocumentLinkOptions, DocumentLinkParams,
+    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
+    Hover, HoverParams, HoverProviderCapability, ImplementationProviderCapability,
+    InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location,
+    MessageType, Moniker, MonikerParams, OneOf, ReferenceParams, RenameParams, SaveOptions,
+    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, SemanticTokenModifier,
+    SemanticTokenType, SemanticTokensDeltaParams, SemanticTokensFullDeltaResult,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
+    SignatureHelpOptions, SignatureHelpParams, TextDocumentContentChangeEvent,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, TypeDefinitionProviderCapability, Uri, WorkDoneProgressOptions,
+    WorkspaceEdit,
+};
+#[cfg(feature = "experimental")]
+use tower_lsp_server::ls_types::{
+    ColorInformation, ColorPresentation, ColorPresentationParams, ColorProviderCapability,
+    DocumentColorParams,
+};
+#[cfg(test)]
+use tower_lsp_server::ls_types::{
+    Position, Range, SemanticTokensWorkspaceClientCapabilities, WorkspaceClientCapabilities,
+};
+use tower_lsp_server::{Client, LanguageServer};
 use tree_sitter::InputEdit;
+use url::Url;
 
 use crate::analysis::next_result_id;
 use crate::analysis::{
@@ -37,6 +65,39 @@ use super::auto_install::{InstallingLanguages, get_injected_languages};
 use super::progress::{create_progress_begin, create_progress_end};
 use super::semantic_request_tracker::SemanticRequestTracker;
 
+/// Convert ls_types::Uri to url::Url
+///
+/// This is needed because ls-types uses its own Uri type (based on fluent-uri),
+/// while kakehashi internally uses url::Url for document storage and processing.
+pub(super) fn uri_to_url(uri: &Uri) -> std::result::Result<Url, url::ParseError> {
+    Url::parse(uri.as_str())
+}
+
+/// Convert url::Url to ls_types::Uri
+///
+/// This is the reverse conversion, needed when calling bridge protocol functions
+/// that expect ls_types::Uri but we have url::Url from internal storage.
+///
+/// # Errors
+/// Returns `LspError::Internal` if conversion fails. Both `url::Url` and
+/// `fluent_uri::Uri` implement RFC 3986, so failure indicates an edge case
+/// difference between the URI parsers (should be extremely rare in practice).
+pub(crate) fn url_to_uri(url: &Url) -> std::result::Result<Uri, crate::error::LspError> {
+    use std::str::FromStr;
+    Uri::from_str(url.as_str()).map_err(|e| {
+        log::error!(
+            target: "kakehashi::protocol",
+            "URI conversion failed (potential library incompatibility): url={}, error={}",
+            url.as_str(),
+            e
+        );
+        crate::error::LspError::internal(format!(
+            "Failed to convert URL to URI: {}. Please report this as a bug.",
+            url.as_str()
+        ))
+    })
+}
+
 fn lsp_legend_types() -> Vec<SemanticTokenType> {
     LEGEND_TYPES
         .iter()
@@ -54,7 +115,7 @@ fn lsp_legend_modifiers() -> Vec<SemanticTokenModifier> {
 /// Check if client capabilities indicate semantic tokens refresh support.
 ///
 /// Extracted as a pure function for unit testability - the Kakehashi struct
-/// cannot be constructed in unit tests due to tower_lsp::Client dependency.
+/// cannot be constructed in unit tests due to tower_lsp_server::Client dependency.
 ///
 /// Returns `false` for any missing/null capability in the chain (defensive
 /// default per LSP spec @since 3.16.0).
@@ -1149,7 +1210,6 @@ impl Kakehashi {
     }
 }
 
-#[tower_lsp::async_trait]
 impl LanguageServer for Kakehashi {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         // Store client capabilities for LSP compliance checks (e.g., refresh support).
@@ -1169,18 +1229,23 @@ impl LanguageServer for Kakehashi {
             .await;
 
         // Get root path from workspace folders, root_uri, or current directory
+        #[allow(deprecated)]
         let root_path = if let Some(folders) = &params.workspace_folders {
             folders
                 .first()
-                .and_then(|folder| folder.uri.to_file_path().ok())
+                .and_then(|folder| uri_to_url(&folder.uri).ok())
+                .and_then(|url| url.to_file_path().ok())
         } else if let Some(root_uri) = &params.root_uri {
-            root_uri.to_file_path().ok()
+            uri_to_url(root_uri)
+                .ok()
+                .and_then(|url| url.to_file_path().ok())
         } else {
             // Fallback to current working directory
             std::env::current_dir().ok()
         };
 
         // Store root path for later use and log the source
+        #[allow(deprecated)]
         if let Some(ref path) = root_path {
             let source = if params.workspace_folders.is_some() {
                 "workspace folders"
@@ -1316,8 +1381,14 @@ impl LanguageServer for Kakehashi {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let language_id = params.text_document.language_id.clone();
-        let uri = params.text_document.uri.clone();
+        let lsp_uri = params.text_document.uri.clone();
         let text = params.text_document.text.clone();
+
+        // Convert ls_types::Uri to url::Url for internal use
+        let Ok(uri) = uri_to_url(&lsp_uri) else {
+            log::warn!("Invalid URI in didOpen: {}", lsp_uri.as_str());
+            return;
+        };
 
         // Try to determine the language
         let language_name = self
@@ -1373,7 +1444,7 @@ impl LanguageServer for Kakehashi {
         // after the parser file is completely written, preventing race condition
         if !skip_parse {
             self.parse_document(
-                params.text_document.uri,
+                uri.clone(),
                 params.text_document.text,
                 Some(&language_id),
                 vec![], // No edits for initial document open
@@ -1401,7 +1472,13 @@ impl LanguageServer for Kakehashi {
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        let uri = params.text_document.uri;
+        let lsp_uri = params.text_document.uri;
+
+        // Convert ls_types::Uri to url::Url for internal use
+        let Ok(uri) = uri_to_url(&lsp_uri) else {
+            log::warn!("Invalid URI in didClose: {}", lsp_uri.as_str());
+            return;
+        };
 
         // Remove the document from the store when it's closed
         // This ensures that reopening the file will properly reinitialize everything
@@ -1434,7 +1511,13 @@ impl LanguageServer for Kakehashi {
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        let uri = params.text_document.uri;
+        let lsp_uri = params.text_document.uri;
+
+        // Convert ls_types::Uri to url::Url for internal use
+        let Ok(uri) = uri_to_url(&lsp_uri) else {
+            log::warn!("Invalid URI in didChange: {}", lsp_uri.as_str());
+            return;
+        };
 
         self.client
             .log_message(MessageType::LOG, format!("[DID_CHANGE] START uri={}", uri))
@@ -2176,7 +2259,7 @@ mod tests {
     #[test]
     fn test_apply_content_changes_incremental_produces_edits() {
         // Incremental change (with range) should produce InputEdits
-        use tower_lsp::lsp_types::TextDocumentContentChangeEvent;
+        use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
 
         let old_text = "hello world";
         let changes = vec![TextDocumentContentChangeEvent {
@@ -2213,7 +2296,7 @@ mod tests {
     #[test]
     fn test_apply_content_changes_full_sync_produces_empty_edits() {
         // Full document change (without range) should produce EMPTY edits
-        use tower_lsp::lsp_types::TextDocumentContentChangeEvent;
+        use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
 
         let old_text = "hello world";
         let changes = vec![TextDocumentContentChangeEvent {
@@ -2237,7 +2320,7 @@ mod tests {
     #[test]
     fn test_apply_content_changes_mixed_clears_edits_on_full_sync() {
         // Mixed changes: incremental followed by full sync should clear edits
-        use tower_lsp::lsp_types::TextDocumentContentChangeEvent;
+        use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
 
         let old_text = "hello world";
         let changes = vec![
@@ -2279,7 +2362,7 @@ mod tests {
     #[test]
     fn test_apply_content_changes_multiple_incremental_accumulates_edits() {
         // Multiple incremental changes should accumulate edits
-        use tower_lsp::lsp_types::TextDocumentContentChangeEvent;
+        use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
 
         let old_text = "aaa bbb ccc";
         let changes = vec![

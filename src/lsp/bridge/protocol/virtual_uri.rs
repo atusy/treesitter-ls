@@ -17,7 +17,7 @@
 /// only support file:// URIs (e.g., lua-language-server).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VirtualDocumentUri {
-    host_uri: tower_lsp::lsp_types::Url,
+    host_uri: tower_lsp_server::ls_types::Uri,
     language: String,
     region_id: String,
 }
@@ -42,7 +42,7 @@ impl VirtualDocumentUri {
     /// In release builds, invalid inputs are accepted without validation to avoid
     /// runtime overhead. Unknown languages produce `.txt` extensions as a safe fallback.
     pub(crate) fn new(
-        host_uri: &tower_lsp::lsp_types::Url,
+        host_uri: &tower_lsp_server::ls_types::Uri,
         language: &str,
         region_id: &str,
     ) -> Self {
@@ -198,12 +198,18 @@ impl VirtualDocumentUri {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tower_lsp::lsp_types::Url;
+    use tower_lsp_server::ls_types::Uri;
+    use url::Url;
+
+    // Helper function to convert url::Url to tower_lsp_server::ls_types::Uri for tests
+    fn url_to_uri(url: &Url) -> Uri {
+        crate::lsp::lsp_impl::url_to_uri(url).expect("test URL should convert to URI")
+    }
 
     #[test]
     fn uses_kakehashi_path_prefix() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "region-0");
 
         let uri_string = virtual_uri.to_uri_string();
         assert!(
@@ -216,7 +222,7 @@ mod tests {
     #[test]
     fn includes_language_extension() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "region-0");
 
         let uri_string = virtual_uri.to_uri_string();
         assert!(
@@ -229,7 +235,8 @@ mod tests {
     #[test]
     fn region_id_accessor_returns_stored_value() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        let virtual_uri =
+            VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "01ARZ3NDEKTSV4RRFFQ69G5FAV");
 
         assert_eq!(virtual_uri.region_id(), "01ARZ3NDEKTSV4RRFFQ69G5FAV");
     }
@@ -237,7 +244,7 @@ mod tests {
     #[test]
     fn language_accessor_returns_stored_value() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "python", "region-0");
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "python", "region-0");
 
         assert_eq!(virtual_uri.language(), "python");
     }
@@ -246,7 +253,7 @@ mod tests {
     fn percent_encodes_special_characters_in_region_id() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
         // Test with characters that need encoding: space, slash, question mark
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region/0?test");
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "region/0?test");
 
         let uri_string = virtual_uri.to_uri_string();
         // "/" should be encoded as %2F, "?" should be encoded as %3F
@@ -261,7 +268,8 @@ mod tests {
     fn preserves_alphanumeric_and_safe_chars_in_region_id() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
         // RFC 3986 unreserved characters: A-Z a-z 0-9 - . _ ~
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "ABC-xyz_123.test~v2");
+        let virtual_uri =
+            VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "ABC-xyz_123.test~v2");
 
         let uri_string = virtual_uri.to_uri_string();
         assert!(
@@ -274,8 +282,8 @@ mod tests {
     #[test]
     fn same_inputs_produce_same_output() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let uri1 = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
-        let uri2 = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
+        let uri1 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "region-0");
+        let uri2 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "region-0");
 
         assert_eq!(
             uri1.to_uri_string(),
@@ -287,8 +295,8 @@ mod tests {
     #[test]
     fn different_region_ids_produce_different_uris() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let uri1 = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
-        let uri2 = VirtualDocumentUri::new(&host_uri, "lua", "region-1");
+        let uri1 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "region-0");
+        let uri2 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "region-1");
 
         assert_ne!(
             uri1.to_uri_string(),
@@ -300,8 +308,8 @@ mod tests {
     #[test]
     fn different_languages_produce_different_extensions() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let lua_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
-        let python_uri = VirtualDocumentUri::new(&host_uri, "python", "region-0");
+        let lua_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "region-0");
+        let python_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "python", "region-0");
 
         assert!(lua_uri.to_uri_string().ends_with(".lua"));
         assert!(python_uri.to_uri_string().ends_with(".py"));
@@ -328,7 +336,7 @@ mod tests {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
         for (language, expected_ext) in test_cases {
-            let uri = VirtualDocumentUri::new(&host_uri, language, "region-0");
+            let uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), language, "region-0");
             let uri_string = uri.to_uri_string();
             assert!(
                 uri_string.ends_with(&format!(".{}", expected_ext)),
@@ -348,7 +356,7 @@ mod tests {
         let unknown_cases = ["unknown-lang", "foobar", "notareallan"];
 
         for language in unknown_cases {
-            let uri = VirtualDocumentUri::new(&host_uri, language, "region-0");
+            let uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), language, "region-0");
             let uri_string = uri.to_uri_string();
             assert!(
                 uri_string.ends_with(".txt"),
@@ -363,8 +371,8 @@ mod tests {
     fn different_hosts_produce_different_hashes() {
         let host1 = Url::parse("file:///project/doc1.md").unwrap();
         let host2 = Url::parse("file:///project/doc2.md").unwrap();
-        let uri1 = VirtualDocumentUri::new(&host1, "lua", "region-0");
-        let uri2 = VirtualDocumentUri::new(&host2, "lua", "region-0");
+        let uri1 = VirtualDocumentUri::new(&url_to_uri(&host1), "lua", "region-0");
+        let uri2 = VirtualDocumentUri::new(&url_to_uri(&host2), "lua", "region-0");
 
         assert_ne!(
             uri1.to_uri_string(),
@@ -378,11 +386,11 @@ mod tests {
         let host1 = Url::parse("file:///project/doc1.md").unwrap();
         let host2 = Url::parse("file:///project/doc2.md").unwrap();
 
-        let uri1 = VirtualDocumentUri::new(&host1, "lua", "region-0");
-        let uri2 = VirtualDocumentUri::new(&host1, "lua", "region-0");
-        let uri3 = VirtualDocumentUri::new(&host2, "lua", "region-0");
-        let uri4 = VirtualDocumentUri::new(&host1, "python", "region-0");
-        let uri5 = VirtualDocumentUri::new(&host1, "lua", "region-1");
+        let uri1 = VirtualDocumentUri::new(&url_to_uri(&host1), "lua", "region-0");
+        let uri2 = VirtualDocumentUri::new(&url_to_uri(&host1), "lua", "region-0");
+        let uri3 = VirtualDocumentUri::new(&url_to_uri(&host2), "lua", "region-0");
+        let uri4 = VirtualDocumentUri::new(&url_to_uri(&host1), "python", "region-0");
+        let uri5 = VirtualDocumentUri::new(&url_to_uri(&host1), "lua", "region-1");
 
         assert_eq!(uri1, uri2, "Same fields should be equal");
         assert_ne!(uri1, uri3, "Different host_uri should not be equal");
@@ -395,7 +403,7 @@ mod tests {
     #[cfg(debug_assertions)]
     fn panics_on_empty_language_in_debug() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let _ = VirtualDocumentUri::new(&host_uri, "", "region-0");
+        let _ = VirtualDocumentUri::new(&url_to_uri(&host_uri), "", "region-0");
     }
 
     #[test]
@@ -403,7 +411,7 @@ mod tests {
     #[cfg(debug_assertions)]
     fn panics_on_empty_region_id_in_debug() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let _ = VirtualDocumentUri::new(&host_uri, "lua", "");
+        let _ = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "");
     }
 
     #[test]
@@ -477,7 +485,7 @@ mod tests {
         // Note: Full round-trip isn't possible since host_uri is hashed
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
         let region_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", region_id);
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", region_id);
 
         let uri_string = virtual_uri.to_uri_string();
 
@@ -495,7 +503,7 @@ mod tests {
     #[test]
     fn to_uri_string_produces_valid_uri() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "region-0");
 
         let uri_string = virtual_uri.to_uri_string();
 

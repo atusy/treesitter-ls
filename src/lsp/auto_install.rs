@@ -12,7 +12,8 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
-use tower_lsp::lsp_types::{MessageType, Url};
+use tower_lsp_server::ls_types::MessageType;
+use url::Url;
 
 /// Tracks languages currently being installed to prevent duplicate installs.
 pub struct InstallingLanguages {
@@ -510,7 +511,7 @@ return {
 
     #[test]
     fn skip_reason_reports_message_type() {
-        use tower_lsp::lsp_types::MessageType;
+        use tower_lsp_server::ls_types::MessageType;
 
         let unsupported = SkipReason::UnsupportedLanguage {
             language: "lua".into(),

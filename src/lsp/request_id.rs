@@ -10,7 +10,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use tower::Service;
-use tower_lsp::jsonrpc::{Id, Request, Response};
+use tower_lsp_server::jsonrpc::{Id, Request, Response};
 
 tokio::task_local! {
     /// Task-local storage for the current upstream request ID.

@@ -1,19 +1,25 @@
 //! Document link method for Kakehashi.
 
-use tower_lsp::jsonrpc::{Id, Result};
-use tower_lsp::lsp_types::*;
+use tower_lsp_server::jsonrpc::{Id, Result};
+use tower_lsp_server::ls_types::{DocumentLink, DocumentLinkParams, MessageType};
 
 use crate::language::InjectionResolver;
 use crate::lsp::get_current_request_id;
 
-use super::super::Kakehashi;
+use super::super::{Kakehashi, uri_to_url};
 
 impl Kakehashi {
     pub(crate) async fn document_link_impl(
         &self,
         params: DocumentLinkParams,
     ) -> Result<Option<Vec<DocumentLink>>> {
-        let uri = params.text_document.uri;
+        let lsp_uri = params.text_document.uri;
+
+        // Convert ls_types::Uri to url::Url for internal use
+        let Ok(uri) = uri_to_url(&lsp_uri) else {
+            log::warn!("Invalid URI in documentLink: {}", lsp_uri.as_str());
+            return Ok(None);
+        };
 
         self.client
             .log_message(

@@ -122,7 +122,9 @@ pub struct AbsoluteToken {
 
 /// Convert LSP SemanticTokens (delta-encoded) to AbsoluteTokens.
 /// This allows us to work with cached tokens for incremental computation.
-pub fn decode_semantic_tokens(tokens: &tower_lsp::lsp_types::SemanticTokens) -> Vec<AbsoluteToken> {
+pub fn decode_semantic_tokens(
+    tokens: &tower_lsp_server::ls_types::SemanticTokens,
+) -> Vec<AbsoluteToken> {
     let mut result = Vec::with_capacity(tokens.data.len());
     let mut current_line = 0u32;
     let mut current_col = 0u32;
@@ -151,7 +153,7 @@ pub fn decode_semantic_tokens(tokens: &tower_lsp::lsp_types::SemanticTokens) -> 
 pub fn encode_semantic_tokens(
     tokens: &[AbsoluteToken],
     result_id: Option<String>,
-) -> tower_lsp::lsp_types::SemanticTokens {
+) -> tower_lsp_server::ls_types::SemanticTokens {
     let mut data = Vec::with_capacity(tokens.len());
     let mut last_line = 0u32;
     let mut last_col = 0u32;
@@ -164,7 +166,7 @@ pub fn encode_semantic_tokens(
             token.start - last_col
         };
 
-        data.push(tower_lsp::lsp_types::SemanticToken {
+        data.push(tower_lsp_server::ls_types::SemanticToken {
             delta_line,
             delta_start,
             length: token.length,
@@ -176,7 +178,7 @@ pub fn encode_semantic_tokens(
         last_col = token.start;
     }
 
-    tower_lsp::lsp_types::SemanticTokens { result_id, data }
+    tower_lsp_server::ls_types::SemanticTokens { result_id, data }
 }
 
 /// Merge old tokens with newly computed tokens for changed regions.
@@ -486,7 +488,7 @@ mod tests {
 
     #[test]
     fn test_encode_decode_roundtrip() {
-        use tower_lsp::lsp_types::{SemanticToken, SemanticTokens};
+        use tower_lsp_server::ls_types::{SemanticToken, SemanticTokens};
 
         // Create some delta-encoded tokens
         let original = SemanticTokens {

@@ -302,9 +302,9 @@ impl CacheableInjectionRegion {
     /// Character (column) remains unchanged.
     pub fn translate_host_to_virtual(
         &self,
-        host_pos: tower_lsp::lsp_types::Position,
-    ) -> tower_lsp::lsp_types::Position {
-        tower_lsp::lsp_types::Position {
+        host_pos: tower_lsp_server::ls_types::Position,
+    ) -> tower_lsp_server::ls_types::Position {
+        tower_lsp_server::ls_types::Position {
             line: host_pos.line - self.line_range.start,
             character: host_pos.character,
         }
@@ -316,9 +316,9 @@ impl CacheableInjectionRegion {
     /// Character (column) remains unchanged.
     pub fn translate_virtual_to_host(
         &self,
-        virtual_pos: tower_lsp::lsp_types::Position,
-    ) -> tower_lsp::lsp_types::Position {
-        tower_lsp::lsp_types::Position {
+        virtual_pos: tower_lsp_server::ls_types::Position,
+    ) -> tower_lsp_server::ls_types::Position {
+        tower_lsp_server::ls_types::Position {
             line: virtual_pos.line + self.line_range.start,
             character: virtual_pos.character,
         }
@@ -1124,7 +1124,7 @@ mod tests {
 
     #[test]
     fn test_cacheable_injection_region_translate_host_to_virtual() {
-        use tower_lsp::lsp_types::Position;
+        use tower_lsp_server::ls_types::Position;
 
         // Markdown document structure:
         // Line 0: "# Title"
@@ -1168,7 +1168,7 @@ mod tests {
 
     #[test]
     fn test_cacheable_injection_region_translate_virtual_to_host() {
-        use tower_lsp::lsp_types::Position;
+        use tower_lsp_server::ls_types::Position;
 
         // Same scenario as translate_host_to_virtual test, but reverse direction
         // Injection region starts at line 3 in host document
