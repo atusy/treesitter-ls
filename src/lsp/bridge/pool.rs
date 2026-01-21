@@ -466,12 +466,28 @@ impl LanguageServerPool {
             .await
             .map_err(|_| io::Error::other("bridge: initialize response channel closed"))?;
 
-        // 3. Check for error response
-        if response.get("error").is_some() {
+        // 3. Check for error response and validate result
+        // Lenient interpretation: prioritize error if present (non-null),
+        // otherwise check for result. Rejects only when neither is usable.
+        if let Some(error) = response.get("error").filter(|e| !e.is_null()) {
+            // Error field is non-null: treat as error regardless of result
+            let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+            let message = error
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown error");
+
             return Err(io::Error::other(format!(
-                "bridge: initialize failed: {:?}",
-                response.get("error")
+                "bridge: initialize failed (code {}): {}",
+                code, message
             )));
+        }
+
+        // Reject if result is absent or null
+        if response.get("result").filter(|r| !r.is_null()).is_none() {
+            return Err(io::Error::other(
+                "bridge: initialize response missing valid result",
+            ));
         }
 
         // 4. Send initialized notification
