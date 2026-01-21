@@ -341,3 +341,94 @@ impl ConnectionHandle {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lsp::bridge::actor::{ResponseRouter, spawn_reader_task};
+    use crate::lsp::bridge::connection::AsyncBridgeConnection;
+
+    /// Test that ConnectionHandle provides unique request IDs via atomic counter.
+    ///
+    /// Each call to next_request_id() should return a unique, incrementing value.
+    /// This is critical for avoiding "duplicate request ID" errors when multiple
+    /// upstream requests have the same ID (they come from different contexts).
+    #[tokio::test]
+    async fn connection_handle_provides_unique_request_ids() {
+        // Create a mock server process to get a real connection
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat".to_string(),
+        ])
+        .await
+        .expect("should spawn cat process");
+
+        // Split connection and spawn reader task
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        // Wrap in ConnectionHandle
+        let handle = ConnectionHandle::new(writer, router, reader_handle);
+
+        // Get multiple request IDs - they should be unique and incrementing
+        // Note: IDs start at 2 because ID=1 is reserved for the initialize request
+        let id1 = handle.next_request_id();
+        let id2 = handle.next_request_id();
+        let id3 = handle.next_request_id();
+
+        assert_eq!(
+            id1, 2,
+            "First user request ID should be 2 (1 is reserved for initialize)"
+        );
+        assert_eq!(id2, 3, "Second user request ID should be 3");
+        assert_eq!(id3, 4, "Third user request ID should be 4");
+    }
+
+    /// Test that ConnectionHandle wraps connection with state (ADR-0015).
+    /// State should start as Ready (since constructor is called after init handshake),
+    /// and can transition via set_state().
+    #[tokio::test]
+    async fn connection_handle_wraps_connection_with_state() {
+        // Create a mock server process to get a real connection
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat".to_string(),
+        ])
+        .await
+        .expect("should spawn cat process");
+
+        // Split connection and spawn reader task (new architecture)
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        // Wrap in ConnectionHandle
+        let handle = ConnectionHandle::new(writer, router, reader_handle);
+
+        // Initial state should be Ready (ConnectionHandle is created after init handshake)
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "Initial state should be Ready"
+        );
+
+        // Can transition to Failed
+        handle.set_state(ConnectionState::Failed);
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Failed,
+            "State should transition to Failed"
+        );
+
+        // Can access writer
+        let _writer_guard = handle.writer().await;
+        // Writer is accessible (test passes if no panic)
+
+        // Can access router
+        let _router = handle.router();
+        // Router is accessible (test passes if no panic)
+    }
+}
