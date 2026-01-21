@@ -1730,90 +1730,52 @@ impl LanguageServer for Kakehashi {
 mod tests {
     use super::*;
     use crate::config::settings::BridgeLanguageConfig;
+    use rstest::rstest;
     use std::collections::HashMap;
 
-    // Tests for check_semantic_tokens_refresh_support pure function
-    // These test the capability checking logic without needing to construct Kakehashi
-
-    #[test]
-    fn test_check_refresh_support_when_true() {
+    /// Tests for check_semantic_tokens_refresh_support pure function
+    /// These test the capability checking logic without needing to construct Kakehashi
+    ///
+    /// Arguments control what's present at each level:
+    /// - `workspace`: Whether workspace field is Some
+    /// - `semantic_tokens`: Whether semantic_tokens is Some (requires workspace)
+    /// - `refresh_support`: The actual refresh_support value (requires semantic_tokens)
+    /// - `expected`: The expected result of refresh support
+    #[rstest]
+    #[case::refresh_support_true(true, true, Some(true), true)]
+    #[case::refresh_support_false(true, true, Some(false), false)]
+    #[case::refresh_support_none(true, true, None, false)]
+    #[case::semantic_tokens_none(true, false, None, false)]
+    #[case::workspace_empty(true, false, None, false)]
+    #[case::workspace_none(false, false, None, false)]
+    fn test_check_refresh_support(
+        #[case] workspace: bool,
+        #[case] semantic_tokens: bool,
+        #[case] refresh_support: Option<bool>,
+        #[case] expected: bool,
+    ) {
         let caps = ClientCapabilities {
-            workspace: Some(WorkspaceClientCapabilities {
-                semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
-                    refresh_support: Some(true),
-                }),
-                ..Default::default()
-            }),
+            workspace: if workspace {
+                Some(WorkspaceClientCapabilities {
+                    semantic_tokens: if semantic_tokens {
+                        Some(SemanticTokensWorkspaceClientCapabilities { refresh_support })
+                    } else {
+                        None
+                    },
+                    ..Default::default()
+                })
+            } else {
+                None
+            },
             ..Default::default()
         };
-        assert!(check_semantic_tokens_refresh_support(&caps));
-    }
-
-    #[test]
-    fn test_check_refresh_support_when_false() {
-        let caps = ClientCapabilities {
-            workspace: Some(WorkspaceClientCapabilities {
-                semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
-                    refresh_support: Some(false),
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert!(!check_semantic_tokens_refresh_support(&caps));
-    }
-
-    #[test]
-    fn test_check_refresh_support_when_refresh_support_none() {
-        // refreshSupport field is None (null in JSON)
-        let caps = ClientCapabilities {
-            workspace: Some(WorkspaceClientCapabilities {
-                semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
-                    refresh_support: None,
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert!(!check_semantic_tokens_refresh_support(&caps));
-    }
-
-    #[test]
-    fn test_check_refresh_support_when_semantic_tokens_none() {
-        // semantic_tokens field is None
-        let caps = ClientCapabilities {
-            workspace: Some(WorkspaceClientCapabilities {
-                semantic_tokens: None,
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert!(!check_semantic_tokens_refresh_support(&caps));
-    }
-
-    #[test]
-    fn test_check_refresh_support_when_workspace_empty() {
-        // workspace is Some but empty (no semantic_tokens)
-        let caps = ClientCapabilities {
-            workspace: Some(WorkspaceClientCapabilities::default()),
-            ..Default::default()
-        };
-        assert!(!check_semantic_tokens_refresh_support(&caps));
-    }
-
-    #[test]
-    fn test_check_refresh_support_when_workspace_none() {
-        // workspace field is None (different from empty!)
-        let caps = ClientCapabilities {
-            workspace: None,
-            ..Default::default()
-        };
-        assert!(!check_semantic_tokens_refresh_support(&caps));
+        assert_eq!(check_semantic_tokens_refresh_support(&caps), expected);
     }
 
     #[test]
     fn test_check_refresh_support_when_capabilities_empty() {
         // Completely empty capabilities (pre-init state)
+        // Keep as separate test to explicitly document Default behavior
         let caps = ClientCapabilities::default();
         assert!(!check_semantic_tokens_refresh_support(&caps));
     }
