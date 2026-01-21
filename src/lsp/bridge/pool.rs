@@ -714,156 +714,15 @@ impl LanguageServerPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::settings::BridgeServerConfig;
     use std::time::Duration;
-
-    // Test ULID constants - valid 26-char alphanumeric strings matching ULID format.
-    // Using realistic ULIDs ensures tests reflect actual runtime behavior.
-    const TEST_ULID_LUA_0: &str = "01JPMQ8ZYYQA1W3AVPW4JDRZFR";
-    const TEST_ULID_LUA_1: &str = "01JPMQ8ZYYQA1W3AVPW4JDRZFS";
-    const TEST_ULID_PYTHON_0: &str = "01JPMQ8ZYYQA1W3AVPW4JDRZFT";
+    use test_helpers::*;
 
     // ============================================================
-    // Test Helpers
+    // Pool Integration Tests
     // ============================================================
-
-    /// Check if lua-language-server is available. Returns false and logs skip message if not.
-    ///
-    /// Use at the beginning of tests that require a real LSP server:
-    /// ```ignore
-    /// if !lua_ls_available() { return; }
-    /// ```
-    fn lua_ls_available() -> bool {
-        if std::process::Command::new("lua-language-server")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            eprintln!("Skipping test: lua-language-server not found");
-            false
-        } else {
-            true
-        }
-    }
-
-    /// Create a BridgeServerConfig for lua-language-server.
-    fn lua_ls_config() -> BridgeServerConfig {
-        BridgeServerConfig {
-            cmd: vec!["lua-language-server".to_string()],
-            languages: vec!["lua".to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        }
-    }
-
-    /// Create a BridgeServerConfig for a mock server that discards input.
-    /// Useful for testing timeout behavior or when no response is expected.
-    fn devnull_config() -> BridgeServerConfig {
-        devnull_config_for_language("lua")
-    }
-
-    /// Create a BridgeServerConfig for a mock server with a specific language.
-    fn devnull_config_for_language(language: &str) -> BridgeServerConfig {
-        BridgeServerConfig {
-            cmd: vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                "cat > /dev/null".to_string(),
-            ],
-            languages: vec![language.to_string()],
-            initialization_options: None,
-            workspace_type: None,
-        }
-    }
-
-    // Helper function to convert url::Url to tower_lsp_server::ls_types::Uri for tests
-    fn url_to_uri(url: &Url) -> tower_lsp_server::ls_types::Uri {
-        crate::lsp::lsp_impl::url_to_uri(url).expect("test URL should convert to URI")
-    }
-
-    /// Test that ConnectionHandle provides unique request IDs via atomic counter.
-    ///
-    /// Each call to next_request_id() should return a unique, incrementing value.
-    /// This is critical for avoiding "duplicate request ID" errors when multiple
-    /// upstream requests have the same ID (they come from different contexts).
-    #[tokio::test]
-    async fn connection_handle_provides_unique_request_ids() {
-        // Create a mock server process to get a real connection
-        let mut conn = AsyncBridgeConnection::spawn(vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            "cat".to_string(),
-        ])
-        .await
-        .expect("should spawn cat process");
-
-        // Split connection and spawn reader task
-        let (writer, reader) = conn.split();
-        let router = Arc::new(ResponseRouter::new());
-        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
-
-        // Wrap in ConnectionHandle
-        let handle = ConnectionHandle::new(writer, router, reader_handle);
-
-        // Get multiple request IDs - they should be unique and incrementing
-        // Note: IDs start at 2 because ID=1 is reserved for the initialize request
-        let id1 = handle.next_request_id();
-        let id2 = handle.next_request_id();
-        let id3 = handle.next_request_id();
-
-        assert_eq!(
-            id1, 2,
-            "First user request ID should be 2 (1 is reserved for initialize)"
-        );
-        assert_eq!(id2, 3, "Second user request ID should be 3");
-        assert_eq!(id3, 4, "Third user request ID should be 4");
-    }
-
-    /// Test that ConnectionHandle wraps connection with state (ADR-0015).
-    /// State should start as Ready (since constructor is called after init handshake),
-    /// and can transition via set_state().
-    #[tokio::test]
-    async fn connection_handle_wraps_connection_with_state() {
-        // Create a mock server process to get a real connection
-        let mut conn = AsyncBridgeConnection::spawn(vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            "cat".to_string(),
-        ])
-        .await
-        .expect("should spawn cat process");
-
-        // Split connection and spawn reader task (new architecture)
-        let (writer, reader) = conn.split();
-        let router = Arc::new(ResponseRouter::new());
-        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
-
-        // Wrap in ConnectionHandle
-        let handle = ConnectionHandle::new(writer, router, reader_handle);
-
-        // Initial state should be Ready (ConnectionHandle is created after init handshake)
-        assert_eq!(
-            handle.state(),
-            ConnectionState::Ready,
-            "Initial state should be Ready"
-        );
-
-        // Can transition to Failed
-        handle.set_state(ConnectionState::Failed);
-        assert_eq!(
-            handle.state(),
-            ConnectionState::Failed,
-            "State should transition to Failed"
-        );
-
-        // Can access writer
-        let _writer_guard = handle.writer().await;
-        // Writer is accessible (test passes if no panic)
-
-        // Can access router
-        let _router = handle.router();
-        // Router is accessible (test passes if no panic)
-    }
+    // Unit tests for ConnectionHandle, ConnectionState, GlobalShutdownTimeout,
+    // and OpenedVirtualDoc live in their respective submodules.
+    // This file contains integration tests that exercise cross-module behavior.
 
     /// Test that LanguageServerPool starts with no connections.
     /// Connections (and their states) are created lazily on first request.
@@ -881,27 +740,6 @@ mod tests {
             !connections.contains_key("test"),
             "Connection should not exist before connection attempt"
         );
-    }
-
-    /// Helper to create a ConnectionHandle in a specific state for testing.
-    async fn create_handle_with_state(state: ConnectionState) -> Arc<ConnectionHandle> {
-        // Create a mock server process to get a real connection
-        let mut conn = AsyncBridgeConnection::spawn(vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            "cat".to_string(),
-        ])
-        .await
-        .expect("should spawn cat process");
-
-        // Split connection and spawn reader task (new architecture)
-        let (writer, reader) = conn.split();
-        let router = Arc::new(ResponseRouter::new());
-        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
-
-        let handle = Arc::new(ConnectionHandle::new(writer, router, reader_handle));
-        handle.set_state(state);
-        handle
     }
 
     /// Test that requests during Initializing state return error immediately (non-blocking).
@@ -1388,25 +1226,6 @@ mod tests {
                 "Cached handle should be Ready after recovery"
             );
         }
-    }
-
-    /// Test that OpenedVirtualDoc struct stores VirtualDocumentUri.
-    ///
-    /// The struct should have:
-    /// - virtual_uri: VirtualDocumentUri (typed URI with language and region_id)
-    #[tokio::test]
-    async fn opened_virtual_doc_struct_has_required_fields() {
-        use super::super::protocol::VirtualDocumentUri;
-        use super::OpenedVirtualDoc;
-
-        let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "region-0");
-        let doc = OpenedVirtualDoc {
-            virtual_uri: virtual_uri.clone(),
-        };
-
-        assert_eq!(doc.virtual_uri.language(), "lua");
-        assert_eq!(doc.virtual_uri.region_id(), "region-0");
     }
 
     /// Test that LanguageServerPool has host_to_virtual field.
@@ -1925,10 +1744,6 @@ mod tests {
     // Phase 3 Tests: remove_matching_virtual_docs
     // ========================================
 
-    fn test_host_uri(name: &str) -> Url {
-        Url::parse(&format!("file:///test/{}.md", name)).unwrap()
-    }
-
     #[tokio::test]
     async fn remove_matching_virtual_docs_removes_matching_docs() {
         use super::super::protocol::VirtualDocumentUri;
@@ -2436,147 +2251,10 @@ mod tests {
     }
 
     // ========================================
-    // Sprint 12: Connection State Machine Tests
+    // Sprint 12: Connection State Machine Integration Tests
     // ========================================
-
-    /// Test that ConnectionState enum has all 5 states per ADR-0015.
-    ///
-    /// States: Initializing, Ready, Failed, Closing, Closed
-    /// This test verifies the enum is exhaustively enumerable.
-    #[test]
-    fn connection_state_has_all_five_states() {
-        // Verify all 5 states exist by constructing them
-        let states = [
-            ConnectionState::Initializing,
-            ConnectionState::Ready,
-            ConnectionState::Failed,
-            ConnectionState::Closing,
-            ConnectionState::Closed,
-        ];
-
-        // Verify we have exactly 5 states
-        assert_eq!(
-            states.len(),
-            5,
-            "ConnectionState should have exactly 5 variants"
-        );
-
-        // Verify each state has the expected Debug representation
-        assert_eq!(
-            format!("{:?}", ConnectionState::Initializing),
-            "Initializing"
-        );
-        assert_eq!(format!("{:?}", ConnectionState::Ready), "Ready");
-        assert_eq!(format!("{:?}", ConnectionState::Failed), "Failed");
-        assert_eq!(format!("{:?}", ConnectionState::Closing), "Closing");
-        assert_eq!(format!("{:?}", ConnectionState::Closed), "Closed");
-    }
-
-    /// Test that Ready state transitions to Closing on shutdown signal.
-    ///
-    /// ADR-0015: Ready → Closing transition occurs when shutdown is initiated.
-    /// This is the graceful shutdown path for active connections.
-    #[tokio::test]
-    async fn ready_to_closing_transition() {
-        let handle = create_handle_with_state(ConnectionState::Ready).await;
-
-        // Verify initial state
-        assert_eq!(
-            handle.state(),
-            ConnectionState::Ready,
-            "Should start in Ready state"
-        );
-
-        // Trigger shutdown - should transition to Closing
-        handle.begin_shutdown();
-
-        // Verify transition
-        assert_eq!(
-            handle.state(),
-            ConnectionState::Closing,
-            "Ready + shutdown signal = Closing"
-        );
-    }
-
-    /// Test that Initializing state transitions to Closing on shutdown signal.
-    ///
-    /// ADR-0017: When shutdown is initiated during initialization, abort init
-    /// and proceed directly to shutdown. This handles cases where editor closes
-    /// during slow server startup.
-    #[tokio::test]
-    async fn initializing_to_closing_transition() {
-        let handle = create_handle_with_state(ConnectionState::Initializing).await;
-
-        // Verify initial state
-        assert_eq!(
-            handle.state(),
-            ConnectionState::Initializing,
-            "Should start in Initializing state"
-        );
-
-        // Trigger shutdown - should transition to Closing
-        handle.begin_shutdown();
-
-        // Verify transition
-        assert_eq!(
-            handle.state(),
-            ConnectionState::Closing,
-            "Initializing + shutdown signal = Closing"
-        );
-    }
-
-    /// Test that Closing state transitions to Closed on completion.
-    ///
-    /// ADR-0015: Closing → Closed transition occurs when LSP shutdown/exit
-    /// handshake completes or times out. This is the terminal state for
-    /// graceful shutdown.
-    #[tokio::test]
-    async fn closing_to_closed_transition() {
-        let handle = create_handle_with_state(ConnectionState::Closing).await;
-
-        // Verify initial state
-        assert_eq!(
-            handle.state(),
-            ConnectionState::Closing,
-            "Should start in Closing state"
-        );
-
-        // Complete shutdown - should transition to Closed
-        handle.complete_shutdown();
-
-        // Verify transition
-        assert_eq!(
-            handle.state(),
-            ConnectionState::Closed,
-            "Closing + completion = Closed"
-        );
-    }
-
-    /// Test that Failed state transitions directly to Closed (bypassing Closing).
-    ///
-    /// ADR-0017: Failed connections cannot perform LSP shutdown/exit handshake
-    /// because stdin is unavailable. They go directly to Closed state.
-    #[tokio::test]
-    async fn failed_to_closed_direct_transition() {
-        let handle = create_handle_with_state(ConnectionState::Failed).await;
-
-        // Verify initial state
-        assert_eq!(
-            handle.state(),
-            ConnectionState::Failed,
-            "Should start in Failed state"
-        );
-
-        // Direct shutdown completion - bypasses Closing state
-        handle.complete_shutdown();
-
-        // Verify transition
-        assert_eq!(
-            handle.state(),
-            ConnectionState::Closed,
-            "Failed + completion = Closed (bypasses Closing)"
-        );
-    }
+    // Unit tests for ConnectionState enum live in connection_state.rs.
+    // These integration tests verify pool behavior with different connection states.
 
     /// Test that requests during Closing state receive error immediately.
     ///
@@ -3015,116 +2693,10 @@ mod tests {
     }
 
     // ============================================================
-    // Sprint 13: Global Shutdown Timeout (PBI-global-shutdown-timeout)
+    // Sprint 13: Global Shutdown Timeout Integration Tests
     // ============================================================
-
-    /// Test that GlobalShutdownTimeout type accepts values in 5-15s range.
-    ///
-    /// ADR-0018 specifies the global shutdown timeout should be 5-15s.
-    /// This test verifies the newtype validation accepts valid values.
-    #[test]
-    fn global_shutdown_timeout_accepts_valid_range() {
-        // Minimum valid: 5 seconds
-        let min_timeout = GlobalShutdownTimeout::new(Duration::from_secs(5));
-        assert!(min_timeout.is_ok(), "5s should be valid minimum");
-
-        // Maximum valid: 15 seconds
-        let max_timeout = GlobalShutdownTimeout::new(Duration::from_secs(15));
-        assert!(max_timeout.is_ok(), "15s should be valid maximum");
-
-        // Middle of range: 10 seconds
-        let mid_timeout = GlobalShutdownTimeout::new(Duration::from_secs(10));
-        assert!(mid_timeout.is_ok(), "10s should be valid");
-    }
-
-    /// Test that GlobalShutdownTimeout type rejects values outside 5-15s range.
-    ///
-    /// ADR-0018 specifies the global shutdown timeout should be 5-15s.
-    /// This test verifies the newtype validation rejects out-of-range values.
-    #[test]
-    fn global_shutdown_timeout_rejects_out_of_range() {
-        // Below minimum: 4 seconds
-        let too_short = GlobalShutdownTimeout::new(Duration::from_secs(4));
-        assert!(too_short.is_err(), "4s should be rejected as too short");
-
-        // Above maximum: 16 seconds
-        let too_long = GlobalShutdownTimeout::new(Duration::from_secs(16));
-        assert!(too_long.is_err(), "16s should be rejected as too long");
-
-        // Zero duration
-        let zero = GlobalShutdownTimeout::new(Duration::ZERO);
-        assert!(zero.is_err(), "0s should be rejected");
-    }
-
-    /// Test that GlobalShutdownTimeout provides access to inner Duration.
-    #[test]
-    fn global_shutdown_timeout_as_duration() {
-        let timeout = GlobalShutdownTimeout::new(Duration::from_secs(10)).expect("10s is valid");
-
-        assert_eq!(timeout.as_duration(), Duration::from_secs(10));
-    }
-
-    /// Test sub-second boundary validation as documented.
-    ///
-    /// Per the documented boundary behavior:
-    /// - Minimum: floor at 5 whole seconds (4.999s rejected, 5.001s accepted)
-    /// - Maximum: ceiling at exactly 15 seconds (15.001s rejected)
-    #[test]
-    fn global_shutdown_timeout_subsecond_boundaries() {
-        // 4.999s has secs=4, rejected (floor is 5 whole seconds)
-        let just_under_min = GlobalShutdownTimeout::new(Duration::from_millis(4999));
-        assert!(
-            just_under_min.is_err(),
-            "4.999s should be rejected (secs=4, under minimum)"
-        );
-
-        // 5.001s has secs=5, accepted
-        let just_over_min = GlobalShutdownTimeout::new(Duration::from_millis(5001));
-        assert!(just_over_min.is_ok(), "5.001s should be accepted (secs=5)");
-
-        // 5.5s accepted (mid-range subsecond)
-        let mid_subsec = GlobalShutdownTimeout::new(Duration::from_millis(5500));
-        assert!(mid_subsec.is_ok(), "5.5s should be accepted");
-
-        // 10.123s accepted (arbitrary subsecond)
-        let arbitrary_subsec = GlobalShutdownTimeout::new(Duration::from_millis(10123));
-        assert!(arbitrary_subsec.is_ok(), "10.123s should be accepted");
-
-        // 15.0s exactly accepted (maximum boundary)
-        let exact_max = GlobalShutdownTimeout::new(Duration::from_secs(15));
-        assert!(exact_max.is_ok(), "15.0s exactly should be accepted");
-
-        // 15.001s rejected (ceiling is exactly 15s)
-        let just_over_max = GlobalShutdownTimeout::new(Duration::from_millis(15001));
-        assert!(
-            just_over_max.is_err(),
-            "15.001s should be rejected (over maximum)"
-        );
-
-        // 15s + 1 nanosecond rejected
-        let one_nano_over =
-            GlobalShutdownTimeout::new(Duration::from_secs(15) + Duration::from_nanos(1));
-        assert!(
-            one_nano_over.is_err(),
-            "15s + 1ns should be rejected (ceiling is exactly 15s)"
-        );
-    }
-
-    /// Test default GlobalShutdownTimeout value.
-    ///
-    /// Default should be exactly 10s per ADR-0018 recommendation - a balance between
-    /// allowing graceful shutdown for fast servers and bounding user wait time.
-    #[test]
-    fn global_shutdown_timeout_default() {
-        let default_timeout = GlobalShutdownTimeout::default();
-
-        // Assert exact default value, not just range - ensures intentional changes
-        assert_eq!(
-            default_timeout.as_duration(),
-            Duration::from_secs(10),
-            "Default should be exactly 10s per ADR-0018"
-        );
-    }
+    // Unit tests for GlobalShutdownTimeout newtype live in shutdown_timeout.rs.
+    // These integration tests verify pool shutdown behavior with the timeout.
 
     /// Test that shutdown_all completes within configured timeout even with hung servers.
     ///

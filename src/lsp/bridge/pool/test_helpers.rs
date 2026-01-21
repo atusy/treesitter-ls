@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use url::Url;
 
-use crate::config::settings::BridgeServerConfig;
+// Re-export types needed by tests
+pub(crate) use crate::config::settings::BridgeServerConfig;
+
 use crate::lsp::bridge::actor::{ResponseRouter, spawn_reader_task};
 use crate::lsp::bridge::connection::AsyncBridgeConnection;
 use crate::lsp::bridge::pool::{ConnectionHandle, ConnectionState};
@@ -86,13 +88,10 @@ pub(crate) fn test_host_uri(name: &str) -> Url {
 /// without going through the full initialization flow.
 pub(crate) async fn create_handle_with_state(state: ConnectionState) -> Arc<ConnectionHandle> {
     // Create a mock server process to get a real connection
-    let mut conn = AsyncBridgeConnection::spawn(vec![
-        "sh".to_string(),
-        "-c".to_string(),
-        "cat".to_string(),
-    ])
-    .await
-    .expect("should spawn cat process");
+    let mut conn =
+        AsyncBridgeConnection::spawn(vec!["sh".to_string(), "-c".to_string(), "cat".to_string()])
+            .await
+            .expect("should spawn cat process");
 
     // Split connection and spawn reader task (new architecture)
     let (writer, reader) = conn.split();
