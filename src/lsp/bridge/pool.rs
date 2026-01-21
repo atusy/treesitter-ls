@@ -7,9 +7,11 @@
 
 mod connection_state;
 mod shutdown_timeout;
+mod virtual_doc;
 
 pub(crate) use connection_state::ConnectionState;
 pub(crate) use shutdown_timeout::GlobalShutdownTimeout;
+pub(crate) use virtual_doc::OpenedVirtualDoc;
 
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -31,17 +33,6 @@ const INIT_TIMEOUT_SECS: u64 = 30;
 
 use super::actor::{ReaderTaskHandle, ResponseRouter, spawn_reader_task};
 use super::connection::{AsyncBridgeConnection, SplitConnectionWriter};
-
-/// Represents an opened virtual document for tracking.
-///
-/// Used for didClose propagation when host document closes.
-/// Each OpenedVirtualDoc represents a virtual document that was opened
-/// via didOpen on a downstream language server.
-#[derive(Debug, Clone)]
-pub(crate) struct OpenedVirtualDoc {
-    /// The virtual document URI (contains language and region_id)
-    pub(crate) virtual_uri: VirtualDocumentUri,
-}
 
 /// Handle wrapping a connection with its state (ADR-0015 per-connection state).
 ///
