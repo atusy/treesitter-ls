@@ -11,13 +11,12 @@ mod document_tracker;
 mod shutdown_timeout;
 #[cfg(test)]
 mod test_helpers;
-mod virtual_doc;
 
 pub(crate) use connection_handle::ConnectionHandle;
 pub(crate) use connection_state::ConnectionState;
 use document_tracker::DocumentTracker;
+pub(crate) use document_tracker::OpenedVirtualDoc;
 pub(crate) use shutdown_timeout::GlobalShutdownTimeout;
-pub(crate) use virtual_doc::OpenedVirtualDoc;
 
 use std::collections::HashMap;
 use std::io;
