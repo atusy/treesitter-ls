@@ -89,9 +89,7 @@ pub(crate) fn build_didclose_notification(uri: &str) -> serde_json::Value {
 /// # Returns
 /// * `Ok(())` - Response is valid (has non-null result, no error)
 /// * `Err(e)` - Response has error or missing/null result
-pub(crate) fn validate_initialize_response(
-    response: &serde_json::Value,
-) -> std::io::Result<()> {
+pub(crate) fn validate_initialize_response(response: &serde_json::Value) -> std::io::Result<()> {
     // 1. Check for error response (prioritize error if present)
     if let Some(error) = response.get("error").filter(|e| !e.is_null()) {
         // Error field is non-null: treat as error regardless of result
@@ -250,7 +248,12 @@ mod tests {
         let response = serde_json::json!({"result": null});
         let result = validate_initialize_response(&response);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("missing valid result"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing valid result")
+        );
     }
 
     #[test]
@@ -258,7 +261,12 @@ mod tests {
         let response = serde_json::json!({});
         let result = validate_initialize_response(&response);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("missing valid result"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing valid result")
+        );
     }
 
     #[test]
@@ -266,7 +274,12 @@ mod tests {
         let response = serde_json::json!({"result": null, "error": null});
         let result = validate_initialize_response(&response);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("missing valid result"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing valid result")
+        );
     }
 
     #[test]

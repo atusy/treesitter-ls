@@ -28,8 +28,8 @@ use url::Url;
 
 use super::connection::SplitConnectionWriter;
 use super::protocol::{
-    build_bridge_didopen_notification, build_initialize_request, build_initialized_notification,
-    validate_initialize_response, VirtualDocumentUri,
+    VirtualDocumentUri, build_bridge_didopen_notification, build_initialize_request,
+    build_initialized_notification, validate_initialize_response,
 };
 
 /// Timeout for LSP initialize handshake (ADR-0018 Tier 0: 30-60s recommended).
@@ -64,8 +64,8 @@ impl LanguageServerPool {
         Self {
             connections: Mutex::new(HashMap::new()),
             document_tracker: DocumentTracker::new(),
+        }
     }
-}
 
     /// Get access to the connections map.
     ///
@@ -240,8 +240,8 @@ impl LanguageServerPool {
                     e
                 );
             }
+        }
     }
-}
 
     /// Initiate graceful shutdown of all connections.
     ///
@@ -376,8 +376,8 @@ impl LanguageServerPool {
             join_set.abort_all();
 
             self.force_kill_all().await;
+        }
     }
-}
 
     /// Force-kill all connections with platform-appropriate escalation.
     ///
@@ -478,7 +478,6 @@ impl LanguageServerPool {
 
         Ok(())
     }
-
 }
 
 impl LanguageServerPool {
@@ -610,8 +609,8 @@ impl LanguageServerPool {
                     "bridge: initialize timeout",
                 ))
             }
+        }
     }
-}
 }
 
 #[cfg(test)]
@@ -970,8 +969,8 @@ mod tests {
                     msg
                 );
             }
+        }
     }
-}
 
     /// Test that failed connection is removed from cache and new server is spawned on retry.
     ///
@@ -1038,8 +1037,8 @@ mod tests {
                 ConnectionState::Ready,
                 "Cached handle should be the new Ready one"
             );
+        }
     }
-}
 
     /// Test recovery after initialization timeout.
     ///
@@ -1128,8 +1127,8 @@ mod tests {
                 ConnectionState::Ready,
                 "Cached handle should be Ready after recovery"
             );
+        }
     }
-}
 
     /// Test that send_didclose_notification sends notification without closing connection.
     ///
@@ -1185,8 +1184,8 @@ mod tests {
                 ConnectionState::Ready,
                 "Connection should remain Ready after didClose"
             );
+        }
     }
-}
 
     /// Test that close_host_document sends didClose for all virtual documents.
     ///
@@ -1263,8 +1262,8 @@ mod tests {
                 ConnectionState::Ready,
                 "Connection should remain Ready after close_host_document"
             );
+        }
     }
-}
 
     /// Test that forward_didchange_to_opened_docs does not block on a busy connection.
     ///
@@ -2117,8 +2116,8 @@ mod tests {
                 ConnectionState::Closed,
                 "Connection should be Closed after shutdown timeout"
             );
+        }
     }
-}
 
     /// Test that multiple servers shut down concurrently, total time bounded by global timeout.
     ///
@@ -2168,8 +2167,8 @@ mod tests {
                     key
                 );
             }
+        }
     }
-}
 
     // ============================================================
     // Sprint 13: Phase 3 - Force-kill fallback
@@ -2209,8 +2208,8 @@ mod tests {
                     key
                 );
             }
+        }
     }
-}
 
     /// Test that shutdown_all_with_timeout wires force_kill fallback correctly.
     ///
@@ -2252,8 +2251,8 @@ mod tests {
                     key
                 );
             }
+        }
     }
-}
 
     // ============================================================
     // Sprint 13: Phase 4 - Cleanup (remove per-connection timeout)
