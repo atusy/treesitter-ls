@@ -48,7 +48,8 @@ impl LanguageServerPool {
         _upstream_request_id: i64,
     ) -> io::Result<serde_json::Value> {
         // Convert url::Url to ls_types::Uri for protocol functions
-        let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri);
+        let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self

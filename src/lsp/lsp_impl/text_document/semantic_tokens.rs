@@ -819,7 +819,7 @@ mod tests {
 
         let params = SemanticTokensDeltaParams {
             text_document: TextDocumentIdentifier {
-                uri: crate::lsp::lsp_impl::url_to_uri(&uri),
+                uri: crate::lsp::lsp_impl::url_to_uri(&uri).expect("test URI should convert"),
             },
             previous_result_id: "0".to_string(),
             work_done_progress_params: WorkDoneProgressParams::default(),
@@ -871,7 +871,7 @@ mod tests {
 
         let params = SemanticTokensParams {
             text_document: TextDocumentIdentifier {
-                uri: crate::lsp::lsp_impl::url_to_uri(&uri),
+                uri: crate::lsp::lsp_impl::url_to_uri(&uri).expect("test URI should convert"),
             },
             work_done_progress_params: WorkDoneProgressParams::default(),
             partial_result_params: PartialResultParams::default(),

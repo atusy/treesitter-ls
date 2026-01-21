@@ -627,7 +627,7 @@ mod tests {
     /// Standard test host URI used across most tests.
     fn test_host_uri() -> Uri {
         let url = Url::parse("file:///project/doc.md").unwrap();
-        crate::lsp::lsp_impl::url_to_uri(&url)
+        crate::lsp::lsp_impl::url_to_uri(&url).expect("test URL should convert to URI")
     }
 
     /// Standard test position (line 5, character 10).

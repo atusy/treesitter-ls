@@ -203,7 +203,7 @@ mod tests {
 
     // Helper function to convert url::Url to tower_lsp_server::ls_types::Uri for tests
     fn url_to_uri(url: &Url) -> Uri {
-        crate::lsp::lsp_impl::url_to_uri(url)
+        crate::lsp::lsp_impl::url_to_uri(url).expect("test URL should convert to URI")
     }
 
     #[test]

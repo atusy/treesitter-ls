@@ -78,27 +78,23 @@ pub(super) fn uri_to_url(uri: &Uri) -> std::result::Result<Url, url::ParseError>
 /// This is the reverse conversion, needed when calling bridge protocol functions
 /// that expect ls_types::Uri but we have url::Url from internal storage.
 ///
-/// # Safety Rationale
-/// Both `url::Url` and `fluent_uri::Uri` (used by `ls_types::Uri`) implement RFC 3986.
-/// A validated `url::Url` should always convert successfully. Any failure indicates
-/// an edge case difference between the URI parsers, which we log for debugging.
-pub(crate) fn url_to_uri(url: &Url) -> Uri {
+/// # Errors
+/// Returns `LspError::Internal` if conversion fails. Both `url::Url` and
+/// `fluent_uri::Uri` implement RFC 3986, so failure indicates an edge case
+/// difference between the URI parsers (should be extremely rare in practice).
+pub(crate) fn url_to_uri(url: &Url) -> std::result::Result<Uri, crate::error::LspError> {
     use std::str::FromStr;
-    Uri::from_str(url.as_str()).unwrap_or_else(|e| {
-        // This should be unreachable in practice - both types are RFC 3986 compliant.
-        // Log the error for debugging if it ever happens, then panic with context.
+    Uri::from_str(url.as_str()).map_err(|e| {
         log::error!(
             target: "kakehashi::protocol",
             "URI conversion failed (potential library incompatibility): url={}, error={}",
             url.as_str(),
             e
         );
-        panic!(
-            "Failed to convert url::Url to ls_types::Uri: {}. \
-             This indicates an edge case difference between url and fluent-uri crates. \
-             Please report this as a bug with the failing URL.",
+        crate::error::LspError::internal(format!(
+            "Failed to convert URL to URI: {}. Please report this as a bug.",
             url.as_str()
-        )
+        ))
     })
 }
 

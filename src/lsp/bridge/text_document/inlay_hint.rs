@@ -51,7 +51,8 @@ impl LanguageServerPool {
             .await?;
 
         // Convert host_uri to lsp_types::Uri for bridge protocol functions
-        let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri);
+        let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);

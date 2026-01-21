@@ -32,7 +32,17 @@ impl LanguageServerPool {
         injections: &[(String, String, String)], // (language, region_id, content)
     ) {
         // Convert host_uri to lsp_types::Uri for bridge protocol functions
-        let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri);
+        let host_uri_lsp = match crate::lsp::lsp_impl::url_to_uri(host_uri) {
+            Ok(uri) => uri,
+            Err(e) => {
+                log::warn!(
+                    target: "kakehashi::bridge",
+                    "Failed to convert host URI, skipping didChange: {}",
+                    e
+                );
+                return;
+            }
+        };
 
         // For each injection, check if it's actually opened and send didChange
         for (language, region_id, content) in injections {
