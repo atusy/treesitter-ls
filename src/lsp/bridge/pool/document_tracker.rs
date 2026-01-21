@@ -102,7 +102,7 @@ impl DocumentTracker {
     /// This should be called AFTER the didOpen notification has been successfully
     /// written to the downstream server. Request handlers check `is_document_opened()`
     /// before sending requests to ensure LSP spec compliance.
-    pub(crate) fn mark_document_opened(&self, virtual_uri: &VirtualDocumentUri) {
+    pub(super) fn mark_document_opened(&self, virtual_uri: &VirtualDocumentUri) {
         let uri_string = virtual_uri.to_uri_string();
 
         match self.opened_documents.write() {
