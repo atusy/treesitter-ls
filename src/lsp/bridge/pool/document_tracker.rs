@@ -30,7 +30,6 @@ use crate::lsp::bridge::protocol::VirtualDocumentUri;
 ///
 /// The `opened_documents` lock (std::sync::RwLock) can be acquired
 /// independently of async locks for fast, synchronous read checks.
-#[derive(Default)]
 pub(crate) struct DocumentTracker {
     /// Map of language -> (virtual document URI -> version)
     document_versions: Mutex<HashMap<String, HashMap<String, i32>>>,
@@ -42,6 +41,18 @@ pub(crate) struct DocumentTracker {
 }
 
 impl DocumentTracker {
+    /// Create a new DocumentTracker with empty state.
+    ///
+    /// All tracking maps start empty. Documents are registered via
+    /// `should_send_didopen()` and marked as opened via `mark_document_opened()`.
+    pub(crate) fn new() -> Self {
+        Self {
+            document_versions: Mutex::new(HashMap::new()),
+            host_to_virtual: Mutex::new(HashMap::new()),
+            opened_documents: std::sync::RwLock::new(HashSet::new()),
+        }
+    }
+
     /// Check if document is opened and mark it as opened atomically.
     ///
     /// Returns true if the document was NOT previously opened (i.e., didOpen should be sent).
@@ -247,7 +258,7 @@ mod tests {
     /// it should also record the mapping from host URI to the opened virtual document.
     #[tokio::test]
     async fn should_send_didopen_records_host_to_virtual_mapping() {
-        let tracker = DocumentTracker::default();
+        let tracker = DocumentTracker::new();
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "lua-0");
 
@@ -271,7 +282,7 @@ mod tests {
     /// virtual document. All should be tracked under the same host URI.
     #[tokio::test]
     async fn should_send_didopen_records_multiple_virtual_docs_for_same_host() {
-        let tracker = DocumentTracker::default();
+        let tracker = DocumentTracker::new();
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
         // Open first Lua block
@@ -300,7 +311,7 @@ mod tests {
     /// it should NOT add a duplicate entry to host_to_virtual.
     #[tokio::test]
     async fn should_send_didopen_does_not_duplicate_mapping() {
-        let tracker = DocumentTracker::default();
+        let tracker = DocumentTracker::new();
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "lua-0");
 
@@ -331,7 +342,7 @@ mod tests {
     /// which is called AFTER didOpen is sent to downstream.
     #[tokio::test]
     async fn should_send_didopen_does_not_mark_as_opened() {
-        let tracker = DocumentTracker::default();
+        let tracker = DocumentTracker::new();
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
@@ -357,7 +368,7 @@ mod tests {
     /// has ACTUALLY been sent to the downstream server (not just marked for sending).
     #[tokio::test]
     async fn is_document_opened_returns_false_before_marked() {
-        let tracker = DocumentTracker::default();
+        let tracker = DocumentTracker::new();
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
@@ -371,7 +382,7 @@ mod tests {
     /// Test that is_document_opened returns true after mark_document_opened is called.
     #[tokio::test]
     async fn is_document_opened_returns_true_after_marked() {
-        let tracker = DocumentTracker::default();
+        let tracker = DocumentTracker::new();
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
@@ -391,7 +402,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_matching_virtual_docs_removes_matching_docs() {
-        let tracker = DocumentTracker::default();
+        let tracker = DocumentTracker::new();
         let host_uri = test_host_uri("phase3_take");
 
         // Register some virtual docs using should_send_didopen
@@ -436,7 +447,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_matching_virtual_docs_returns_empty_for_no_match() {
-        let tracker = DocumentTracker::default();
+        let tracker = DocumentTracker::new();
         let host_uri = test_host_uri("phase3_no_match");
 
         // Register a virtual doc
@@ -459,7 +470,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_matching_virtual_docs_returns_empty_for_unknown_host() {
-        let tracker = DocumentTracker::default();
+        let tracker = DocumentTracker::new();
         let host_uri = test_host_uri("phase3_unknown_host");
 
         let ulid: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
@@ -472,7 +483,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_matching_virtual_docs_returns_empty_for_empty_ulids() {
-        let tracker = DocumentTracker::default();
+        let tracker = DocumentTracker::new();
         let host_uri = test_host_uri("phase3_empty_ulids");
 
         // Register a virtual doc
@@ -492,7 +503,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_matching_virtual_docs_takes_multiple_docs() {
-        let tracker = DocumentTracker::default();
+        let tracker = DocumentTracker::new();
         let host_uri = test_host_uri("phase3_multiple");
 
         // Register multiple virtual docs using VirtualDocumentUri for proper type safety

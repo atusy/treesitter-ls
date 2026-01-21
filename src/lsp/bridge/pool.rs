@@ -64,7 +64,7 @@ impl LanguageServerPool {
     pub(crate) fn new() -> Self {
         Self {
             connections: Mutex::new(HashMap::new()),
-            document_tracker: DocumentTracker::default(),
+            document_tracker: DocumentTracker::new(),
         }
     }
 
