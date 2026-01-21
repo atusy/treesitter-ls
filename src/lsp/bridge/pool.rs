@@ -7,27 +7,30 @@
 
 mod connection_handle;
 mod connection_state;
+mod document_tracker;
 mod shutdown_timeout;
 #[cfg(test)]
 mod test_helpers;
-mod virtual_doc;
 
 pub(crate) use connection_handle::ConnectionHandle;
 pub(crate) use connection_state::ConnectionState;
+use document_tracker::DocumentTracker;
+pub(crate) use document_tracker::OpenedVirtualDoc;
 pub(crate) use shutdown_timeout::GlobalShutdownTimeout;
-pub(crate) use virtual_doc::OpenedVirtualDoc;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::warn;
 use tokio::sync::Mutex;
 use url::Url;
 
 use super::connection::SplitConnectionWriter;
-use super::protocol::{VirtualDocumentUri, build_bridge_didopen_notification};
+use super::protocol::{
+    VirtualDocumentUri, build_bridge_didopen_notification, build_initialize_request,
+    build_initialized_notification,
+};
 
 /// Timeout for LSP initialize handshake (ADR-0018 Tier 0: 30-60s recommended).
 ///
@@ -51,22 +54,8 @@ use super::connection::AsyncBridgeConnection;
 pub(crate) struct LanguageServerPool {
     /// Map of language -> connection handle (wraps connection with its state)
     connections: Mutex<HashMap<String, Arc<ConnectionHandle>>>,
-    /// Map of language -> (virtual document URI -> version)
-    /// Tracks which documents have been opened and their current version number
-    document_versions: Mutex<HashMap<String, HashMap<String, i32>>>,
-    /// Tracks which virtual documents were opened for each host document.
-    /// Key: host document URI, Value: list of opened virtual documents
-    /// Used for didClose propagation when host document closes.
-    host_to_virtual: Mutex<HashMap<Url, Vec<OpenedVirtualDoc>>>,
-    /// Tracks documents that have had didOpen ACTUALLY sent to downstream (ADR-0015).
-    ///
-    /// This is separate from document_versions which marks intent to open.
-    /// A document is only added here AFTER the didOpen notification has been
-    /// written to the downstream server. Request handlers check this before
-    /// sending requests to ensure LSP spec compliance.
-    ///
-    /// Uses std::sync::RwLock for fast, synchronous read checks.
-    opened_documents: std::sync::RwLock<HashSet<String>>,
+    /// Document tracking for virtual documents (versions, host mappings, opened state)
+    document_tracker: DocumentTracker,
 }
 
 impl LanguageServerPool {
@@ -74,9 +63,7 @@ impl LanguageServerPool {
     pub(crate) fn new() -> Self {
         Self {
             connections: Mutex::new(HashMap::new()),
-            document_versions: Mutex::new(HashMap::new()),
-            host_to_virtual: Mutex::new(HashMap::new()),
-            opened_documents: std::sync::RwLock::new(HashSet::new()),
+            document_tracker: DocumentTracker::new(),
         }
     }
 
@@ -89,12 +76,17 @@ impl LanguageServerPool {
         self.connections.lock().await
     }
 
+    // ========================================
+    // DocumentTracker delegation methods
+    // ========================================
+
     /// Remove and return all virtual documents for a host URI.
     ///
     /// Used by did_close module for cleanup.
     pub(super) async fn remove_host_virtual_docs(&self, host_uri: &Url) -> Vec<OpenedVirtualDoc> {
-        let mut host_map = self.host_to_virtual.lock().await;
-        host_map.remove(host_uri).unwrap_or_default()
+        self.document_tracker
+            .remove_host_virtual_docs(host_uri)
+            .await
     }
 
     /// Take virtual documents matching the given ULIDs, removing them from tracking.
@@ -113,61 +105,18 @@ impl LanguageServerPool {
         host_uri: &Url,
         invalidated_ulids: &[ulid::Ulid],
     ) -> Vec<OpenedVirtualDoc> {
-        if invalidated_ulids.is_empty() {
-            return Vec::new();
-        }
-
-        // Convert ULIDs to strings for matching
-        let ulid_strs: std::collections::HashSet<String> =
-            invalidated_ulids.iter().map(|u| u.to_string()).collect();
-
-        let mut host_map = self.host_to_virtual.lock().await;
-        let Some(docs) = host_map.get_mut(host_uri) else {
-            return Vec::new();
-        };
-
-        // Partition: matching docs to return, non-matching to keep
-        let mut to_close = Vec::new();
-        docs.retain(|doc| {
-            // Match region_id directly from VirtualDocumentUri
-            let should_close = ulid_strs.contains(doc.virtual_uri.region_id());
-            if should_close {
-                to_close.push(doc.clone());
-                false // Remove from host_to_virtual
-            } else {
-                true // Keep in host_to_virtual
-            }
-        });
-
-        to_close
+        self.document_tracker
+            .remove_matching_virtual_docs(host_uri, invalidated_ulids)
+            .await
     }
 
-    /// Remove a document from the version tracking.
+    /// Remove a document from all tracking state.
     ///
+    /// Removes the document from version tracking and opened state.
     /// Used by did_close module for cleanup, and by Phase 3
     /// close_invalidated_virtual_docs for invalidated region cleanup.
-    pub(crate) async fn remove_document_version(&self, virtual_uri: &VirtualDocumentUri) {
-        let uri_string = virtual_uri.to_uri_string();
-        let language = virtual_uri.language();
-
-        let mut versions = self.document_versions.lock().await;
-        if let Some(docs) = versions.get_mut(language) {
-            docs.remove(&uri_string);
-        }
-
-        // Also remove from opened_documents (ADR-0015)
-        match self.opened_documents.write() {
-            Ok(mut opened) => {
-                opened.remove(&uri_string);
-            }
-            Err(poisoned) => {
-                warn!(
-                    target: "kakehashi::lock_recovery",
-                    "Recovered from poisoned opened_documents lock in remove_document_version()"
-                );
-                poisoned.into_inner().remove(&uri_string);
-            }
-        }
+    pub(crate) async fn untrack_document(&self, virtual_uri: &VirtualDocumentUri) {
+        self.document_tracker.untrack_document(virtual_uri).await
     }
 
     /// Check if a document has had didOpen ACTUALLY sent to downstream (ADR-0015).
@@ -178,18 +127,7 @@ impl LanguageServerPool {
     /// Returns true if `mark_document_opened()` has been called for this document.
     /// Returns false if the document hasn't been opened yet.
     pub(crate) fn is_document_opened(&self, virtual_uri: &VirtualDocumentUri) -> bool {
-        let uri_string = virtual_uri.to_uri_string();
-
-        match self.opened_documents.read() {
-            Ok(opened) => opened.contains(&uri_string),
-            Err(poisoned) => {
-                warn!(
-                    target: "kakehashi::lock_recovery",
-                    "Recovered from poisoned opened_documents lock in is_document_opened()"
-                );
-                poisoned.into_inner().contains(&uri_string)
-            }
-        }
+        self.document_tracker.is_document_opened(virtual_uri)
     }
 
     /// Mark a document as having had didOpen sent to downstream (ADR-0015).
@@ -197,21 +135,12 @@ impl LanguageServerPool {
     /// This should be called AFTER the didOpen notification has been successfully
     /// written to the downstream server. Request handlers check `is_document_opened()`
     /// before sending requests to ensure LSP spec compliance.
-    pub(crate) fn mark_document_opened(&self, virtual_uri: &VirtualDocumentUri) {
-        let uri_string = virtual_uri.to_uri_string();
-
-        match self.opened_documents.write() {
-            Ok(mut opened) => {
-                opened.insert(uri_string);
-            }
-            Err(poisoned) => {
-                warn!(
-                    target: "kakehashi::lock_recovery",
-                    "Recovered from poisoned opened_documents lock in mark_document_opened()"
-                );
-                poisoned.into_inner().insert(uri_string);
-            }
-        }
+    ///
+    /// Note: Production code uses `document_tracker.mark_document_opened()` directly
+    /// via `ensure_document_opened()`. This delegation is exposed for test access.
+    #[cfg(test)]
+    pub(super) fn mark_document_opened(&self, virtual_uri: &VirtualDocumentUri) {
+        self.document_tracker.mark_document_opened(virtual_uri)
     }
 
     /// Ensure document is opened before sending a request.
@@ -231,14 +160,18 @@ impl LanguageServerPool {
     where
         F: FnOnce(),
     {
-        if self.should_send_didopen(host_uri, virtual_uri).await {
+        if self
+            .document_tracker
+            .should_send_didopen(host_uri, virtual_uri)
+            .await
+        {
             let did_open = build_bridge_didopen_notification(virtual_uri, virtual_content);
             if let Err(e) = writer.write_message(&did_open).await {
                 cleanup_on_error();
                 return Err(e);
             }
-            self.mark_document_opened(virtual_uri);
-        } else if !self.is_document_opened(virtual_uri) {
+            self.document_tracker.mark_document_opened(virtual_uri);
+        } else if !self.document_tracker.is_document_opened(virtual_uri) {
             cleanup_on_error();
             return Err(io::Error::other(
                 "bridge: document not yet opened (didOpen pending)",
@@ -254,17 +187,9 @@ impl LanguageServerPool {
         &self,
         virtual_uri: &VirtualDocumentUri,
     ) -> Option<i32> {
-        let uri_string = virtual_uri.to_uri_string();
-        let language = virtual_uri.language();
-
-        let mut versions = self.document_versions.lock().await;
-        if let Some(docs) = versions.get_mut(language)
-            && let Some(version) = docs.get_mut(&uri_string)
-        {
-            *version += 1;
-            return Some(*version);
-        }
-        None
+        self.document_tracker
+            .increment_document_version(virtual_uri)
+            .await
     }
 
     /// Check if document is opened and mark it as opened atomically.
@@ -272,38 +197,17 @@ impl LanguageServerPool {
     /// Returns true if the document was NOT previously opened (i.e., didOpen should be sent).
     /// Returns false if the document was already opened (i.e., skip didOpen).
     ///
-    /// When returning true, also records the mapping from host_uri to the virtual document
-    /// in host_to_virtual. This mapping is used for didClose propagation when the host
-    /// document is closed.
+    /// This is exposed for tests that need to simulate document opening without
+    /// using the full ensure_document_opened flow.
+    #[cfg(test)]
     pub(super) async fn should_send_didopen(
         &self,
         host_uri: &Url,
         virtual_uri: &VirtualDocumentUri,
     ) -> bool {
-        use std::collections::hash_map::Entry;
-
-        let uri_string = virtual_uri.to_uri_string();
-        let language = virtual_uri.language();
-
-        let mut versions = self.document_versions.lock().await;
-        let docs = versions.entry(language.to_string()).or_default();
-
-        if let Entry::Vacant(e) = docs.entry(uri_string) {
-            e.insert(1);
-
-            // Record the host -> virtual mapping for didClose propagation
-            let mut host_map = self.host_to_virtual.lock().await;
-            host_map
-                .entry(host_uri.clone())
-                .or_default()
-                .push(OpenedVirtualDoc {
-                    virtual_uri: virtual_uri.clone(),
-                });
-
-            true
-        } else {
-            false
-        }
+        self.document_tracker
+            .should_send_didopen(host_uri, virtual_uri)
+            .await
     }
 
     /// Get or create a connection for the specified language.
@@ -529,6 +433,57 @@ impl LanguageServerPool {
         Self::drain_join_set(&mut join_set, "Force-kill task").await;
     }
 
+    /// Perform the LSP initialize/initialized handshake.
+    ///
+    /// Sends the initialize request, waits for the response, and sends the
+    /// initialized notification. This function is called by `get_or_create_connection_with_timeout`
+    /// after the connection is spawned and the reader task is running.
+    ///
+    /// # Arguments
+    /// * `handle` - The connection handle (in Initializing state)
+    /// * `init_request_id` - Pre-registered request ID (always 1)
+    /// * `init_response_rx` - Pre-registered receiver for initialize response
+    /// * `init_options` - Server-specific initialization options
+    ///
+    /// # Returns
+    /// * `Ok(())` - Handshake completed successfully
+    /// * `Err(e)` - Handshake failed (server error, I/O error)
+    async fn perform_lsp_handshake(
+        handle: &ConnectionHandle,
+        init_request_id: super::protocol::RequestId,
+        init_response_rx: tokio::sync::oneshot::Receiver<serde_json::Value>,
+        init_options: Option<serde_json::Value>,
+    ) -> io::Result<()> {
+        // 1. Build and send initialize request
+        let init_request = build_initialize_request(init_request_id, init_options);
+        {
+            let mut writer = handle.writer().await;
+            writer.write_message(&init_request).await?;
+        }
+
+        // 2. Wait for initialize response via pre-registered receiver
+        let response = init_response_rx
+            .await
+            .map_err(|_| io::Error::other("bridge: initialize response channel closed"))?;
+
+        // 3. Check for error response
+        if response.get("error").is_some() {
+            return Err(io::Error::other(format!(
+                "bridge: initialize failed: {:?}",
+                response.get("error")
+            )));
+        }
+
+        // 4. Send initialized notification
+        let initialized = build_initialized_notification();
+        {
+            let mut writer = handle.writer().await;
+            writer.write_message(&initialized).await?;
+        }
+
+        Ok(())
+    }
+
     /// Get or create a connection for the specified language with custom timeout.
     ///
     /// If no connection exists, spawns the language server and stores the connection
@@ -629,62 +584,12 @@ impl LanguageServerPool {
         // Release lock before async initialization
         drop(connections);
 
-        // Perform LSP initialize handshake in background
-        let init_handle = Arc::clone(&handle);
+        // Perform LSP handshake with timeout
         let init_options = server_config.initialization_options.clone();
-
-        let init_result = tokio::time::timeout(timeout, async move {
-            // Build initialize request with pre-registered ID
-            let init_request = serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": init_request_id.as_i64(),
-                "method": "initialize",
-                "params": {
-                    "processId": std::process::id(),
-                    "rootUri": null,
-                    "capabilities": {},
-                    "initializationOptions": init_options
-                }
-            });
-
-            // Send initialize request
-            {
-                let mut writer = init_handle.writer().await;
-                writer.write_message(&init_request).await?;
-            }
-
-            // Wait for initialize response via pre-registered receiver
-            let response = match init_response_rx.await {
-                Ok(resp) => resp,
-                Err(_) => {
-                    return Err(io::Error::other(
-                        "bridge: initialize response channel closed",
-                    ));
-                }
-            };
-
-            // Check for error response
-            if response.get("error").is_some() {
-                return Err(io::Error::other(format!(
-                    "bridge: initialize failed: {:?}",
-                    response.get("error")
-                )));
-            }
-
-            // Send initialized notification
-            let initialized = serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "initialized",
-                "params": {}
-            });
-
-            {
-                let mut writer = init_handle.writer().await;
-                writer.write_message(&initialized).await?;
-            }
-
-            Ok::<_, io::Error>(())
-        })
+        let init_result = tokio::time::timeout(
+            timeout,
+            Self::perform_lsp_handshake(&handle, init_request_id, init_response_rx, init_options),
+        )
         .await;
 
         // Handle initialization result - transition state
@@ -1228,110 +1133,6 @@ mod tests {
         }
     }
 
-    /// Test that LanguageServerPool has host_to_virtual field.
-    ///
-    /// The field should be initialized as empty HashMap and accessible.
-    #[tokio::test]
-    async fn pool_has_host_to_virtual_field() {
-        let pool = LanguageServerPool::new();
-
-        // Access the host_to_virtual field to verify it exists
-        let host_map = pool.host_to_virtual.lock().await;
-        assert!(
-            host_map.is_empty(),
-            "host_to_virtual should be empty on new pool"
-        );
-    }
-
-    /// Test that should_send_didopen records host to virtual mapping.
-    ///
-    /// When should_send_didopen returns true (meaning didOpen should be sent),
-    /// it should also record the mapping from host URI to the opened virtual document.
-    #[tokio::test]
-    async fn should_send_didopen_records_host_to_virtual_mapping() {
-        use super::super::protocol::VirtualDocumentUri;
-
-        let pool = LanguageServerPool::new();
-        let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "lua-0");
-
-        // First call should return true (document not opened yet)
-        let result = pool.should_send_didopen(&host_uri, &virtual_uri).await;
-        assert!(result, "First call should return true");
-
-        // Verify the host_to_virtual mapping was recorded
-        let host_map = pool.host_to_virtual.lock().await;
-        let virtual_docs = host_map
-            .get(&host_uri)
-            .expect("host_uri should have entry in host_to_virtual");
-        assert_eq!(virtual_docs.len(), 1);
-        assert_eq!(virtual_docs[0].virtual_uri.language(), "lua");
-        assert_eq!(virtual_docs[0].virtual_uri.region_id(), "lua-0");
-    }
-
-    /// Test that should_send_didopen records multiple virtual docs for same host.
-    ///
-    /// A markdown file may have multiple Lua code blocks, each creating a separate
-    /// virtual document. All should be tracked under the same host URI.
-    #[tokio::test]
-    async fn should_send_didopen_records_multiple_virtual_docs_for_same_host() {
-        use super::super::protocol::VirtualDocumentUri;
-
-        let pool = LanguageServerPool::new();
-        let host_uri = Url::parse("file:///project/doc.md").unwrap();
-
-        // Open first Lua block
-        let virtual_uri_0 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "lua-0");
-        let result = pool.should_send_didopen(&host_uri, &virtual_uri_0).await;
-        assert!(result, "First Lua block should return true");
-
-        // Open second Lua block
-        let virtual_uri_1 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "lua-1");
-        let result = pool.should_send_didopen(&host_uri, &virtual_uri_1).await;
-        assert!(result, "Second Lua block should return true");
-
-        // Verify both are tracked under the same host
-        let host_map = pool.host_to_virtual.lock().await;
-        let virtual_docs = host_map
-            .get(&host_uri)
-            .expect("host_uri should have entry in host_to_virtual");
-        assert_eq!(virtual_docs.len(), 2);
-        assert_eq!(virtual_docs[0].virtual_uri.region_id(), "lua-0");
-        assert_eq!(virtual_docs[1].virtual_uri.region_id(), "lua-1");
-    }
-
-    /// Test that should_send_didopen does not duplicate mapping on second call.
-    ///
-    /// When should_send_didopen returns false (document already opened),
-    /// it should NOT add a duplicate entry to host_to_virtual.
-    #[tokio::test]
-    async fn should_send_didopen_does_not_duplicate_mapping() {
-        use super::super::protocol::VirtualDocumentUri;
-
-        let pool = LanguageServerPool::new();
-        let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "lua-0");
-
-        // First call - should return true and record mapping
-        let result = pool.should_send_didopen(&host_uri, &virtual_uri).await;
-        assert!(result, "First call should return true");
-
-        // Second call for same virtual doc - should return false
-        let result = pool.should_send_didopen(&host_uri, &virtual_uri).await;
-        assert!(!result, "Second call should return false");
-
-        // Verify only one entry exists (no duplicate)
-        let host_map = pool.host_to_virtual.lock().await;
-        let virtual_docs = host_map
-            .get(&host_uri)
-            .expect("host_uri should have entry in host_to_virtual");
-        assert_eq!(
-            virtual_docs.len(),
-            1,
-            "Should only have one entry, not duplicates"
-        );
-    }
-
     /// Test that send_didclose_notification sends notification without closing connection.
     ///
     /// After sending didClose, the connection should still be in Ready state and
@@ -1440,41 +1241,19 @@ mod tests {
             .await;
         assert!(result.is_ok(), "Second hover request should succeed");
 
-        // Verify we have 2 virtual docs tracked for this host
-        {
-            let host_map = pool.host_to_virtual.lock().await;
-            let virtual_docs = host_map.get(&host_uri).expect("Should have virtual docs");
-            assert_eq!(virtual_docs.len(), 2, "Should have 2 virtual docs");
-        }
-
         // Close the host document
         let closed_docs = pool.close_host_document(&host_uri).await;
 
         // Verify we got back the closed docs
         assert_eq!(closed_docs.len(), 2, "Should return 2 closed docs");
 
-        // Verify host_to_virtual is cleaned up
-        {
-            let host_map = pool.host_to_virtual.lock().await;
+        // Verify documents are no longer tracked as opened
+        for doc in &closed_docs {
             assert!(
-                !host_map.contains_key(&host_uri),
-                "host_to_virtual should be cleaned up"
+                !pool.is_document_opened(&doc.virtual_uri),
+                "Document should no longer be tracked as opened: {}",
+                doc.virtual_uri.to_uri_string()
             );
-        }
-
-        // Verify document_versions is cleaned up
-        {
-            let versions = pool.document_versions.lock().await;
-            if let Some(docs) = versions.get("lua") {
-                for doc in &closed_docs {
-                    let uri_string = doc.virtual_uri.to_uri_string();
-                    assert!(
-                        !docs.contains_key(&uri_string),
-                        "document_versions should not contain closed doc: {}",
-                        uri_string
-                    );
-                }
-            }
         }
 
         // Verify connection is still Ready (not closed)
@@ -1486,74 +1265,6 @@ mod tests {
                 ConnectionState::Ready,
                 "Connection should remain Ready after close_host_document"
             );
-        }
-    }
-
-    /// Test that forward_didchange_to_opened_docs sends didChange only for opened virtual documents.
-    ///
-    /// When a host document changes, we should only send didChange notifications
-    /// for virtual documents that have been opened (via didOpen). This test:
-    /// 1. Opens a virtual document (by calling should_send_didopen)
-    /// 2. Calls forward_didchange_to_opened_docs with injections including the opened doc
-    /// 3. Verifies didChange is sent only for opened docs
-    #[tokio::test]
-    async fn forward_didchange_to_opened_docs_sends_for_opened_docs() {
-        use super::super::protocol::VirtualDocumentUri;
-
-        let pool = LanguageServerPool::new();
-        let host_uri = Url::parse("file:///project/doc.md").unwrap();
-
-        // Generate the virtual URI the same way forward_didchange_to_opened_docs does
-        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-
-        // Open a virtual document (simulate first hover/completion request)
-        let opened = pool.should_send_didopen(&host_uri, &virtual_uri).await;
-        assert!(opened, "First call should open the document");
-        // Also mark as opened (simulating successful didOpen write)
-        pool.mark_document_opened(&virtual_uri);
-
-        // Verify document is tracked
-        {
-            let host_map = pool.host_to_virtual.lock().await;
-            let docs = host_map.get(&host_uri).expect("Should have host entry");
-            assert_eq!(docs.len(), 1);
-            assert_eq!(docs[0].virtual_uri.region_id(), TEST_ULID_LUA_0);
-        }
-
-        // Now call forward_didchange_to_opened_docs
-        // The injection tuple is (language, region_id, content)
-        let injections = vec![(
-            "lua".to_string(),
-            TEST_ULID_LUA_0.to_string(),
-            "local x = 42".to_string(),
-        )];
-
-        // Call the method - it should find the opened doc and attempt to send didChange
-        pool.forward_didchange_to_opened_docs(&host_uri, &injections)
-            .await;
-
-        // Verify the document version was incremented (indicating didChange was attempted)
-        {
-            let versions = pool.document_versions.lock().await;
-            if let Some(docs) = versions.get("lua") {
-                // Version should be 2 (1 from should_send_didopen, 1 from forward_didchange)
-                // Note: Without an actual connection, the didChange send may fail,
-                // but increment_document_version should still have been called
-                let uri_string = virtual_uri.to_uri_string();
-                let version = docs.get(&uri_string);
-                assert!(
-                    version.is_some(),
-                    "Document should still be tracked after forward_didchange"
-                );
-                // Version should be incremented to 2
-                assert_eq!(
-                    *version.unwrap(),
-                    2,
-                    "Version should be incremented after forward_didchange"
-                );
-            } else {
-                panic!("Should have lua documents tracked");
-            }
         }
     }
 
@@ -1600,113 +1311,6 @@ mod tests {
         );
     }
 
-    /// Test that forward_didchange_to_opened_docs skips unopened virtual documents.
-    ///
-    /// When a host document changes, we should NOT send didChange notifications
-    /// for virtual documents that have NOT been opened (not in host_to_virtual).
-    /// This test:
-    /// 1. Calls forward_didchange_to_opened_docs with an injection that has no opened doc
-    /// 2. Verifies no version increment happens (document not in document_versions)
-    #[tokio::test]
-    async fn forward_didchange_to_opened_docs_skips_unopened_docs() {
-        let pool = LanguageServerPool::new();
-        let host_uri = Url::parse("file:///project/doc.md").unwrap();
-
-        // Do NOT call should_send_didopen - document is unopened
-        // Now call forward_didchange_to_opened_docs with an injection
-        let injections = vec![(
-            "python".to_string(),
-            "python-0".to_string(),
-            "x = 42".to_string(),
-        )];
-
-        // Call the method - it should skip because no virtual doc is opened
-        pool.forward_didchange_to_opened_docs(&host_uri, &injections)
-            .await;
-
-        // Verify no document version was created (document was never opened)
-        {
-            let versions = pool.document_versions.lock().await;
-            // Should NOT have any python entries because document was never opened
-            assert!(
-                !versions.contains_key("python"),
-                "Should NOT have python documents because none were opened"
-            );
-        }
-
-        // Also verify host_to_virtual is empty
-        {
-            let host_map = pool.host_to_virtual.lock().await;
-            assert!(
-                !host_map.contains_key(&host_uri),
-                "Should NOT have host entry because no document was opened"
-            );
-        }
-    }
-
-    /// Test that forward_didchange_to_opened_docs only sends didChange for opened docs in mixed scenario.
-    ///
-    /// When a host document changes with multiple injections:
-    /// - Opened injections should get didChange (version incremented)
-    /// - Unopened injections should be skipped (no version entry)
-    #[tokio::test]
-    async fn forward_didchange_mixed_opened_and_unopened_docs() {
-        use super::super::protocol::VirtualDocumentUri;
-
-        let pool = LanguageServerPool::new();
-        let host_uri = Url::parse("file:///project/doc.md").unwrap();
-
-        // Open only the first Lua block
-        let lua_virtual_uri =
-            VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-        let opened = pool.should_send_didopen(&host_uri, &lua_virtual_uri).await;
-        assert!(opened, "First call should open the document");
-        // Also mark as opened (simulating successful didOpen write)
-        pool.mark_document_opened(&lua_virtual_uri);
-
-        // Do NOT open python
-
-        // Now call forward_didchange_to_opened_docs with both injections
-        let injections = vec![
-            (
-                "lua".to_string(),
-                TEST_ULID_LUA_0.to_string(),
-                "local x = 42".to_string(),
-            ),
-            (
-                "python".to_string(),
-                TEST_ULID_PYTHON_0.to_string(),
-                "x = 42".to_string(),
-            ),
-        ];
-
-        pool.forward_didchange_to_opened_docs(&host_uri, &injections)
-            .await;
-
-        // Verify:
-        // 1. Lua document version was incremented (was opened)
-        // 2. Python document version does NOT exist (was not opened)
-        {
-            let versions = pool.document_versions.lock().await;
-
-            // Lua should have version 2
-            let lua_docs = versions.get("lua").expect("Should have lua documents");
-            let lua_uri_string = lua_virtual_uri.to_uri_string();
-            let lua_version = lua_docs.get(&lua_uri_string);
-            assert_eq!(
-                lua_version,
-                Some(&2),
-                "Lua version should be 2 (1 from open, 1 from didChange)"
-            );
-
-            // Python should NOT exist
-            assert!(
-                !versions.contains_key("python"),
-                "Should NOT have python documents because none were opened"
-            );
-        }
-    }
-
     /// Test that ConnectionHandle is NOT cached after timeout.
     ///
     /// With the Reader Task architecture (ADR-0015 Phase A), failed connections
@@ -1741,223 +1345,11 @@ mod tests {
     }
 
     // ========================================
-    // Phase 3 Tests: remove_matching_virtual_docs
-    // ========================================
-
-    #[tokio::test]
-    async fn remove_matching_virtual_docs_removes_matching_docs() {
-        use super::super::protocol::VirtualDocumentUri;
-
-        let pool = LanguageServerPool::new();
-        let host_uri = test_host_uri("phase3_take");
-
-        // Register some virtual docs using should_send_didopen
-        // Use VirtualDocumentUri for proper type safety
-        let virtual_uri_1 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-        let virtual_uri_2 =
-            VirtualDocumentUri::new(&url_to_uri(&host_uri), "python", TEST_ULID_PYTHON_0);
-
-        pool.should_send_didopen(&host_uri, &virtual_uri_1).await;
-        pool.should_send_didopen(&host_uri, &virtual_uri_2).await;
-
-        // Parse the ULIDs for matching
-        let ulid_lua: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
-
-        // Take only the Lua ULID
-        let taken = pool
-            .remove_matching_virtual_docs(&host_uri, &[ulid_lua])
-            .await;
-
-        // Should return the Lua doc
-        assert_eq!(taken.len(), 1, "Should take exactly one doc");
-        assert_eq!(
-            taken[0].virtual_uri.language(),
-            "lua",
-            "Should be the Lua doc"
-        );
-        assert_eq!(
-            taken[0].virtual_uri.region_id(),
-            TEST_ULID_LUA_0,
-            "Should have the Lua ULID"
-        );
-
-        // Verify remaining docs in host_to_virtual
-        let host_map = pool.host_to_virtual.lock().await;
-        let remaining = host_map.get(&host_uri).unwrap();
-        assert_eq!(remaining.len(), 1, "Should have one remaining doc");
-        assert_eq!(
-            remaining[0].virtual_uri.language(),
-            "python",
-            "Python doc should remain"
-        );
-    }
-
-    #[tokio::test]
-    async fn remove_matching_virtual_docs_returns_empty_for_no_match() {
-        use super::super::protocol::VirtualDocumentUri;
-
-        let pool = LanguageServerPool::new();
-        let host_uri = test_host_uri("phase3_no_match");
-
-        // Register a virtual doc
-        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-        pool.should_send_didopen(&host_uri, &virtual_uri).await;
-
-        // Try to take a different ULID
-        let other_ulid: ulid::Ulid = TEST_ULID_LUA_1.parse().unwrap();
-        let taken = pool
-            .remove_matching_virtual_docs(&host_uri, &[other_ulid])
-            .await;
-
-        assert!(taken.is_empty(), "Should return empty when no ULIDs match");
-
-        // Original doc should still be there
-        let host_map = pool.host_to_virtual.lock().await;
-        let remaining = host_map.get(&host_uri).unwrap();
-        assert_eq!(remaining.len(), 1, "Original doc should remain");
-    }
-
-    #[tokio::test]
-    async fn remove_matching_virtual_docs_returns_empty_for_unknown_host() {
-        let pool = LanguageServerPool::new();
-        let host_uri = test_host_uri("phase3_unknown_host");
-
-        let ulid: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
-        let taken = pool.remove_matching_virtual_docs(&host_uri, &[ulid]).await;
-
-        assert!(taken.is_empty(), "Should return empty for unknown host URI");
-    }
-
-    #[tokio::test]
-    async fn remove_matching_virtual_docs_returns_empty_for_empty_ulids() {
-        use super::super::protocol::VirtualDocumentUri;
-
-        let pool = LanguageServerPool::new();
-        let host_uri = test_host_uri("phase3_empty_ulids");
-
-        // Register a virtual doc
-        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-        pool.should_send_didopen(&host_uri, &virtual_uri).await;
-
-        // Take with empty ULID list (fast path)
-        let taken = pool.remove_matching_virtual_docs(&host_uri, &[]).await;
-
-        assert!(taken.is_empty(), "Should return empty for empty ULID list");
-
-        // Original doc should still be there
-        let host_map = pool.host_to_virtual.lock().await;
-        let remaining = host_map.get(&host_uri).unwrap();
-        assert_eq!(remaining.len(), 1, "Original doc should remain");
-    }
-
-    #[tokio::test]
-    async fn remove_matching_virtual_docs_takes_multiple_docs() {
-        use super::super::protocol::VirtualDocumentUri;
-
-        let pool = LanguageServerPool::new();
-        let host_uri = test_host_uri("phase3_multiple");
-
-        // Register multiple virtual docs using VirtualDocumentUri for proper type safety
-        let virtual_uri_1 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-        let virtual_uri_2 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_1);
-        let virtual_uri_3 =
-            VirtualDocumentUri::new(&url_to_uri(&host_uri), "python", TEST_ULID_PYTHON_0);
-
-        pool.should_send_didopen(&host_uri, &virtual_uri_1).await;
-        pool.should_send_didopen(&host_uri, &virtual_uri_2).await;
-        pool.should_send_didopen(&host_uri, &virtual_uri_3).await;
-
-        // Take both Lua ULIDs
-        let ulid_1: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
-        let ulid_2: ulid::Ulid = TEST_ULID_LUA_1.parse().unwrap();
-
-        let taken = pool
-            .remove_matching_virtual_docs(&host_uri, &[ulid_1, ulid_2])
-            .await;
-
-        assert_eq!(taken.len(), 2, "Should take both Lua docs");
-
-        // Verify Python doc remains
-        let host_map = pool.host_to_virtual.lock().await;
-        let remaining = host_map.get(&host_uri).unwrap();
-        assert_eq!(remaining.len(), 1, "Python doc should remain");
-        assert_eq!(
-            remaining[0].virtual_uri.language(),
-            "python",
-            "Remaining doc should be Python"
-        );
-    }
-
-    // ========================================
-    // ADR-0015: is_document_opened tests
-    // ========================================
-
-    /// Test that is_document_opened returns false before mark_document_opened is called.
-    ///
-    /// This is part of the fix for LSP spec violation where requests were sent
-    /// before didOpen. The is_document_opened() method checks whether didOpen
-    /// has ACTUALLY been sent to the downstream server (not just marked for sending).
-    #[tokio::test]
-    async fn is_document_opened_returns_false_before_marked() {
-        use super::super::protocol::VirtualDocumentUri;
-
-        let pool = LanguageServerPool::new();
-        let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-
-        // Before marking, should return false
-        assert!(
-            !pool.is_document_opened(&virtual_uri),
-            "is_document_opened should return false before mark_document_opened"
-        );
-    }
-
-    /// Test that is_document_opened returns true after mark_document_opened is called.
-    #[tokio::test]
-    async fn is_document_opened_returns_true_after_marked() {
-        use super::super::protocol::VirtualDocumentUri;
-
-        let pool = LanguageServerPool::new();
-        let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-
-        // Mark the document as opened
-        pool.mark_document_opened(&virtual_uri);
-
-        // After marking, should return true
-        assert!(
-            pool.is_document_opened(&virtual_uri),
-            "is_document_opened should return true after mark_document_opened"
-        );
-    }
-
-    /// Test that should_send_didopen does NOT mark document as opened.
-    ///
-    /// should_send_didopen only reserves the document version for tracking.
-    /// The actual "opened" state should only be set by mark_document_opened
-    /// which is called AFTER didOpen is sent to downstream.
-    #[tokio::test]
-    async fn should_send_didopen_does_not_mark_as_opened() {
-        use super::super::protocol::VirtualDocumentUri;
-
-        let pool = LanguageServerPool::new();
-        let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-
-        // Call should_send_didopen - this reserves the version but doesn't mark as opened
-        let should_open = pool.should_send_didopen(&host_uri, &virtual_uri).await;
-        assert!(should_open, "First call should return true");
-
-        // is_document_opened should still return false
-        assert!(
-            !pool.is_document_opened(&virtual_uri),
-            "is_document_opened should return false even after should_send_didopen"
-        );
-    }
-
-    // ========================================
     // ensure_document_opened tests
     // ========================================
+    // Note: Unit tests for should_send_didopen, is_document_opened, mark_document_opened,
+    // and remove_matching_virtual_docs live in document_tracker.rs.
+    // These integration tests verify ensure_document_opened behavior with I/O.
 
     /// Test that ensure_document_opened sends didOpen when document is not yet opened.
     ///
@@ -2019,14 +1411,6 @@ mod tests {
         assert!(
             pool.is_document_opened(&virtual_uri),
             "Document should be marked as opened after ensure_document_opened"
-        );
-
-        // Document should be tracked in document_versions
-        let versions = pool.document_versions.lock().await;
-        let lua_docs = versions.get("lua").expect("Should have lua documents");
-        assert!(
-            lua_docs.contains_key(&virtual_uri.to_uri_string()),
-            "Document should be tracked in document_versions"
         );
     }
 
@@ -2126,17 +1510,12 @@ mod tests {
         // Deliberately do NOT call mark_document_opened to simulate pending didOpen
 
         // Verify the inconsistent state:
-        // - Document is in document_versions (so should_send_didopen will return false)
-        // - Document is NOT in opened_documents (so is_document_opened will return false)
-        {
-            let versions = pool.document_versions.lock().await;
-            assert!(
-                versions
-                    .get("lua")
-                    .is_some_and(|docs| docs.contains_key(&virtual_uri.to_uri_string())),
-                "Document should be in document_versions"
-            );
-        }
+        // - should_send_didopen will return false (document already registered)
+        // - is_document_opened will return false (not yet marked as opened)
+        assert!(
+            !pool.should_send_didopen(&host_uri, &virtual_uri).await,
+            "should_send_didopen should return false (already registered)"
+        );
         assert!(
             !pool.is_document_opened(&virtual_uri),
             "Document should NOT be marked as opened"

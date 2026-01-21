@@ -10,12 +10,14 @@
 //! - `request` - Request builders for downstream language servers
 //! - `response` - Response transformers for coordinate translation
 
+mod lifecycle;
 mod request;
 mod request_id;
 mod response;
 mod virtual_uri;
 
 // Re-export all public items for external use
+pub(crate) use lifecycle::*;
 pub(crate) use request::*;
 pub(crate) use request_id::RequestId;
 pub(crate) use response::*;

@@ -9,7 +9,7 @@ use ulid::Ulid;
 use url::Url;
 
 use super::super::pool::{ConnectionState, LanguageServerPool, OpenedVirtualDoc};
-use super::super::protocol::VirtualDocumentUri;
+use super::super::protocol::{VirtualDocumentUri, build_didclose_notification};
 
 impl LanguageServerPool {
     /// Send a didClose notification for a virtual document.
@@ -43,15 +43,7 @@ impl LanguageServerPool {
         drop(connections); // Release lock before I/O
 
         // Build and send the didClose notification
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "textDocument/didClose",
-            "params": {
-                "textDocument": {
-                    "uri": uri_string
-                }
-            }
-        });
+        let notification = build_didclose_notification(&uri_string);
 
         let mut writer = handle.writer().await;
         writer.write_message(&notification).await
@@ -70,7 +62,7 @@ impl LanguageServerPool {
                 doc.virtual_uri.to_uri_string(), e
             );
         }
-        self.remove_document_version(&doc.virtual_uri).await;
+        self.untrack_document(&doc.virtual_uri).await;
     }
 
     /// Close all virtual documents associated with a host document.

@@ -13,7 +13,7 @@ use log::warn;
 use super::ConnectionState;
 use crate::lsp::bridge::actor::{ReaderTaskHandle, ResponseRouter};
 use crate::lsp::bridge::connection::SplitConnectionWriter;
-use crate::lsp::bridge::protocol::RequestId;
+use crate::lsp::bridge::protocol::{RequestId, build_exit_notification, build_shutdown_request};
 
 /// Handle wrapping a connection with its state (ADR-0015 per-connection state).
 ///
@@ -215,13 +215,7 @@ impl ConnectionHandle {
         let handshake_result: io::Result<()> = async {
             // 2. Send LSP shutdown request
             let (request_id, response_rx) = self.register_request()?;
-
-            let shutdown_request = serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": request_id.as_i64(),
-                "method": "shutdown",
-                "params": null
-            });
+            let shutdown_request = build_shutdown_request(request_id);
 
             {
                 let mut writer = self.writer().await;
@@ -246,11 +240,7 @@ impl ConnectionHandle {
             }
 
             // 3. Send exit notification (no response expected)
-            let exit_notification = serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "exit",
-                "params": null
-            });
+            let exit_notification = build_exit_notification();
 
             {
                 let mut writer = self.writer().await;
