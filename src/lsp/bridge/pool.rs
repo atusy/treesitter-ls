@@ -241,13 +241,16 @@ impl ConnectionHandle {
             writer: tokio::sync::Mutex::new(writer),
             router,
             _reader_handle: reader_handle,
-            next_request_id: AtomicI64::new(1),
+            // Start at 2 because ID=1 is reserved for the initialize request
+            // which is pre-registered before spawning the reader task.
+            next_request_id: AtomicI64::new(2),
         }
     }
 
     /// Generate a unique downstream request ID.
     ///
-    /// Each call returns the next ID in the sequence (1, 2, 3, ...).
+    /// Each call returns the next ID in the sequence (2, 3, 4, ...).
+    /// ID=1 is reserved for the initialize request.
     /// This ensures unique IDs for the ResponseRouter even when multiple
     /// upstream requests have the same ID.
     pub(crate) fn next_request_id(&self) -> i64 {
@@ -1060,9 +1063,20 @@ impl LanguageServerPool {
         // Spawn new connection (while holding lock to prevent concurrent spawns)
         let mut conn = AsyncBridgeConnection::spawn(server_config.cmd.clone()).await?;
 
-        // Split connection immediately and spawn reader task
+        // Split connection immediately
         let (writer, reader) = conn.split();
         let router = Arc::new(ResponseRouter::new());
+
+        // Pre-register initialize request ID (=1) BEFORE spawning reader task.
+        // This prevents a race condition where fast language servers (e.g., pyright)
+        // respond before register_request() is called, causing the response to be
+        // dropped as "unknown request ID".
+        let init_request_id = super::protocol::RequestId::new(1);
+        let init_response_rx = router
+            .register(init_request_id)
+            .expect("fresh router cannot have duplicate IDs");
+
+        // Now spawn reader task - it can route the initialize response immediately
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
         // Create handle in Initializing state (fast-fail for concurrent requests)
@@ -1084,13 +1098,10 @@ impl LanguageServerPool {
         let init_options = server_config.initialization_options.clone();
 
         let init_result = tokio::time::timeout(timeout, async move {
-            // Register request with router to receive initialize response
-            let (request_id, response_rx) = init_handle.register_request()?;
-
-            // Build initialize request with our registered ID
+            // Build initialize request with pre-registered ID
             let init_request = serde_json::json!({
                 "jsonrpc": "2.0",
-                "id": request_id.as_i64(),
+                "id": init_request_id.as_i64(),
                 "method": "initialize",
                 "params": {
                     "processId": std::process::id(),
@@ -1106,8 +1117,8 @@ impl LanguageServerPool {
                 writer.write_message(&init_request).await?;
             }
 
-            // Wait for initialize response via router
-            let response = match response_rx.await {
+            // Wait for initialize response via pre-registered receiver
+            let response = match init_response_rx.await {
                 Ok(resp) => resp,
                 Err(_) => {
                     return Err(io::Error::other(
@@ -1259,13 +1270,17 @@ mod tests {
         let handle = ConnectionHandle::new(writer, router, reader_handle);
 
         // Get multiple request IDs - they should be unique and incrementing
+        // Note: IDs start at 2 because ID=1 is reserved for the initialize request
         let id1 = handle.next_request_id();
         let id2 = handle.next_request_id();
         let id3 = handle.next_request_id();
 
-        assert_eq!(id1, 1, "First request ID should be 1");
-        assert_eq!(id2, 2, "Second request ID should be 2");
-        assert_eq!(id3, 3, "Third request ID should be 3");
+        assert_eq!(
+            id1, 2,
+            "First user request ID should be 2 (1 is reserved for initialize)"
+        );
+        assert_eq!(id2, 3, "Second user request ID should be 3");
+        assert_eq!(id3, 4, "Third user request ID should be 4");
     }
 
     /// Test that ConnectionHandle wraps connection with state (ADR-0015).
