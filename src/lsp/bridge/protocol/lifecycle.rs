@@ -224,8 +224,13 @@ mod tests {
             }
         })
     )]
+    #[trace]
     fn validate_accepts_valid_response(#[case] response: serde_json::Value) {
-        assert!(validate_initialize_response(&response).is_ok());
+        assert!(
+            validate_initialize_response(&response).is_ok(),
+            "Expected valid response to be accepted: {:?}",
+            response
+        );
     }
 
     #[rstest]
@@ -241,13 +246,20 @@ mod tests {
         serde_json::json!({"result": null, "error": null}),
         "missing valid result"
     )]
+    #[trace]
     fn validate_rejects_missing_result(
         #[case] response: serde_json::Value,
         #[case] expected_error: &str,
     ) {
         let result = validate_initialize_response(&response);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains(expected_error));
+        assert!(result.is_err(), "Expected rejection for: {:?}", response);
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains(expected_error),
+            "Expected error containing {:?}, got: {}",
+            expected_error,
+            err_msg
+        );
     }
 
     #[rstest]
@@ -305,15 +317,26 @@ mod tests {
         "code -1",  // Can't parse string as i64
         "unknown error"  // Can't parse number as str
     )]
+    #[trace]
     fn validate_rejects_error_response(
         #[case] response: serde_json::Value,
         #[case] expected_code: &str,
         #[case] expected_message: &str,
     ) {
         let result = validate_initialize_response(&response);
-        assert!(result.is_err());
+        assert!(result.is_err(), "Expected rejection for: {:?}", response);
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains(expected_code));
-        assert!(err_msg.contains(expected_message));
+        assert!(
+            err_msg.contains(expected_code),
+            "Expected code {:?} in error: {}",
+            expected_code,
+            err_msg
+        );
+        assert!(
+            err_msg.contains(expected_message),
+            "Expected message {:?} in error: {}",
+            expected_message,
+            err_msg
+        );
     }
 }

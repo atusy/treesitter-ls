@@ -2147,141 +2147,162 @@ mod tests {
 
     // PBI-154: languageServers Wildcard Inheritance (ADR-0011)
 
-    /// Expected result for parameterized language server wildcard tests
-    #[derive(Debug, Clone)]
-    enum ExpectedServerResult {
-        /// Expect None (no matching config)
-        None,
-        /// Expect Some with specific expected values
-        Some {
-            cmd: Vec<String>,
-            languages: Vec<String>,
-            workspace_type: Option<settings::WorkspaceType>,
-            /// For deep merge test: (key, expected_value) pairs to check in initialization_options
-            init_options_checks: Vec<(&'static str, serde_json::Value)>,
-        },
+    /// Helper to build servers map for wildcard resolution tests
+    fn build_servers_map(
+        wildcard: Option<settings::BridgeServerConfig>,
+        specific: Option<settings::BridgeServerConfig>,
+    ) -> HashMap<String, settings::BridgeServerConfig> {
+        let mut servers = HashMap::new();
+        if let Some(w) = wildcard {
+            servers.insert("_".to_string(), w);
+        }
+        if let Some(s) = specific {
+            servers.insert("rust-analyzer".to_string(), s);
+        }
+        servers
     }
 
-    #[rstest::rstest]
-    #[case::wildcard_only(
-        // ADR-0011: When languageServers only has "_" and we ask for "rust-analyzer",
-        // we should get the wildcard's settings
-        Some(settings::BridgeServerConfig {
-            cmd: vec!["default-lsp".to_string()],
-            languages: vec!["any".to_string()],
-            initialization_options: None,
-            workspace_type: Some(settings::WorkspaceType::Generic),
-        }),
-        None,
-        ExpectedServerResult::Some {
-            cmd: vec!["default-lsp".to_string()],
-            languages: vec!["any".to_string()],
-            workspace_type: Some(settings::WorkspaceType::Generic),
-            init_options_checks: vec![],
-        }
-    )]
-    #[case::specific_overrides_wildcard(
-        // ADR-0011: Server-specific values override wildcard values
-        // When both wildcard and specific server exist, specific values take precedence
-        Some(settings::BridgeServerConfig {
-            cmd: vec!["default-lsp".to_string()],
-            languages: vec!["any".to_string()],
-            initialization_options: Some(serde_json::json!({ "defaultOption": true })),
-            workspace_type: Some(settings::WorkspaceType::Generic),
-        }),
-        Some(settings::BridgeServerConfig {
-            cmd: vec!["rust-analyzer".to_string()],
-            languages: vec![], // Empty means inherit from wildcard
-            initialization_options: Some(serde_json::json!({ "linkedProjects": ["./Cargo.toml"] })),
-            workspace_type: Some(settings::WorkspaceType::Cargo),
-        }),
-        ExpectedServerResult::Some {
-            cmd: vec!["rust-analyzer".to_string()],
-            languages: vec!["any".to_string()], // Inherited from wildcard
-            workspace_type: Some(settings::WorkspaceType::Cargo),
-            init_options_checks: vec![
-                ("linkedProjects", serde_json::json!(["./Cargo.toml"])),
-                ("defaultOption", serde_json::json!(true)), // Deep merge per ADR-0010
-            ],
-        }
-    )]
-    #[case::neither_exists(
+    #[test]
+    fn test_resolve_language_server_returns_none_when_neither_exists() {
         // ADR-0011: Neither wildcard nor specific key -> return None
-        None,
-        None,
-        ExpectedServerResult::None
-    )]
-    #[case::specific_only(
-        // ADR-0011: No wildcard, only specific key -> return specific
-        None,
-        Some(settings::BridgeServerConfig {
-            cmd: vec!["rust-analyzer".to_string()],
-            languages: vec!["rust".to_string()],
-            initialization_options: None,
-            workspace_type: Some(settings::WorkspaceType::Cargo),
-        }),
-        ExpectedServerResult::Some {
-            cmd: vec!["rust-analyzer".to_string()],
-            languages: vec!["rust".to_string()],
-            workspace_type: Some(settings::WorkspaceType::Cargo),
-            init_options_checks: vec![],
-        }
-    )]
-    fn test_resolve_language_server_with_wildcard(
-        #[case] wildcard_config: Option<settings::BridgeServerConfig>,
-        #[case] specific_config: Option<settings::BridgeServerConfig>,
-        #[case] expected: ExpectedServerResult,
-    ) {
-        let mut servers: HashMap<String, settings::BridgeServerConfig> = HashMap::new();
-
-        if let Some(wildcard) = wildcard_config {
-            servers.insert("_".to_string(), wildcard);
-        }
-        if let Some(specific) = specific_config {
-            servers.insert("rust-analyzer".to_string(), specific);
-        }
+        let servers = build_servers_map(None, None);
 
         let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
 
-        match expected {
-            ExpectedServerResult::None => {
-                assert!(
-                    result.is_none(),
-                    "Should return None when neither wildcard nor specific key exists"
-                );
-            }
-            ExpectedServerResult::Some {
-                cmd,
-                languages,
-                workspace_type,
-                init_options_checks,
-            } => {
-                assert!(result.is_some(), "Should return Some config");
-                let resolved = result.unwrap();
+        assert!(
+            result.is_none(),
+            "Should return None when neither wildcard nor specific key exists"
+        );
+    }
 
-                assert_eq!(resolved.cmd, cmd, "cmd mismatch");
-                assert_eq!(resolved.languages, languages, "languages mismatch");
-                assert_eq!(
-                    resolved.workspace_type, workspace_type,
-                    "workspace_type mismatch"
-                );
+    #[test]
+    fn test_resolve_language_server_returns_wildcard_when_specific_absent() {
+        // ADR-0011: When languageServers only has "_" and we ask for "rust-analyzer",
+        // we should get the wildcard's settings
+        let wildcard = settings::BridgeServerConfig {
+            cmd: vec!["default-lsp".to_string()],
+            languages: vec!["any".to_string()],
+            initialization_options: None,
+            workspace_type: Some(settings::WorkspaceType::Generic),
+        };
+        let servers = build_servers_map(Some(wildcard), None);
 
-                // Verify initialization_options deep merge if checks are specified
-                if !init_options_checks.is_empty() {
-                    let init_opts = resolved
-                        .initialization_options
-                        .expect("Expected initialization_options to be Some");
-                    for (key, expected_value) in init_options_checks {
-                        assert_eq!(
-                            init_opts.get(key),
-                            Some(&expected_value),
-                            "initialization_options.{} mismatch",
-                            key
-                        );
-                    }
-                }
-            }
-        }
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+
+        assert!(result.is_some(), "Should return Some when wildcard exists");
+        let resolved = result.unwrap();
+        assert_eq!(
+            resolved.cmd,
+            vec!["default-lsp".to_string()],
+            "Should inherit cmd from wildcard"
+        );
+        assert_eq!(
+            resolved.languages,
+            vec!["any".to_string()],
+            "Should inherit languages from wildcard"
+        );
+        assert_eq!(
+            resolved.workspace_type,
+            Some(settings::WorkspaceType::Generic),
+            "Should inherit workspace_type from wildcard"
+        );
+    }
+
+    #[test]
+    fn test_resolve_language_server_returns_specific_when_wildcard_absent() {
+        // ADR-0011: No wildcard, only specific key -> return specific
+        let specific = settings::BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec!["rust".to_string()],
+            initialization_options: None,
+            workspace_type: Some(settings::WorkspaceType::Cargo),
+        };
+        let servers = build_servers_map(None, Some(specific));
+
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+
+        assert!(
+            result.is_some(),
+            "Should return Some when specific key exists"
+        );
+        let resolved = result.unwrap();
+        assert_eq!(
+            resolved.cmd,
+            vec!["rust-analyzer".to_string()],
+            "Should return specific config"
+        );
+        assert_eq!(
+            resolved.languages,
+            vec!["rust".to_string()],
+            "Should return specific languages"
+        );
+        assert_eq!(
+            resolved.workspace_type,
+            Some(settings::WorkspaceType::Cargo),
+            "Should return specific workspace_type"
+        );
+    }
+
+    #[test]
+    fn test_resolve_language_server_specific_overrides_wildcard() {
+        // ADR-0011: Server-specific values override wildcard values
+        // When both wildcard and specific server exist, specific values take precedence
+        use serde_json::json;
+
+        let wildcard = settings::BridgeServerConfig {
+            cmd: vec!["default-lsp".to_string()],
+            languages: vec!["any".to_string()],
+            initialization_options: Some(json!({ "defaultOption": true })),
+            workspace_type: Some(settings::WorkspaceType::Generic),
+        };
+        let specific = settings::BridgeServerConfig {
+            cmd: vec!["rust-analyzer".to_string()],
+            languages: vec![], // Empty means inherit from wildcard
+            initialization_options: Some(json!({ "linkedProjects": ["./Cargo.toml"] })),
+            workspace_type: Some(settings::WorkspaceType::Cargo),
+        };
+        let servers = build_servers_map(Some(wildcard), Some(specific));
+
+        let result = resolve_language_server_with_wildcard(&servers, "rust-analyzer");
+
+        assert!(result.is_some(), "Should return merged config");
+        let resolved = result.unwrap();
+
+        // cmd: overridden by specific
+        assert_eq!(
+            resolved.cmd,
+            vec!["rust-analyzer".to_string()],
+            "Should use rust-analyzer's cmd"
+        );
+
+        // languages: inherited from wildcard (specific was empty)
+        assert_eq!(
+            resolved.languages,
+            vec!["any".to_string()],
+            "Should inherit languages from wildcard since specific is empty"
+        );
+
+        // workspace_type: overridden by specific
+        assert_eq!(
+            resolved.workspace_type,
+            Some(settings::WorkspaceType::Cargo),
+            "Should use rust-analyzer's workspace_type"
+        );
+
+        // initialization_options: deep merged (ADR-0010)
+        let init_opts = resolved
+            .initialization_options
+            .expect("Should have merged initialization_options");
+        assert_eq!(
+            init_opts.get("linkedProjects"),
+            Some(&json!(["./Cargo.toml"])),
+            "Should have rust-analyzer's linkedProjects"
+        );
+        assert_eq!(
+            init_opts.get("defaultOption"),
+            Some(&json!(true)),
+            "Should inherit defaultOption from wildcard (deep merge per ADR-0010)"
+        );
     }
 
     // PBI-157: Deep merge for initialization_options (ADR-0010)

@@ -231,6 +231,7 @@ mod tests {
     #[case::equal((2, 5), (10, 3), (2, 5), (10, 3), true)]
     #[case::different_start((2, 5), (10, 3), (3, 5), (10, 3), false)]
     #[case::different_end((2, 5), (10, 3), (2, 5), (11, 3), false)]
+    #[trace]
     fn test_ranges_equal(
         #[case] a_start: (u32, u32),
         #[case] a_end: (u32, u32),
@@ -247,7 +248,13 @@ mod tests {
             Position::new(b_end.0, b_end.1),
         );
 
-        assert_eq!(ranges_equal(&a, &b), expected);
+        assert_eq!(
+            ranges_equal(&a, &b),
+            expected,
+            "ranges_equal({:?}, {:?})",
+            a,
+            b
+        );
     }
 
     #[rstest]
@@ -255,6 +262,7 @@ mod tests {
     #[case::equal((2, 5), (5, 10), (2, 5), (5, 10), true)]
     #[case::disjoint((0, 0), (5, 0), (10, 0), (15, 0), false)]
     #[case::inner_is_larger((2, 0), (5, 0), (0, 0), (10, 0), false)]
+    #[trace]
     fn test_range_contains(
         #[case] outer_start: (u32, u32),
         #[case] outer_end: (u32, u32),
@@ -271,7 +279,13 @@ mod tests {
             Position::new(inner_end.0, inner_end.1),
         );
 
-        assert_eq!(range_contains(&outer, &inner), expected);
+        assert_eq!(
+            range_contains(&outer, &inner),
+            expected,
+            "range_contains({:?}, {:?})",
+            outer,
+            inner
+        );
     }
 
     #[rstest]
@@ -281,6 +295,7 @@ mod tests {
     #[case::disjoint((0, 0), (5, 0), (10, 0), (15, 0), false)]
     #[case::same_start_different_end((2, 5), (10, 0), (2, 5), (5, 0), true)]
     #[case::same_end_different_start((0, 0), (10, 0), (5, 0), (10, 0), true)]
+    #[trace]
     fn test_is_range_strictly_larger(
         #[case] a_start: (u32, u32),
         #[case] a_end: (u32, u32),
@@ -297,6 +312,12 @@ mod tests {
             Position::new(b_end.0, b_end.1),
         );
 
-        assert_eq!(is_range_strictly_larger(&a, &b), expected);
+        assert_eq!(
+            is_range_strictly_larger(&a, &b),
+            expected,
+            "is_range_strictly_larger({:?}, {:?})",
+            a,
+            b
+        );
     }
 }

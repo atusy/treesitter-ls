@@ -922,6 +922,7 @@ mod tests {
     #[case::extra_arguments("1 0 -1 0 5", Some(InjectionOffset::new(1, 0, -1, 0)))]
     #[case::mixed_valid_invalid("1 invalid -1 0", Some(super::DEFAULT_OFFSET))]
     #[case::empty_args("", Some(super::DEFAULT_OFFSET))]
+    #[trace]
     fn test_offset_directive_edge_cases(
         #[case] offset_args: &str,
         #[case] expected: Option<InjectionOffset>,
@@ -948,7 +949,11 @@ mod tests {
         let query = Query::new(&language, &query_str).expect("valid query");
         let offset = parse_offset_directive_for_pattern(&query, 0);
 
-        assert_eq!(offset, expected);
+        assert_eq!(
+            offset, expected,
+            "offset_args={:?} should produce {:?}",
+            offset_args, expected
+        );
     }
 
     #[test]
