@@ -111,14 +111,13 @@ impl LanguageServerPool {
             .await
     }
 
-    /// Remove a document from the version tracking.
+    /// Remove a document from all tracking state.
     ///
+    /// Removes the document from version tracking and opened state.
     /// Used by did_close module for cleanup, and by Phase 3
     /// close_invalidated_virtual_docs for invalidated region cleanup.
-    pub(crate) async fn remove_document_version(&self, virtual_uri: &VirtualDocumentUri) {
-        self.document_tracker
-            .remove_document_version(virtual_uri)
-            .await
+    pub(crate) async fn untrack_document(&self, virtual_uri: &VirtualDocumentUri) {
+        self.document_tracker.untrack_document(virtual_uri).await
     }
 
     /// Check if a document has had didOpen ACTUALLY sent to downstream (ADR-0015).

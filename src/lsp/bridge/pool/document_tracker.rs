@@ -161,11 +161,15 @@ impl DocumentTracker {
         None
     }
 
-    /// Remove a document from the version tracking.
+    /// Remove a document from all tracking state.
+    ///
+    /// Removes the document from:
+    /// - `document_versions` (version tracking for didChange)
+    /// - `opened_documents` (opened state for LSP compliance)
     ///
     /// Used by did_close module for cleanup, and by Phase 3
     /// close_invalidated_virtual_docs for invalidated region cleanup.
-    pub(crate) async fn remove_document_version(&self, virtual_uri: &VirtualDocumentUri) {
+    pub(crate) async fn untrack_document(&self, virtual_uri: &VirtualDocumentUri) {
         let uri_string = virtual_uri.to_uri_string();
         let language = virtual_uri.language();
 
@@ -174,7 +178,6 @@ impl DocumentTracker {
             docs.remove(&uri_string);
         }
 
-        // Also remove from opened_documents (ADR-0015)
         match self.opened_documents.write() {
             Ok(mut opened) => {
                 opened.remove(&uri_string);
@@ -182,7 +185,7 @@ impl DocumentTracker {
             Err(poisoned) => {
                 warn!(
                     target: "kakehashi::lock_recovery",
-                    "Recovered from poisoned opened_documents lock in remove_document_version()"
+                    "Recovered from poisoned opened_documents lock in untrack_document()"
                 );
                 poisoned.into_inner().remove(&uri_string);
             }

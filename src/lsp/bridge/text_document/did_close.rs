@@ -62,7 +62,7 @@ impl LanguageServerPool {
                 doc.virtual_uri.to_uri_string(), e
             );
         }
-        self.remove_document_version(&doc.virtual_uri).await;
+        self.untrack_document(&doc.virtual_uri).await;
     }
 
     /// Close all virtual documents associated with a host document.
