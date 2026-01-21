@@ -435,6 +435,57 @@ impl LanguageServerPool {
         Self::drain_join_set(&mut join_set, "Force-kill task").await;
     }
 
+    /// Perform the LSP initialize/initialized handshake.
+    ///
+    /// Sends the initialize request, waits for the response, and sends the
+    /// initialized notification. This function is called by `get_or_create_connection_with_timeout`
+    /// after the connection is spawned and the reader task is running.
+    ///
+    /// # Arguments
+    /// * `handle` - The connection handle (in Initializing state)
+    /// * `init_request_id` - Pre-registered request ID (always 1)
+    /// * `init_response_rx` - Pre-registered receiver for initialize response
+    /// * `init_options` - Server-specific initialization options
+    ///
+    /// # Returns
+    /// * `Ok(())` - Handshake completed successfully
+    /// * `Err(e)` - Handshake failed (server error, I/O error)
+    async fn perform_lsp_handshake(
+        handle: &ConnectionHandle,
+        init_request_id: super::protocol::RequestId,
+        init_response_rx: tokio::sync::oneshot::Receiver<serde_json::Value>,
+        init_options: Option<serde_json::Value>,
+    ) -> io::Result<()> {
+        // 1. Build and send initialize request
+        let init_request = build_initialize_request(init_request_id, init_options);
+        {
+            let mut writer = handle.writer().await;
+            writer.write_message(&init_request).await?;
+        }
+
+        // 2. Wait for initialize response via pre-registered receiver
+        let response = init_response_rx
+            .await
+            .map_err(|_| io::Error::other("bridge: initialize response channel closed"))?;
+
+        // 3. Check for error response
+        if response.get("error").is_some() {
+            return Err(io::Error::other(format!(
+                "bridge: initialize failed: {:?}",
+                response.get("error")
+            )));
+        }
+
+        // 4. Send initialized notification
+        let initialized = build_initialized_notification();
+        {
+            let mut writer = handle.writer().await;
+            writer.write_message(&initialized).await?;
+        }
+
+        Ok(())
+    }
+
     /// Get or create a connection for the specified language with custom timeout.
     ///
     /// If no connection exists, spawns the language server and stores the connection
@@ -535,45 +586,12 @@ impl LanguageServerPool {
         // Release lock before async initialization
         drop(connections);
 
-        // Perform LSP initialize handshake in background
-        let init_handle = Arc::clone(&handle);
+        // Perform LSP handshake with timeout
         let init_options = server_config.initialization_options.clone();
-
-        let init_result = tokio::time::timeout(timeout, async move {
-            // Build and send initialize request
-            let init_request = build_initialize_request(init_request_id, init_options);
-            {
-                let mut writer = init_handle.writer().await;
-                writer.write_message(&init_request).await?;
-            }
-
-            // Wait for initialize response via pre-registered receiver
-            let response = match init_response_rx.await {
-                Ok(resp) => resp,
-                Err(_) => {
-                    return Err(io::Error::other(
-                        "bridge: initialize response channel closed",
-                    ));
-                }
-            };
-
-            // Check for error response
-            if response.get("error").is_some() {
-                return Err(io::Error::other(format!(
-                    "bridge: initialize failed: {:?}",
-                    response.get("error")
-                )));
-            }
-
-            // Send initialized notification
-            let initialized = build_initialized_notification();
-            {
-                let mut writer = init_handle.writer().await;
-                writer.write_message(&initialized).await?;
-            }
-
-            Ok::<_, io::Error>(())
-        })
+        let init_result = tokio::time::timeout(
+            timeout,
+            Self::perform_lsp_handshake(&handle, init_request_id, init_response_rx, init_options),
+        )
         .await;
 
         // Handle initialization result - transition state
