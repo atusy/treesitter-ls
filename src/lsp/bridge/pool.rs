@@ -8,6 +8,8 @@
 mod connection_handle;
 mod connection_state;
 mod shutdown_timeout;
+#[cfg(test)]
+mod test_helpers;
 mod virtual_doc;
 
 pub(crate) use connection_handle::ConnectionHandle;
