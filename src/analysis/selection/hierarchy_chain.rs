@@ -103,6 +103,7 @@ pub fn chain_injected_to_host(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
     use tower_lsp_server::ls_types::Position;
 
     // Helper to create a simple SelectionRange
@@ -226,134 +227,76 @@ mod tests {
         assert_eq!(parent.range.end, Position::new(10, 0));
     }
 
-    #[test]
-    fn test_ranges_equal_when_equal() {
-        let a = Range::new(Position::new(2, 5), Position::new(10, 3));
-        let b = Range::new(Position::new(2, 5), Position::new(10, 3));
-
-        assert!(ranges_equal(&a, &b));
-    }
-
-    #[test]
-    fn test_ranges_equal_when_different_start() {
-        let a = Range::new(Position::new(2, 5), Position::new(10, 3));
-        let b = Range::new(Position::new(3, 5), Position::new(10, 3));
-
-        assert!(!ranges_equal(&a, &b));
-    }
-
-    #[test]
-    fn test_ranges_equal_when_different_end() {
-        let a = Range::new(Position::new(2, 5), Position::new(10, 3));
-        let b = Range::new(Position::new(2, 5), Position::new(11, 3));
-
-        assert!(!ranges_equal(&a, &b));
-    }
-
-    #[test]
-    fn test_range_contains_when_outer_contains_inner() {
-        let outer = Range::new(Position::new(0, 0), Position::new(10, 0));
-        let inner = Range::new(Position::new(2, 0), Position::new(5, 0));
-
-        assert!(range_contains(&outer, &inner));
-    }
-
-    #[test]
-    fn test_range_contains_when_equal() {
-        let outer = Range::new(Position::new(2, 5), Position::new(5, 10));
-        let inner = Range::new(Position::new(2, 5), Position::new(5, 10));
-
-        assert!(
-            range_contains(&outer, &inner),
-            "equal ranges should be contained"
+    #[rstest]
+    #[case::equal((2, 5), (10, 3), (2, 5), (10, 3), true)]
+    #[case::different_start((2, 5), (10, 3), (3, 5), (10, 3), false)]
+    #[case::different_end((2, 5), (10, 3), (2, 5), (11, 3), false)]
+    fn test_ranges_equal(
+        #[case] a_start: (u32, u32),
+        #[case] a_end: (u32, u32),
+        #[case] b_start: (u32, u32),
+        #[case] b_end: (u32, u32),
+        #[case] expected: bool,
+    ) {
+        let a = Range::new(
+            Position::new(a_start.0, a_start.1),
+            Position::new(a_end.0, a_end.1),
         );
-    }
-
-    #[test]
-    fn test_range_contains_when_disjoint() {
-        let outer = Range::new(Position::new(0, 0), Position::new(5, 0));
-        let inner = Range::new(Position::new(10, 0), Position::new(15, 0));
-
-        assert!(!range_contains(&outer, &inner));
-    }
-
-    #[test]
-    fn test_range_contains_when_inner_is_larger() {
-        let outer = Range::new(Position::new(2, 0), Position::new(5, 0));
-        let inner = Range::new(Position::new(0, 0), Position::new(10, 0));
-
-        assert!(
-            !range_contains(&outer, &inner),
-            "outer does not contain larger inner"
+        let b = Range::new(
+            Position::new(b_start.0, b_start.1),
+            Position::new(b_end.0, b_end.1),
         );
+
+        assert_eq!(ranges_equal(&a, &b), expected);
     }
 
-    #[test]
-    fn test_is_range_strictly_larger_when_a_contains_b() {
-        // Range a: lines 0-10, Range b: lines 2-5
-        let a = Range::new(Position::new(0, 0), Position::new(10, 0));
-        let b = Range::new(Position::new(2, 0), Position::new(5, 0));
-
-        assert!(
-            is_range_strictly_larger(&a, &b),
-            "a should strictly contain b"
+    #[rstest]
+    #[case::outer_contains_inner((0, 0), (10, 0), (2, 0), (5, 0), true)]
+    #[case::equal((2, 5), (5, 10), (2, 5), (5, 10), true)]
+    #[case::disjoint((0, 0), (5, 0), (10, 0), (15, 0), false)]
+    #[case::inner_is_larger((2, 0), (5, 0), (0, 0), (10, 0), false)]
+    fn test_range_contains(
+        #[case] outer_start: (u32, u32),
+        #[case] outer_end: (u32, u32),
+        #[case] inner_start: (u32, u32),
+        #[case] inner_end: (u32, u32),
+        #[case] expected: bool,
+    ) {
+        let outer = Range::new(
+            Position::new(outer_start.0, outer_start.1),
+            Position::new(outer_end.0, outer_end.1),
         );
-    }
-
-    #[test]
-    fn test_is_range_strictly_larger_when_equal() {
-        // Equal ranges should NOT be strictly larger
-        let a = Range::new(Position::new(2, 5), Position::new(5, 10));
-        let b = Range::new(Position::new(2, 5), Position::new(5, 10));
-
-        assert!(
-            !is_range_strictly_larger(&a, &b),
-            "equal ranges should not be strictly larger"
+        let inner = Range::new(
+            Position::new(inner_start.0, inner_start.1),
+            Position::new(inner_end.0, inner_end.1),
         );
+
+        assert_eq!(range_contains(&outer, &inner), expected);
     }
 
-    #[test]
-    fn test_is_range_strictly_larger_when_b_contains_a() {
-        // b contains a - should return false
-        let a = Range::new(Position::new(2, 0), Position::new(5, 0));
-        let b = Range::new(Position::new(0, 0), Position::new(10, 0));
-
-        assert!(!is_range_strictly_larger(&a, &b), "a does not contain b");
-    }
-
-    #[test]
-    fn test_is_range_strictly_larger_when_disjoint() {
-        // Disjoint ranges
-        let a = Range::new(Position::new(0, 0), Position::new(5, 0));
-        let b = Range::new(Position::new(10, 0), Position::new(15, 0));
-
-        assert!(
-            !is_range_strictly_larger(&a, &b),
-            "disjoint ranges should not be strictly larger"
+    #[rstest]
+    #[case::a_contains_b((0, 0), (10, 0), (2, 0), (5, 0), true)]
+    #[case::equal((2, 5), (5, 10), (2, 5), (5, 10), false)]
+    #[case::b_contains_a((2, 0), (5, 0), (0, 0), (10, 0), false)]
+    #[case::disjoint((0, 0), (5, 0), (10, 0), (15, 0), false)]
+    #[case::same_start_different_end((2, 5), (10, 0), (2, 5), (5, 0), true)]
+    #[case::same_end_different_start((0, 0), (10, 0), (5, 0), (10, 0), true)]
+    fn test_is_range_strictly_larger(
+        #[case] a_start: (u32, u32),
+        #[case] a_end: (u32, u32),
+        #[case] b_start: (u32, u32),
+        #[case] b_end: (u32, u32),
+        #[case] expected: bool,
+    ) {
+        let a = Range::new(
+            Position::new(a_start.0, a_start.1),
+            Position::new(a_end.0, a_end.1),
         );
-    }
-
-    #[test]
-    fn test_is_range_strictly_larger_same_start_different_end() {
-        // Same start, a ends later
-        let a = Range::new(Position::new(2, 5), Position::new(10, 0));
-        let b = Range::new(Position::new(2, 5), Position::new(5, 0));
-
-        assert!(
-            is_range_strictly_larger(&a, &b),
-            "same start but a ends later should be strictly larger"
+        let b = Range::new(
+            Position::new(b_start.0, b_start.1),
+            Position::new(b_end.0, b_end.1),
         );
-    }
 
-    #[test]
-    fn test_is_range_strictly_larger_same_end_different_start() {
-        // Same end, a starts earlier
-        let a = Range::new(Position::new(0, 0), Position::new(10, 0));
-        let b = Range::new(Position::new(5, 0), Position::new(10, 0));
-
-        assert!(
-            is_range_strictly_larger(&a, &b),
-            "same end but a starts earlier should be strictly larger"
-        );
+        assert_eq!(is_range_strictly_larger(&a, &b), expected);
     }
 }
