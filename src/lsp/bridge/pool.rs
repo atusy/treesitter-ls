@@ -29,7 +29,7 @@ use url::Url;
 use super::connection::SplitConnectionWriter;
 use super::protocol::{
     VirtualDocumentUri, build_bridge_didopen_notification, build_initialize_request,
-    build_initialized_notification,
+    build_initialized_notification, validate_initialize_response,
 };
 
 /// Timeout for LSP initialize handshake (ADR-0018 Tier 0: 30-60s recommended).
@@ -466,13 +466,8 @@ impl LanguageServerPool {
             .await
             .map_err(|_| io::Error::other("bridge: initialize response channel closed"))?;
 
-        // 3. Check for error response
-        if response.get("error").is_some() {
-            return Err(io::Error::other(format!(
-                "bridge: initialize failed: {:?}",
-                response.get("error")
-            )));
-        }
+        // 3. Validate response
+        validate_initialize_response(&response)?;
 
         // 4. Send initialized notification
         let initialized = build_initialized_notification();
@@ -483,7 +478,9 @@ impl LanguageServerPool {
 
         Ok(())
     }
+}
 
+impl LanguageServerPool {
     /// Get or create a connection for the specified language with custom timeout.
     ///
     /// If no connection exists, spawns the language server and stores the connection
