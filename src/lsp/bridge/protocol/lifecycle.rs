@@ -79,6 +79,44 @@ pub(crate) fn build_didclose_notification(uri: &str) -> serde_json::Value {
     })
 }
 
+/// Validates a JSON-RPC initialize response.
+///
+/// Uses lenient interpretation to maximize compatibility with non-conformant servers:
+/// - Prioritizes error field if present and non-null
+/// - Accepts result with null error field (`{"result": {...}, "error": null}`)
+/// - Rejects null or missing result field
+///
+/// # Returns
+/// * `Ok(())` - Response is valid (has non-null result, no error)
+/// * `Err(e)` - Response has error or missing/null result
+pub(crate) fn validate_initialize_response(
+    response: &serde_json::Value,
+) -> std::io::Result<()> {
+    // 1. Check for error response (prioritize error if present)
+    if let Some(error) = response.get("error").filter(|e| !e.is_null()) {
+        // Error field is non-null: treat as error regardless of result
+        let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+        let message = error
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown error");
+
+        return Err(std::io::Error::other(format!(
+            "bridge: initialize failed (code {}): {}",
+            code, message
+        )));
+    }
+
+    // 2. Reject if result is absent or null
+    if response.get("result").filter(|r| !r.is_null()).is_none() {
+        return Err(std::io::Error::other(
+            "bridge: initialize response missing valid result",
+        ));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +198,146 @@ mod tests {
         let notification = build_didclose_notification(uri);
 
         assert_eq!(notification["params"]["textDocument"]["uri"], uri);
+    }
+
+    // Tests for validate_initialize_response
+
+    #[test]
+    fn validate_accepts_valid_result_without_error() {
+        let response = serde_json::json!({"result": {"capabilities": {}}});
+        assert!(validate_initialize_response(&response).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_valid_result_with_null_error() {
+        let response = serde_json::json!({"result": {"capabilities": {}}, "error": null});
+        assert!(validate_initialize_response(&response).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_error_response() {
+        let response = serde_json::json!({
+            "error": {
+                "code": -32600,
+                "message": "Invalid Request"
+            }
+        });
+        let result = validate_initialize_response(&response);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("code -32600"));
+        assert!(err_msg.contains("Invalid Request"));
+    }
+
+    #[test]
+    fn validate_rejects_error_response_even_with_result() {
+        let response = serde_json::json!({
+            "result": {"capabilities": {}},
+            "error": {
+                "code": -32603,
+                "message": "Internal error"
+            }
+        });
+        let result = validate_initialize_response(&response);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("code -32603"));
+        assert!(err_msg.contains("Internal error"));
+    }
+
+    #[test]
+    fn validate_rejects_null_result() {
+        let response = serde_json::json!({"result": null});
+        let result = validate_initialize_response(&response);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing valid result"));
+    }
+
+    #[test]
+    fn validate_rejects_missing_result_and_error() {
+        let response = serde_json::json!({});
+        let result = validate_initialize_response(&response);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing valid result"));
+    }
+
+    #[test]
+    fn validate_rejects_null_result_with_null_error() {
+        let response = serde_json::json!({"result": null, "error": null});
+        let result = validate_initialize_response(&response);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing valid result"));
+    }
+
+    #[test]
+    fn validate_handles_malformed_error_missing_code() {
+        let response = serde_json::json!({
+            "error": {
+                "message": "Something went wrong"
+            }
+        });
+        let result = validate_initialize_response(&response);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("code -1")); // Default code
+        assert!(err_msg.contains("Something went wrong"));
+    }
+
+    #[test]
+    fn validate_handles_malformed_error_missing_message() {
+        let response = serde_json::json!({
+            "error": {
+                "code": -32700
+            }
+        });
+        let result = validate_initialize_response(&response);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("code -32700"));
+        assert!(err_msg.contains("unknown error")); // Default message
+    }
+
+    #[test]
+    fn validate_handles_malformed_error_empty_object() {
+        let response = serde_json::json!({"error": {}});
+        let result = validate_initialize_response(&response);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("code -1"));
+        assert!(err_msg.contains("unknown error"));
+    }
+
+    #[test]
+    fn validate_handles_malformed_error_wrong_types() {
+        let response = serde_json::json!({
+            "error": {
+                "code": "not-a-number",
+                "message": 123
+            }
+        });
+        let result = validate_initialize_response(&response);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("code -1")); // Can't parse string as i64
+        assert!(err_msg.contains("unknown error")); // Can't parse number as str
+    }
+
+    #[test]
+    fn validate_accepts_complex_result_object() {
+        let response = serde_json::json!({
+            "result": {
+                "capabilities": {
+                    "textDocumentSync": 1,
+                    "completionProvider": {
+                        "triggerCharacters": ["."]
+                    }
+                },
+                "serverInfo": {
+                    "name": "test-server",
+                    "version": "1.0.0"
+                }
+            }
+        });
+        assert!(validate_initialize_response(&response).is_ok());
     }
 }
