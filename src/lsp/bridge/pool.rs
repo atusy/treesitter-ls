@@ -5,6 +5,7 @@
 //!
 //! Currently implements single-LS-per-language routing (language → single server).
 
+mod connection_action;
 mod connection_handle;
 mod connection_state;
 mod document_tracker;
@@ -14,6 +15,7 @@ mod shutdown_timeout;
 #[cfg(test)]
 mod test_helpers;
 
+use connection_action::{ConnectionAction, decide_connection_action};
 use handshake::perform_lsp_handshake;
 
 pub(crate) use connection_handle::ConnectionHandle;
@@ -270,41 +272,20 @@ impl LanguageServerPool {
         let mut connections = self.connections.lock().await;
 
         // Check if we already have a connection for this language
-        if let Some(handle) = connections.get(language) {
-            // Check state atomically with connection lookup (ADR-0015 Operation Gating)
-            match handle.state() {
-                ConnectionState::Initializing => {
-                    return Err(io::Error::other("bridge: downstream server initializing"));
-                }
-                ConnectionState::Failed => {
-                    // Remove failed connection, allow respawn on next attempt
+        // Use pure decision function for testability (ADR-0015 Operation Gating)
+        let existing_state = connections.get(language).map(|h| h.state());
+        match decide_connection_action(existing_state) {
+            ConnectionAction::ReturnExisting => {
+                // Safe: we just checked that the connection exists and is Ready
+                return Ok(Arc::clone(connections.get(language).unwrap()));
+            }
+            ConnectionAction::FailFast(msg) => {
+                return Err(io::Error::other(msg));
+            }
+            ConnectionAction::SpawnNew => {
+                // Remove stale connection if present (Failed or Closed state)
+                if existing_state.is_some() {
                     connections.remove(language);
-                    drop(connections);
-                    // Recursive call to spawn fresh connection (boxed to avoid infinite future size)
-                    return Box::pin(self.get_or_create_connection_with_timeout(
-                        language,
-                        server_config,
-                        timeout,
-                    ))
-                    .await;
-                }
-                ConnectionState::Ready => {
-                    return Ok(Arc::clone(handle));
-                }
-                ConnectionState::Closing => {
-                    // Connection is shutting down, reject new requests
-                    return Err(io::Error::other("bridge: connection closing"));
-                }
-                ConnectionState::Closed => {
-                    // Connection is terminated, remove from pool and respawn
-                    connections.remove(language);
-                    drop(connections);
-                    return Box::pin(self.get_or_create_connection_with_timeout(
-                        language,
-                        server_config,
-                        timeout,
-                    ))
-                    .await;
                 }
             }
         }
