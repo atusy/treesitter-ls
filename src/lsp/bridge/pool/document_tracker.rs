@@ -519,7 +519,9 @@ mod tests {
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
-        let decision = tracker.document_open_decision(&host_uri, &virtual_uri).await;
+        let decision = tracker
+            .document_open_decision(&host_uri, &virtual_uri)
+            .await;
 
         assert_eq!(
             decision,
@@ -542,7 +544,9 @@ mod tests {
         tracker.should_send_didopen(&host_uri, &virtual_uri).await;
         tracker.mark_document_opened(&virtual_uri);
 
-        let decision = tracker.document_open_decision(&host_uri, &virtual_uri).await;
+        let decision = tracker
+            .document_open_decision(&host_uri, &virtual_uri)
+            .await;
 
         assert_eq!(
             decision,
@@ -566,7 +570,9 @@ mod tests {
         tracker.should_send_didopen(&host_uri, &virtual_uri).await;
         // Deliberately do NOT call mark_document_opened
 
-        let decision = tracker.document_open_decision(&host_uri, &virtual_uri).await;
+        let decision = tracker
+            .document_open_decision(&host_uri, &virtual_uri)
+            .await;
 
         assert_eq!(
             decision,
@@ -588,7 +594,9 @@ mod tests {
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         // State 1: New document
-        let decision = tracker.document_open_decision(&host_uri, &virtual_uri).await;
+        let decision = tracker
+            .document_open_decision(&host_uri, &virtual_uri)
+            .await;
         assert_eq!(decision, DocumentOpenDecision::SendDidOpen);
 
         // Note: document_open_decision with SendDidOpen has side effect of registering
@@ -596,7 +604,9 @@ mod tests {
 
         // State 2: Registered but not opened (simulates race condition for OTHER callers)
         // Since first call already registered, subsequent call sees PendingError
-        let decision = tracker.document_open_decision(&host_uri, &virtual_uri).await;
+        let decision = tracker
+            .document_open_decision(&host_uri, &virtual_uri)
+            .await;
         assert_eq!(
             decision,
             DocumentOpenDecision::PendingError,
@@ -605,7 +615,9 @@ mod tests {
 
         // State 3: After marking opened
         tracker.mark_document_opened(&virtual_uri);
-        let decision = tracker.document_open_decision(&host_uri, &virtual_uri).await;
+        let decision = tracker
+            .document_open_decision(&host_uri, &virtual_uri)
+            .await;
         assert_eq!(
             decision,
             DocumentOpenDecision::AlreadyOpened,
