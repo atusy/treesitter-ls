@@ -648,4 +648,116 @@ mod tests {
         // which already checks `self.state() == ConnectionState::Ready` before
         // calling `self.reader_handle.notify_liveness_start()`.
     }
+
+    /// Integration test: liveness timer resets on response activity.
+    ///
+    /// ADR-0014: Timer resets on any stdout activity.
+    /// This verifies the full stack: request -> response -> timer reset.
+    ///
+    /// Test strategy: Send requests that will be echoed back, verify that
+    /// receiving responses keeps the connection alive past the original timeout.
+    #[tokio::test]
+    async fn liveness_timer_resets_on_response_integration() {
+        use crate::lsp::bridge::actor::spawn_reader_task_with_liveness;
+        use serde_json::json;
+        use std::time::Duration;
+
+        // Create an echo server (cat echoes everything back)
+        let mut conn = AsyncBridgeConnection::spawn(vec!["cat".to_string()])
+            .await
+            .expect("should spawn cat process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+
+        // Spawn reader with liveness timeout (200ms)
+        // This is long enough to avoid races but short enough for fast tests
+        let reader_handle = spawn_reader_task_with_liveness(
+            reader,
+            Arc::clone(&router),
+            Some(Duration::from_millis(200)),
+        );
+
+        // Create ConnectionHandle in Ready state
+        let handle = Arc::new(ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+        ));
+
+        // Register first request - this starts the liveness timer
+        let (request_id1, response_rx1) = handle.register_request().expect("should register");
+
+        // Send a request that will be echoed back
+        let request1 = json!({
+            "jsonrpc": "2.0",
+            "id": request_id1.as_i64(),
+            "method": "test",
+            "params": {}
+        });
+        handle
+            .writer()
+            .await
+            .write_message(&request1)
+            .await
+            .expect("should write");
+
+        // Wait 100ms (half the timeout), then check we received the response
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Response should arrive (echo server echoes the request as-is)
+        // This response resets the liveness timer
+        let response1 = tokio::time::timeout(Duration::from_millis(50), response_rx1)
+            .await
+            .expect("should not timeout waiting for response")
+            .expect("should receive response");
+
+        // Verify we got the echoed response
+        assert!(response1.get("id").is_some(), "Response should have id");
+
+        // Connection should still be Ready (timer was reset when response arrived)
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "Connection should be Ready after first response"
+        );
+
+        // Register second request to keep pending > 0 (timer stays active after reset)
+        let (request_id2, response_rx2) = handle.register_request().expect("should register");
+
+        // Send second request
+        let request2 = json!({
+            "jsonrpc": "2.0",
+            "id": request_id2.as_i64(),
+            "method": "test2",
+            "params": {}
+        });
+        handle
+            .writer()
+            .await
+            .write_message(&request2)
+            .await
+            .expect("should write");
+
+        // Wait another 150ms - this is past the original 200ms timeout from the start
+        // but within 200ms of the timer reset from the first response
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // Connection should STILL be Ready because timer was reset
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "Timer should have reset on first response - connection should still be Ready"
+        );
+
+        // Receive second response to clean up
+        let _response2 = tokio::time::timeout(Duration::from_millis(50), response_rx2)
+            .await
+            .expect("should not timeout")
+            .expect("should receive response");
+
+        // Still Ready after all responses
+        assert_eq!(handle.state(), ConnectionState::Ready);
+    }
 }
