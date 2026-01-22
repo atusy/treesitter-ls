@@ -108,37 +108,4 @@ mod tests {
             ConnectionAction::SpawnNew
         );
     }
-
-    /// Test exhaustive state coverage.
-    ///
-    /// Ensures all 5 ConnectionState variants plus None are handled.
-    #[test]
-    fn all_states_have_defined_actions() {
-        let test_cases = [
-            (None, ConnectionAction::SpawnNew),
-            (
-                Some(ConnectionState::Initializing),
-                ConnectionAction::FailFast("bridge: downstream server initializing"),
-            ),
-            (
-                Some(ConnectionState::Ready),
-                ConnectionAction::ReturnExisting,
-            ),
-            (Some(ConnectionState::Failed), ConnectionAction::SpawnNew),
-            (
-                Some(ConnectionState::Closing),
-                ConnectionAction::FailFast("bridge: connection closing"),
-            ),
-            (Some(ConnectionState::Closed), ConnectionAction::SpawnNew),
-        ];
-
-        for (state, expected_action) in test_cases {
-            assert_eq!(
-                decide_connection_action(state),
-                expected_action,
-                "Unexpected action for state {:?}",
-                state
-            );
-        }
-    }
 }
