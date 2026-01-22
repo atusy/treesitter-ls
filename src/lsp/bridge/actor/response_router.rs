@@ -24,11 +24,12 @@ use super::super::protocol::RequestId;
 ///
 /// # Cancel Forwarding Support
 ///
-/// The router also maintains a mapping from upstream request IDs to downstream
-/// request IDs via `cancel_map`. This enables $/cancelRequest forwarding:
-/// - When a request is registered with an upstream ID, the mapping is stored
-/// - When a cancel notification arrives, `lookup_downstream_id()` translates it
-/// - When a request completes (via `route()` or `remove()`), the mapping is cleaned up
+/// The router also maintains a bidirectional mapping between upstream and downstream
+/// request IDs via `upstream_to_downstream` and `downstream_to_upstream`. This enables
+/// O(1) $/cancelRequest forwarding and cleanup:
+/// - When a request is registered with an upstream ID, both mappings are stored
+/// - When a cancel notification arrives, `lookup_downstream_id()` translates it in O(1)
+/// - When a request completes (via `route()` or `remove()`), cleanup is O(1)
 ///
 /// # Usage
 ///
@@ -44,7 +45,11 @@ pub(crate) struct ResponseRouter {
     ///
     /// Used for $/cancelRequest forwarding: when the client cancels request 42,
     /// we look up that 42 maps to downstream ID 7, and forward the cancel to LS.
-    cancel_map: std::sync::Mutex<HashMap<i64, RequestId>>,
+    upstream_to_downstream: std::sync::Mutex<HashMap<i64, RequestId>>,
+    /// Reverse mapping: downstream request ID -> upstream request ID.
+    ///
+    /// Enables O(1) cleanup when a response is routed or a request is removed.
+    downstream_to_upstream: std::sync::Mutex<HashMap<RequestId, i64>>,
 }
 
 impl ResponseRouter {
@@ -52,7 +57,8 @@ impl ResponseRouter {
     pub(crate) fn new() -> Self {
         Self {
             pending: std::sync::Mutex::new(HashMap::new()),
-            cancel_map: std::sync::Mutex::new(HashMap::new()),
+            upstream_to_downstream: std::sync::Mutex::new(HashMap::new()),
+            downstream_to_upstream: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -92,10 +98,18 @@ impl ResponseRouter {
 
         pending.insert(downstream_id, tx);
 
-        // Store the upstream->downstream mapping if upstream_id is provided
+        // Store bidirectional mapping if upstream_id is provided
         if let Some(upstream) = upstream_id {
-            let mut cancel_map = self.cancel_map.lock().unwrap_or_else(|e| e.into_inner());
-            cancel_map.insert(upstream, downstream_id);
+            let mut up_to_down = self
+                .upstream_to_downstream
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let mut down_to_up = self
+                .downstream_to_upstream
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            up_to_down.insert(upstream, downstream_id);
+            down_to_up.insert(downstream_id, upstream);
         }
 
         Some(rx)
@@ -104,12 +118,15 @@ impl ResponseRouter {
     /// Look up the downstream request ID for an upstream request ID.
     ///
     /// Used by $/cancelRequest forwarding to translate the client's request ID
-    /// to the language server's request ID.
+    /// to the language server's request ID. O(1) lookup.
     ///
     /// Returns `None` if no mapping exists (request not found or already completed).
     pub(crate) fn lookup_downstream_id(&self, upstream_id: i64) -> Option<RequestId> {
-        let cancel_map = self.cancel_map.lock().unwrap_or_else(|e| e.into_inner());
-        cancel_map.get(&upstream_id).copied()
+        let up_to_down = self
+            .upstream_to_downstream
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        up_to_down.get(&upstream_id).copied()
     }
 
     /// Route a response to its pending request.
@@ -118,7 +135,7 @@ impl ResponseRouter {
     /// corresponding waiter. If no waiter exists (response for unknown
     /// request), the response is dropped.
     ///
-    /// Also cleans up the cancel map entry for this request ID.
+    /// Also cleans up the bidirectional cancel map entries for this request ID in O(1).
     ///
     /// Returns `true` if the response was delivered, `false` otherwise.
     pub(crate) fn route(&self, response: serde_json::Value) -> bool {
@@ -132,15 +149,30 @@ impl ResponseRouter {
             pending.remove(&id)
         };
 
-        // Clean up cancel map entry (remove by downstream ID value)
-        {
-            let mut cancel_map = self.cancel_map.lock().unwrap_or_else(|e| e.into_inner());
-            cancel_map.retain(|_, downstream_id| *downstream_id != id);
-        }
+        // Clean up bidirectional cancel map entries in O(1)
+        self.remove_cancel_mapping(id);
 
         match tx {
             Some(sender) => sender.send(response).is_ok(),
             None => false, // No waiter for this ID
+        }
+    }
+
+    /// Remove bidirectional cancel map entries for a downstream request ID.
+    ///
+    /// O(1) cleanup: looks up upstream ID via downstream_to_upstream, then removes
+    /// both directions.
+    fn remove_cancel_mapping(&self, downstream_id: RequestId) {
+        let mut down_to_up = self
+            .downstream_to_upstream
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(upstream_id) = down_to_up.remove(&downstream_id) {
+            let mut up_to_down = self
+                .upstream_to_downstream
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            up_to_down.remove(&upstream_id);
         }
     }
 
@@ -157,7 +189,7 @@ impl ResponseRouter {
     /// Remove a pending request without sending a response.
     ///
     /// Used for cleanup when a request fails before being sent to the downstream server.
-    /// Also cleans up the cancel map entry for this request ID.
+    /// Also cleans up the bidirectional cancel map entries in O(1).
     ///
     /// Returns `true` if the request was removed, `false` if it wasn't pending.
     pub(crate) fn remove(&self, id: RequestId) -> bool {
@@ -165,9 +197,7 @@ impl ResponseRouter {
         let removed = pending.remove(&id).is_some();
 
         if removed {
-            // Clean up cancel map entry (remove by downstream ID value)
-            let mut cancel_map = self.cancel_map.lock().unwrap_or_else(|e| e.into_inner());
-            cancel_map.retain(|_, downstream_id| *downstream_id != id);
+            self.remove_cancel_mapping(id);
         }
 
         removed
@@ -178,15 +208,23 @@ impl ResponseRouter {
     /// Called when the connection fails (e.g., reader task panic) to ensure
     /// all waiters receive a response per LSP guarantee.
     ///
-    /// Also clears the cancel map since all requests are being completed.
+    /// Also clears both cancel map directions since all requests are being completed.
     pub(crate) fn fail_all(&self, error_message: &str) {
         let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         let entries: Vec<_> = pending.drain().collect();
 
-        // Clear the cancel map
+        // Clear both cancel map directions
         {
-            let mut cancel_map = self.cancel_map.lock().unwrap_or_else(|e| e.into_inner());
-            cancel_map.clear();
+            let mut up_to_down = self
+                .upstream_to_downstream
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let mut down_to_up = self
+                .downstream_to_upstream
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            up_to_down.clear();
+            down_to_up.clear();
         }
 
         for (id, tx) in entries {
