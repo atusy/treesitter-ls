@@ -96,15 +96,6 @@ impl<'a> ClientNotifier<'a> {
         }
     }
 
-    /// Get a reference to the underlying LSP client.
-    ///
-    /// This is needed for operations that require direct client access,
-    /// such as `semantic_tokens_refresh()` which returns a Future.
-    #[allow(dead_code)] // Part of API surface for future use
-    pub(crate) fn client(&self) -> &Client {
-        &self.client
-    }
-
     /// Log a message to the client at the specified severity level.
     pub(crate) async fn log(&self, level: MessageType, message: impl Into<String>) {
         self.client.log_message(level, message.into()).await;
@@ -118,12 +109,6 @@ impl<'a> ClientNotifier<'a> {
     /// Log a warning message.
     pub(crate) async fn log_warning(&self, message: impl Into<String>) {
         self.log(MessageType::WARNING, message).await;
-    }
-
-    /// Log an error message.
-    #[allow(dead_code)] // Will be used as API surface grows
-    pub(crate) async fn log_error(&self, message: impl Into<String>) {
-        self.log(MessageType::ERROR, message).await;
     }
 
     /// Log a debug/trace message (LOG level in LSP).
