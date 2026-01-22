@@ -2,6 +2,16 @@
 //!
 //! This module handles automatic installation of missing language parsers and queries
 //! when a file is opened that requires them.
+//!
+//! # Module Structure
+//!
+//! - `InstallingLanguages`: Tracks concurrent installs to prevent duplicates
+//! - `AutoInstallManager`: Isolated coordinator for installation
+//! - `InstallResult`, `InstallOutcome`, `InstallEvent`: Event-based return types
+
+mod manager;
+
+pub(crate) use manager::{AutoInstallManager, InstallEvent};
 
 use crate::document::DocumentStore;
 use crate::error::LockResultExt;
@@ -10,20 +20,23 @@ use crate::language::LanguageCoordinator;
 use crate::language::injection::collect_all_injections;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tower_lsp_server::ls_types::MessageType;
 use url::Url;
 
 /// Tracks languages currently being installed to prevent duplicate installs.
+///
+/// This type is cheaply cloneable via `Arc` for sharing across async tasks.
+#[derive(Clone)]
 pub struct InstallingLanguages {
-    languages: Mutex<HashSet<String>>,
+    languages: Arc<Mutex<HashSet<String>>>,
 }
 
 impl InstallingLanguages {
     pub fn new() -> Self {
         Self {
-            languages: Mutex::new(HashSet::new()),
+            languages: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 

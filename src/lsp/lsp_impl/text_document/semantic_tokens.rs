@@ -166,8 +166,8 @@ impl Kakehashi {
             }
 
             if doc_is_current {
-                if self.failed_parsers.is_failed(language_name)
-                    && let Err(error) = self.failed_parsers.clear_failed(language_name)
+                if self.auto_install.is_parser_failed(language_name)
+                    && let Err(error) = self.auto_install.clear_failed(language_name)
                 {
                     log::warn!(
                         target: "kakehashi::crash_recovery",
@@ -197,7 +197,7 @@ impl Kakehashi {
         };
 
         // Start tracking this request - supersedes any previous request for this URI
-        let request_id = self.semantic_request_tracker.start_request(&uri);
+        let request_id = self.cache.start_request(&uri);
 
         log::debug!(
             target: "kakehashi::semantic",
@@ -206,7 +206,7 @@ impl Kakehashi {
         );
 
         // Early exit if request was superseded
-        if !self.semantic_request_tracker.is_active(&uri, request_id) {
+        if !self.cache.is_request_active(&uri, request_id) {
             log::debug!(
                 target: "kakehashi::semantic",
                 "[SEMANTIC_TOKENS] CANCELLED uri={} req={}",
@@ -216,8 +216,7 @@ impl Kakehashi {
         }
 
         let Some(language_name) = self.get_language_for_document(&uri) else {
-            self.semantic_request_tracker
-                .finish_request(&uri, request_id);
+            self.cache.finish_request(&uri, request_id);
             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -229,8 +228,7 @@ impl Kakehashi {
         // before didOpen finishes loading the language.
         let load_result = self.language.ensure_language_loaded(&language_name);
         if !load_result.success {
-            self.semantic_request_tracker
-                .finish_request(&uri, request_id);
+            self.cache.finish_request(&uri, request_id);
             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -238,7 +236,7 @@ impl Kakehashi {
         }
 
         // Early exit check after loading language
-        if !self.semantic_request_tracker.is_active(&uri, request_id) {
+        if !self.cache.is_request_active(&uri, request_id) {
             log::debug!(
                 target: "kakehashi::semantic",
                 "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (after language load)",
@@ -248,8 +246,7 @@ impl Kakehashi {
         }
 
         let Some(query) = self.language.get_highlight_query(&language_name) else {
-            self.semantic_request_tracker
-                .finish_request(&uri, request_id);
+            self.cache.finish_request(&uri, request_id);
             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -257,7 +254,7 @@ impl Kakehashi {
         };
 
         // Early exit check before expensive computation
-        if !self.semantic_request_tracker.is_active(&uri, request_id) {
+        if !self.cache.is_request_active(&uri, request_id) {
             log::debug!(
                 target: "kakehashi::semantic",
                 "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (before compute)",
@@ -268,8 +265,7 @@ impl Kakehashi {
 
         // Get tree and text, waiting for parse completion or parsing on-demand
         let Some((tree, text)) = self.get_tree_with_wait(&uri, &language_name).await else {
-            self.semantic_request_tracker
-                .finish_request(&uri, request_id);
+            self.cache.finish_request(&uri, request_id);
             return Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
                 data: vec![],
@@ -279,8 +275,7 @@ impl Kakehashi {
         // Get document data and compute tokens
         let (result, text_used) = {
             if let Some(reason) = self.check_text_staleness(&uri, &text) {
-                self.semantic_request_tracker
-                    .finish_request(&uri, request_id);
+                self.cache.finish_request(&uri, request_id);
                 log::debug!(
                     target: "kakehashi::semantic",
                     "[SEMANTIC_TOKENS] CANCELLED uri={} req={} ({:?})",
@@ -290,7 +285,7 @@ impl Kakehashi {
             }
 
             // Early exit check after waiting for parse completion
-            if !self.semantic_request_tracker.is_active(&uri, request_id) {
+            if !self.cache.is_request_active(&uri, request_id) {
                 log::debug!(
                     target: "kakehashi::semantic",
                     "[SEMANTIC_TOKENS] CANCELLED uri={} req={}",
@@ -356,8 +351,7 @@ impl Kakehashi {
         }; // doc reference is dropped here
 
         if let Some(reason) = self.check_text_staleness(&uri, &text_used) {
-            self.semantic_request_tracker
-                .finish_request(&uri, request_id);
+            self.cache.finish_request(&uri, request_id);
             log::debug!(
                 target: "kakehashi::semantic",
                 "[SEMANTIC_TOKENS] CANCELLED uri={} req={} ({:?})",
@@ -387,11 +381,10 @@ impl Kakehashi {
         let stored_tokens = tokens_with_id.clone();
         let lsp_tokens = tokens_with_id;
         // Store in dedicated cache for delta requests with result_id validation
-        self.semantic_cache.store(uri.clone(), stored_tokens);
+        self.cache.store_tokens(uri.clone(), stored_tokens);
 
         // Finish tracking this request
-        self.semantic_request_tracker
-            .finish_request(&uri, request_id);
+        self.cache.finish_request(&uri, request_id);
 
         log::debug!(
             target: "kakehashi::semantic",
@@ -419,7 +412,7 @@ impl Kakehashi {
         };
 
         // Start tracking this request - supersedes any previous request for this URI
-        let request_id = self.semantic_request_tracker.start_request(&uri);
+        let request_id = self.cache.start_request(&uri);
 
         log::debug!(
             target: "kakehashi::semantic",
@@ -428,7 +421,7 @@ impl Kakehashi {
         );
 
         // Early exit if request was superseded
-        if !self.semantic_request_tracker.is_active(&uri, request_id) {
+        if !self.cache.is_request_active(&uri, request_id) {
             log::debug!(
                 target: "kakehashi::semantic",
                 "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={}",
@@ -438,8 +431,7 @@ impl Kakehashi {
         }
 
         let Some(language_name) = self.get_language_for_document(&uri) else {
-            self.semantic_request_tracker
-                .finish_request(&uri, request_id);
+            self.cache.finish_request(&uri, request_id);
             return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                 SemanticTokens {
                     result_id: None,
@@ -449,8 +441,7 @@ impl Kakehashi {
         };
 
         let Some(query) = self.language.get_highlight_query(&language_name) else {
-            self.semantic_request_tracker
-                .finish_request(&uri, request_id);
+            self.cache.finish_request(&uri, request_id);
             return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                 SemanticTokens {
                     result_id: None,
@@ -460,7 +451,7 @@ impl Kakehashi {
         };
 
         // Early exit check before expensive computation
-        if !self.semantic_request_tracker.is_active(&uri, request_id) {
+        if !self.cache.is_request_active(&uri, request_id) {
             log::debug!(
                 target: "kakehashi::semantic",
                 "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} (before compute)",
@@ -471,8 +462,7 @@ impl Kakehashi {
 
         // Get tree and text, waiting for parse completion or parsing on-demand
         let Some((tree, text)) = self.get_tree_with_wait(&uri, &language_name).await else {
-            self.semantic_request_tracker
-                .finish_request(&uri, request_id);
+            self.cache.finish_request(&uri, request_id);
             return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                 SemanticTokens {
                     result_id: None,
@@ -484,8 +474,7 @@ impl Kakehashi {
         // Get document data and compute delta
         let (result, text_used) = {
             if let Some(reason) = self.check_text_staleness(&uri, &text) {
-                self.semantic_request_tracker
-                    .finish_request(&uri, request_id);
+                self.cache.finish_request(&uri, request_id);
                 log::debug!(
                     target: "kakehashi::semantic",
                     "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} ({:?})",
@@ -495,7 +484,7 @@ impl Kakehashi {
             }
 
             // Early exit check after waiting for parse completion
-            if !self.semantic_request_tracker.is_active(&uri, request_id) {
+            if !self.cache.is_request_active(&uri, request_id) {
                 log::debug!(
                     target: "kakehashi::semantic",
                     "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={}",
@@ -508,8 +497,7 @@ impl Kakehashi {
             let doc = match self.documents.get(&uri) {
                 Some(d) => d,
                 None => {
-                    self.semantic_request_tracker
-                        .finish_request(&uri, request_id);
+                    self.cache.finish_request(&uri, request_id);
                     return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
                         SemanticTokens {
                             result_id: None,
@@ -520,7 +508,7 @@ impl Kakehashi {
             };
 
             // Get previous tokens from cache with result_id validation
-            let previous_tokens = self.semantic_cache.get_if_valid(&uri, &previous_result_id);
+            let previous_tokens = self.cache.get_tokens_if_valid(&uri, &previous_result_id);
 
             // Get previous text for incremental tokenization
             let previous_text = doc.previous_text().map(|s| s.to_string());
@@ -664,8 +652,7 @@ impl Kakehashi {
         });
 
         // Finish tracking this request
-        self.semantic_request_tracker
-            .finish_request(&uri, request_id);
+        self.cache.finish_request(&uri, request_id);
 
         if let Some(reason) = self.check_text_staleness(&uri, &text_used) {
             log::debug!(
@@ -690,7 +677,7 @@ impl Kakehashi {
                 let stored_tokens = tokens_with_id.clone();
                 let lsp_tokens = tokens_with_id;
                 // Store in dedicated cache for next delta request
-                self.semantic_cache.store(uri.clone(), stored_tokens);
+                self.cache.store_tokens(uri.clone(), stored_tokens);
                 Ok(Some(SemanticTokensFullDeltaResult::Tokens(lsp_tokens)))
             }
             other => Ok(Some(other)),

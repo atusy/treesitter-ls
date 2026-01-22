@@ -67,7 +67,7 @@ impl Kakehashi {
         };
 
         let Some(resolved) = InjectionResolver::resolve_at_byte_offset(
-            &self.region_id_tracker,
+            self.bridge.region_id_tracker(),
             &uri,
             snapshot.tree(),
             snapshot.text(),
@@ -107,7 +107,8 @@ impl Kakehashi {
 
         // Send color presentation request via language server pool
         let response = self
-            .language_server_pool
+            .bridge
+            .pool()
             .send_color_presentation_request(
                 &server_config,
                 &uri,

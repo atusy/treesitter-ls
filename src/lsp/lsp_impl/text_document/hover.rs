@@ -63,7 +63,7 @@ impl Kakehashi {
         };
 
         let Some(resolved) = InjectionResolver::resolve_at_byte_offset(
-            &self.region_id_tracker,
+            self.bridge.region_id_tracker(),
             &uri,
             snapshot.tree(),
             snapshot.text(),
@@ -99,7 +99,8 @@ impl Kakehashi {
             _ => 0,
         };
         let response = self
-            .language_server_pool
+            .bridge
+            .pool()
             .send_hover_request(
                 &server_config,
                 &uri,

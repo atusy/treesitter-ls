@@ -1,69 +1,56 @@
 mod text_document;
 
 use tower_lsp_server::jsonrpc::Result;
-use tower_lsp_server::ls_types::notification::Progress;
 use tower_lsp_server::ls_types::request::{
     GotoDeclarationParams, GotoDeclarationResponse, GotoImplementationParams,
     GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
-};
-use tower_lsp_server::ls_types::{
-    ClientCapabilities, CompletionOptions, CompletionParams, CompletionResponse,
-    DeclarationCapability, DidChangeConfigurationParams, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentHighlight,
-    DocumentHighlightParams, DocumentLink, DocumentLinkOptions, DocumentLinkParams,
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    Hover, HoverParams, HoverProviderCapability, ImplementationProviderCapability,
-    InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location,
-    MessageType, Moniker, MonikerParams, OneOf, ReferenceParams, RenameParams, SaveOptions,
-    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, SemanticTokenModifier,
-    SemanticTokenType, SemanticTokensDeltaParams, SemanticTokensFullDeltaResult,
-    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
-    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
-    SignatureHelpOptions, SignatureHelpParams, TextDocumentContentChangeEvent,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, TypeDefinitionProviderCapability, Uri, WorkDoneProgressOptions,
-    WorkspaceEdit,
 };
 #[cfg(feature = "experimental")]
 use tower_lsp_server::ls_types::{
     ColorInformation, ColorPresentation, ColorPresentationParams, ColorProviderCapability,
     DocumentColorParams,
 };
-#[cfg(test)]
 use tower_lsp_server::ls_types::{
-    Position, Range, SemanticTokensWorkspaceClientCapabilities, WorkspaceClientCapabilities,
+    CompletionOptions, CompletionParams, CompletionResponse, DeclarationCapability,
+    DidChangeConfigurationParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentHighlight, DocumentHighlightParams, DocumentLink,
+    DocumentLinkOptions, DocumentLinkParams, DocumentSymbolParams, DocumentSymbolResponse,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
+    ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
+    InlayHint, InlayHintParams, Location, Moniker, MonikerParams, OneOf, ReferenceParams,
+    RenameParams, SaveOptions, SelectionRange, SelectionRangeParams,
+    SelectionRangeProviderCapability, SemanticTokenModifier, SemanticTokenType,
+    SemanticTokensDeltaParams, SemanticTokensFullDeltaResult, SemanticTokensFullOptions,
+    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensRangeParams,
+    SemanticTokensRangeResult, SemanticTokensResult, SemanticTokensServerCapabilities,
+    ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, TypeDefinitionProviderCapability, Uri, WorkDoneProgressOptions,
+    WorkspaceEdit,
 };
 use tower_lsp_server::{Client, LanguageServer};
 use tree_sitter::InputEdit;
 use url::Url;
 
-use crate::analysis::next_result_id;
-use crate::analysis::{
-    InjectionMap, InjectionTokenCache, LEGEND_MODIFIERS, LEGEND_TYPES, SemanticTokenCache,
-};
-use crate::config::{
-    TreeSitterSettings, WorkspaceSettings, resolve_language_server_with_wildcard,
-    resolve_language_settings_with_wildcard,
-};
+use crate::analysis::{LEGEND_MODIFIERS, LEGEND_TYPES};
+use crate::config::{TreeSitterSettings, WorkspaceSettings};
 use crate::document::DocumentStore;
-use crate::language::injection::{
-    CacheableInjectionRegion, InjectionResolver, collect_all_injections,
-};
-use crate::language::region_id_tracker::{EditInfo, RegionIdTracker};
-use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
-use crate::language::{LanguageEvent, LanguageLogLevel};
-use crate::lsp::bridge::LanguageServerPool;
-use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
-use crate::text::PositionMapper;
-use arc_swap::ArcSwap;
-use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use crate::language::LanguageEvent;
+use crate::language::injection::{InjectionResolver, collect_all_injections};
+use crate::language::region_id_tracker::EditInfo;
+use crate::language::{DocumentParserPool, LanguageCoordinator};
+use crate::lsp::bridge::BridgeCoordinator;
+use crate::lsp::client::{ClientNotifier, check_semantic_tokens_refresh_support};
+use crate::lsp::settings_manager::SettingsManager;
+use crate::lsp::{SettingsSource, load_settings};
 use tokio::sync::Mutex;
 
-use super::auto_install::{InstallingLanguages, get_injected_languages};
-use super::progress::{create_progress_begin, create_progress_end};
-use super::semantic_request_tracker::SemanticRequestTracker;
+use super::text_sync::apply_content_changes_with_edits;
+
+use super::auto_install::{
+    AutoInstallManager, InstallEvent, InstallingLanguages, get_injected_languages,
+};
+use super::cache::CacheCoordinator;
 
 /// Convert ls_types::Uri to url::Url
 ///
@@ -112,120 +99,19 @@ fn lsp_legend_modifiers() -> Vec<SemanticTokenModifier> {
         .collect()
 }
 
-/// Check if client capabilities indicate semantic tokens refresh support.
-///
-/// Extracted as a pure function for unit testability - the Kakehashi struct
-/// cannot be constructed in unit tests due to tower_lsp_server::Client dependency.
-///
-/// Returns `false` for any missing/null capability in the chain (defensive
-/// default per LSP spec @since 3.16.0).
-fn check_semantic_tokens_refresh_support(caps: &ClientCapabilities) -> bool {
-    caps.workspace
-        .as_ref()
-        .and_then(|w| w.semantic_tokens.as_ref())
-        .and_then(|st| st.refresh_support)
-        .unwrap_or(false)
-}
-
-/// Apply content changes to text and build tree-sitter InputEdits.
-///
-/// Processes LSP TextDocumentContentChangeEvent items, handling both:
-/// - Incremental changes (with range) → builds InputEdit for tree-sitter
-/// - Full document changes (without range) → replaces entire text
-///
-/// Returns the updated text and collected edits for incremental parsing.
-fn apply_content_changes_with_edits(
-    old_text: &str,
-    content_changes: Vec<TextDocumentContentChangeEvent>,
-) -> (String, Vec<InputEdit>) {
-    let mut text = old_text.to_string();
-    let mut edits = Vec::new();
-
-    for change in content_changes {
-        if let Some(range) = change.range {
-            // Incremental change - create InputEdit for tree editing
-            let mapper = PositionMapper::new(&text);
-            let start_offset = mapper.position_to_byte(range.start).unwrap_or(text.len());
-            let end_offset = mapper.position_to_byte(range.end).unwrap_or(text.len());
-            let new_end_offset = start_offset + change.text.len();
-
-            // Calculate the new end position for tree-sitter (using byte columns)
-            let lines: Vec<&str> = change.text.split('\n').collect();
-            let line_count = lines.len();
-            // last_line_len is in BYTES (not UTF-16) because .len() on &str returns byte count
-            let last_line_len = lines.last().map(|l| l.len()).unwrap_or(0);
-
-            // Get start position with proper byte column conversion
-            let start_point =
-                mapper
-                    .position_to_point(range.start)
-                    .unwrap_or(tree_sitter::Point::new(
-                        range.start.line as usize,
-                        start_offset,
-                    ));
-
-            // Calculate new end Point (tree-sitter uses byte columns)
-            let new_end_point = if line_count > 1 {
-                // New content spans multiple lines
-                tree_sitter::Point::new(start_point.row + line_count - 1, last_line_len)
-            } else {
-                // New content is on same line as start
-                tree_sitter::Point::new(start_point.row, start_point.column + last_line_len)
-            };
-
-            // Create InputEdit for incremental parsing
-            let edit = InputEdit {
-                start_byte: start_offset,
-                old_end_byte: end_offset,
-                new_end_byte: new_end_offset,
-                start_position: start_point,
-                old_end_position: mapper
-                    .position_to_point(range.end)
-                    .unwrap_or(tree_sitter::Point::new(range.end.line as usize, end_offset)),
-                new_end_position: new_end_point,
-            };
-            edits.push(edit);
-
-            // Replace the range with new text
-            text.replace_range(start_offset..end_offset, &change.text);
-        } else {
-            // Full document change - no incremental parsing
-            text = change.text;
-            edits.clear(); // Clear any previous edits since it's a full replacement
-        }
-    }
-
-    (text, edits)
-}
-
 pub struct Kakehashi {
     client: Client,
     language: LanguageCoordinator,
     parser_pool: Mutex<DocumentParserPool>,
     documents: DocumentStore,
-    /// Dedicated cache for semantic tokens with result_id validation
-    semantic_cache: SemanticTokenCache,
-    /// Tracks injection regions per document for targeted invalidation
-    injection_map: InjectionMap,
-    /// Per-injection semantic token cache (AC4/AC5 targeted invalidation)
-    injection_token_cache: InjectionTokenCache,
-    root_path: ArcSwap<Option<PathBuf>>,
-    /// Settings including auto_install flag
-    settings: ArcSwap<WorkspaceSettings>,
-    /// Client capabilities from initialize() - immutable after initialization.
-    /// Uses OnceLock to enforce "set once, read many" semantics per LSP protocol.
-    /// Guards server-to-client requests (e.g., workspace/semanticTokens/refresh).
-    client_capabilities: OnceLock<ClientCapabilities>,
-    /// Tracks languages currently being installed
-    installing_languages: InstallingLanguages,
-    /// Tracks parsers that have crashed
-    failed_parsers: FailedParserRegistry,
-    /// Tracks active semantic token requests for cancellation support
-    semantic_request_tracker: SemanticRequestTracker,
-    /// Pool of downstream language server connections (ADR-0016)
-    language_server_pool: LanguageServerPool,
-    /// Stable ULID-based region ID tracker (ADR-0019 Phase 1)
-    region_id_tracker: RegionIdTracker,
+    /// Unified cache coordinator for semantic tokens, injections, and request tracking
+    cache: CacheCoordinator,
+    /// Consolidated settings, capabilities, and workspace root management
+    settings_manager: SettingsManager,
+    /// Isolated coordinator for parser auto-installation
+    auto_install: AutoInstallManager,
+    /// Bridge coordinator for downstream LS pool and region ID tracking
+    bridge: BridgeCoordinator,
 }
 
 impl std::fmt::Debug for Kakehashi {
@@ -235,16 +121,10 @@ impl std::fmt::Debug for Kakehashi {
             .field("language", &"LanguageCoordinator")
             .field("parser_pool", &"Mutex<DocumentParserPool>")
             .field("documents", &"DocumentStore")
-            .field("semantic_cache", &"SemanticTokenCache")
-            .field("injection_map", &"InjectionMap")
-            .field("injection_token_cache", &"InjectionTokenCache")
-            .field("root_path", &"ArcSwap<Option<PathBuf>>")
-            .field("settings", &"ArcSwap<WorkspaceSettings>")
-            .field("client_capabilities", &"OnceLock<ClientCapabilities>")
-            .field("installing_languages", &"InstallingLanguages")
-            .field("failed_parsers", &"FailedParserRegistry")
-            .field("language_server_pool", &"LanguageServerPool")
-            .field("region_id_tracker", &"RegionIdTracker")
+            .field("cache", &"CacheCoordinator")
+            .field("settings_manager", &"SettingsManager")
+            .field("auto_install", &"AutoInstallManager")
+            .field("bridge", &"BridgeCoordinator")
             .finish_non_exhaustive()
     }
 }
@@ -254,93 +134,66 @@ impl Kakehashi {
         let language = LanguageCoordinator::new();
         let parser_pool = language.create_document_parser_pool();
 
-        // Initialize failed parser registry with crash detection
-        let failed_parsers = Self::init_failed_parser_registry();
-
-        // Language server pool (ADR-0016: Server Pool Coordination)
-        let language_server_pool = LanguageServerPool::new();
+        // Initialize auto-install manager with crash detection
+        let failed_parsers = AutoInstallManager::init_failed_parser_registry();
+        let auto_install = AutoInstallManager::new(InstallingLanguages::new(), failed_parsers);
 
         Self {
             client,
             language,
             parser_pool: Mutex::new(parser_pool),
             documents: DocumentStore::new(),
-            semantic_cache: SemanticTokenCache::new(),
-            injection_map: InjectionMap::new(),
-            injection_token_cache: InjectionTokenCache::new(),
-            root_path: ArcSwap::new(Arc::new(None)),
-            settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
-            // Empty until initialize() sets actual client capabilities.
-            // OnceLock ensures this can only be set once (during initialize).
-            // Before initialize(), capability checks return false (defensive default).
-            client_capabilities: OnceLock::new(),
-            installing_languages: InstallingLanguages::new(),
-            failed_parsers,
-            semantic_request_tracker: SemanticRequestTracker::new(),
-            language_server_pool,
-            region_id_tracker: RegionIdTracker::new(),
+            cache: CacheCoordinator::new(),
+            settings_manager: SettingsManager::new(),
+            auto_install,
+            bridge: BridgeCoordinator::new(),
         }
     }
 
-    /// Returns true only if client declared workspace.semanticTokens.refreshSupport.
-    /// Returns false if initialize() hasn't been called yet (OnceLock is empty).
-    fn supports_semantic_tokens_refresh(&self) -> bool {
-        self.client_capabilities
-            .get()
-            .map(check_semantic_tokens_refresh_support)
-            .unwrap_or(false)
-    }
-
-    /// Initialize the failed parser registry with crash detection.
+    /// Create a `ClientNotifier` for centralized client communication.
     ///
-    /// Uses the default data directory for state storage.
-    /// If initialization fails, returns an empty registry.
-    fn init_failed_parser_registry() -> FailedParserRegistry {
-        let state_dir =
-            crate::install::default_data_dir().unwrap_or_else(|| PathBuf::from("/tmp/kakehashi"));
-
-        let registry = FailedParserRegistry::new(&state_dir);
-
-        // Initialize and detect any previous crashes
-        if let Err(e) = registry.init() {
-            log::warn!(
-                target: "kakehashi::crash_recovery",
-                "Failed to initialize crash recovery state: {}",
-                e
-            );
-        }
-
-        registry
+    /// The notifier wraps the LSP client and references the stored capabilities,
+    /// providing a clean API for logging, progress notifications, and semantic
+    /// token refresh requests.
+    fn notifier(&self) -> ClientNotifier<'_> {
+        ClientNotifier::new(
+            self.client.clone(),
+            self.settings_manager.client_capabilities_lock(),
+        )
     }
 
     /// Check if auto-install is enabled.
     ///
-    /// Returns `false` if:
-    /// - `autoInstall` is explicitly set to `false` in settings
-    /// - `searchPaths` doesn't include the default data directory (auto-install
-    ///   would install to a location that isn't being searched)
+    /// Delegates to SettingsManager for the actual check.
     fn is_auto_install_enabled(&self) -> bool {
-        let settings = self.settings.load();
-
-        // If explicitly disabled, return false
-        if !settings.auto_install {
-            return false;
-        }
-
-        // Check if searchPaths includes the default data directory
-        // If not, auto-install would be useless (installed parsers wouldn't be found)
-        self.search_paths_include_default_data_dir(&settings.search_paths)
+        self.settings_manager.is_auto_install_enabled()
     }
 
     /// Check if the given search paths include the default data directory.
     fn search_paths_include_default_data_dir(&self, search_paths: &[String]) -> bool {
-        let Some(default_dir) = crate::install::default_data_dir() else {
-            // Can't determine default dir - allow auto-install anyway
-            return true;
-        };
+        self.settings_manager
+            .search_paths_include_default_data_dir(search_paths)
+    }
 
-        let default_str = default_dir.to_string_lossy();
-        search_paths.iter().any(|p| p == default_str.as_ref())
+    /// Dispatch install events to ClientNotifier.
+    ///
+    /// This method bridges AutoInstallManager (isolated) with ClientNotifier.
+    /// AutoInstallManager returns events, Kakehashi dispatches them.
+    async fn dispatch_install_events(&self, language: &str, events: &[InstallEvent]) {
+        let notifier = self.notifier();
+        for event in events {
+            match event {
+                InstallEvent::Log { level, message } => {
+                    notifier.log(*level, message.clone()).await;
+                }
+                InstallEvent::ProgressBegin => {
+                    notifier.progress_begin(language).await;
+                }
+                InstallEvent::ProgressEnd { success } => {
+                    notifier.progress_end(language, *success).await;
+                }
+            }
+        }
     }
 
     /// Notify user that parser is missing and needs manual installation.
@@ -348,7 +201,7 @@ impl Kakehashi {
     /// Called when a parser fails to load and auto-install is disabled
     /// (either explicitly or because searchPaths doesn't include the default data dir).
     async fn notify_parser_missing(&self, language: &str) {
-        let settings = self.settings.load();
+        let settings = self.settings_manager.load_settings();
 
         // Check why auto-install is disabled
         let reason = if !settings.auto_install {
@@ -365,63 +218,23 @@ impl Kakehashi {
             "unknown reason".to_string()
         };
 
-        self.client
-            .log_message(
-                MessageType::WARNING,
-                format!(
-                    "Parser for '{}' not found. Auto-install is disabled because {}. \
-                     Please install the parser manually using: kakehashi language install {}",
-                    language, reason, language
-                ),
-            )
+        self.notifier()
+            .log_warning(format!(
+                "Parser for '{}' not found. Auto-install is disabled because {}. \
+                 Please install the parser manually using: kakehashi language install {}",
+                language, reason, language
+            ))
             .await;
     }
 
-    /// Invalidate injection caches for regions that overlap with edits.
-    ///
-    /// Called BEFORE parse_document to use pre-edit byte offsets against pre-edit
-    /// injection regions. This implements AC4/AC5 (PBI-083): edits outside injections
-    /// preserve caches, edits inside invalidate only affected regions.
-    ///
-    /// PBI-167: Uses O(log n) interval tree query instead of O(n) iteration.
-    fn invalidate_overlapping_injection_caches(&self, uri: &Url, edits: &[InputEdit]) {
-        if edits.is_empty() {
-            return;
-        }
-
-        // Find all regions that overlap with any edit using O(log n) queries
-        for edit in edits {
-            let edit_start = edit.start_byte;
-            let edit_end = edit.old_end_byte;
-
-            // Query interval tree for overlapping regions (O(log n) instead of O(n))
-            if let Some(overlapping_regions) = self
-                .injection_map
-                .find_overlapping(uri, edit_start, edit_end)
-            {
-                for region in overlapping_regions {
-                    // This region is affected - invalidate its cache
-                    self.injection_token_cache.remove(uri, &region.result_id);
-                    log::debug!(
-                        target: "kakehashi::injection_cache",
-                        "Invalidated injection cache for {} region (edit bytes {}..{})",
-                        region.language,
-                        edit_start,
-                        edit_end
-                    );
-                }
-            }
-        }
-    }
-
-    /// Send didClose for invalidated virtual documents (Phase 3).
+    /// Send didClose for invalidated virtual documents.
     ///
     /// When region IDs are invalidated (e.g., due to edits touching their START),
     /// the corresponding virtual documents become orphaned in downstream LSs.
     /// This method cleans them up by:
     ///
     /// 1. Clearing injection token cache for invalidated ULIDs
-    /// 2. Delegating to LanguageServerPool for tracking cleanup and didClose
+    /// 2. Delegating to BridgeCoordinator for tracking cleanup and didClose
     ///
     /// Documents that were never opened (not in host_to_virtual) are automatically
     /// skipped - they don't need didClose since didOpen was never sent.
@@ -434,117 +247,14 @@ impl Kakehashi {
             return;
         }
 
-        // Clear injection token cache for invalidated ULIDs
-        for ulid in invalidated_ulids {
-            self.injection_token_cache
-                .remove(host_uri, &ulid.to_string());
-        }
+        // Clear injection token cache for invalidated ULIDs via cache coordinator
+        self.cache
+            .remove_injection_tokens_for_ulids(host_uri, invalidated_ulids);
 
-        // Delegate to pool for tracking cleanup and didClose notifications
-        self.language_server_pool
+        // Delegate to bridge coordinator for tracking cleanup and didClose notifications
+        self.bridge
             .close_invalidated_docs(host_uri, invalidated_ulids)
             .await;
-    }
-
-    /// Populate InjectionMap with injection regions from the parsed tree.
-    ///
-    /// This enables targeted cache invalidation (PBI-083): when an edit occurs,
-    /// we can check which injection regions overlap and only invalidate those.
-    ///
-    /// AC6: Also clears stale InjectionTokenCache entries for removed regions.
-    /// Since result_ids are regenerated on each parse, we clear the entire
-    /// document's injection token cache and let it be repopulated on demand.
-    fn populate_injection_map(
-        &self,
-        uri: &Url,
-        text: &str,
-        tree: &tree_sitter::Tree,
-        language_name: &str,
-    ) {
-        // Get the injection query for this language
-        let injection_query = match self.language.get_injection_query(language_name) {
-            Some(q) => q,
-            None => {
-                // No injection query = no injections to track
-                // Clear any stale injection caches
-                self.injection_map.clear(uri);
-                self.injection_token_cache.clear_document(uri);
-                return;
-            }
-        };
-
-        // Collect all injection regions from the parsed tree
-        if let Some(regions) =
-            collect_all_injections(&tree.root_node(), text, Some(injection_query.as_ref()))
-        {
-            if regions.is_empty() {
-                // Clear any existing regions and caches for this document
-                self.injection_map.clear(uri);
-                self.injection_token_cache.clear_document(uri);
-                return;
-            }
-
-            // Build map of existing regions by (language, content_hash) for stable ID matching
-            // This enables cache reuse when document structure changes but injection content stays same
-            let existing_regions = self.injection_map.get(uri);
-            let existing_by_hash: std::collections::HashMap<
-                (&str, u64),
-                &CacheableInjectionRegion,
-            > = existing_regions
-                .as_ref()
-                .map(|regions| {
-                    regions
-                        .iter()
-                        .map(|r| ((r.language.as_str(), r.content_hash), r))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            // Convert to CacheableInjectionRegion, reusing result_ids for unchanged content
-            let cacheable_regions: Vec<CacheableInjectionRegion> = regions
-                .iter()
-                .map(|info| {
-                    // Compute hash for the new region's content
-                    let temp_region = CacheableInjectionRegion::from_region_info(info, "", text);
-                    let key = (info.language.as_str(), temp_region.content_hash);
-
-                    // Check if we have an existing region with same (language, content_hash)
-                    if let Some(existing) = existing_by_hash.get(&key) {
-                        // Reuse the existing result_id - this enables cache hit!
-                        CacheableInjectionRegion {
-                            language: temp_region.language,
-                            byte_range: temp_region.byte_range,
-                            line_range: temp_region.line_range,
-                            result_id: existing.result_id.clone(),
-                            content_hash: temp_region.content_hash,
-                        }
-                    } else {
-                        // New content - generate new result_id
-                        CacheableInjectionRegion {
-                            result_id: next_result_id(),
-                            ..temp_region
-                        }
-                    }
-                })
-                .collect();
-
-            // Find stale region IDs that are no longer present
-            if let Some(old_regions) = existing_regions {
-                let new_hashes: std::collections::HashSet<_> = cacheable_regions
-                    .iter()
-                    .map(|r| (r.language.as_str(), r.content_hash))
-                    .collect();
-                for old in old_regions.iter() {
-                    if !new_hashes.contains(&(old.language.as_str(), old.content_hash)) {
-                        // This region no longer exists - clear its cache
-                        self.injection_token_cache.remove(uri, &old.result_id);
-                    }
-                }
-            }
-
-            // Store in injection map
-            self.injection_map.insert(uri.clone(), cacheable_regions);
-        }
     }
 
     async fn parse_document(
@@ -564,7 +274,7 @@ impl Kakehashi {
 
         if let Some(language_name) = language_name {
             // Check if this parser has previously crashed
-            if self.failed_parsers.is_failed(&language_name) {
+            if self.auto_install.is_parser_failed(&language_name) {
                 log::warn!(
                     target: "kakehashi::crash_recovery",
                     "Skipping parsing for '{}' - parser previously crashed",
@@ -601,7 +311,7 @@ impl Kakehashi {
 
                     let language_name_clone = language_name.clone();
                     let text_clone = text.clone();
-                    let failed_parsers = self.failed_parsers.clone();
+                    let auto_install = self.auto_install.clone();
 
                     // Parse in spawn_blocking with timeout to avoid blocking tokio worker thread
                     // and prevent infinite hangs on pathological input
@@ -611,12 +321,12 @@ impl Kakehashi {
                         PARSE_TIMEOUT,
                         tokio::task::spawn_blocking(move || {
                             // Record that we're about to parse (for crash detection)
-                            let _ = failed_parsers.begin_parsing(&language_name_clone);
+                            let _ = auto_install.begin_parsing(&language_name_clone);
 
                             let parse_result = parser.parse(&text_clone, old_tree.as_ref());
 
                             // Parsing succeeded without crash - clear the state for this language
-                            let _ = failed_parsers.end_parsing_language(&language_name_clone);
+                            let _ = auto_install.end_parsing(&language_name_clone);
 
                             (parser, parse_result)
                         }),
@@ -667,7 +377,8 @@ impl Kakehashi {
             // Store the parsed document
             if let Some(tree) = parsed_tree {
                 // Populate InjectionMap with injection regions for targeted cache invalidation
-                self.populate_injection_map(&uri, &text, &tree, &language_name);
+                self.cache
+                    .populate_injections(&uri, &text, &tree, &language_name, &self.language);
 
                 if !edits.is_empty() {
                     self.documents
@@ -701,14 +412,8 @@ impl Kakehashi {
 
     /// Get bridge server config for a given injection language from settings.
     ///
-    /// Looks up the bridge.servers configuration and finds a server that handles
-    /// the specified language. Returns None if:
-    /// - No server is configured for this injection language, OR
-    /// - The host language has a bridge filter that excludes this injection language
-    ///
-    /// Uses wildcard resolution (ADR-0011) for host language lookup:
-    /// - If host language is not defined, inherits from languages._ if present
-    /// - This allows setting default bridge filters for all hosts via languages._
+    /// Convenience wrapper that loads settings and delegates to the bridge coordinator.
+    /// This method stays in Kakehashi for backward compatibility with handlers.
     ///
     /// # Arguments
     /// * `host_language` - The language of the host document (e.g., "markdown")
@@ -718,108 +423,31 @@ impl Kakehashi {
         host_language: &str,
         injection_language: &str,
     ) -> Option<crate::config::settings::BridgeServerConfig> {
-        let settings = self.settings.load();
-
-        // Use wildcard resolution for host language lookup (ADR-0011)
-        // This allows languages._ to define default bridge filters
-        if let Some(host_settings) =
-            resolve_language_settings_with_wildcard(&settings.languages, host_language)
-            && !host_settings.is_language_bridgeable(injection_language)
-        {
-            log::debug!(
-                target: "kakehashi::bridge",
-                "Bridge filter for {} blocks injection language {}",
-                host_language,
-                injection_language
-            );
-            return None;
-        }
-
-        // Check if language servers exist
-        if let Some(ref servers) = settings.language_servers {
-            // Look for a server that handles this language
-            // ADR-0011: Resolve each server with wildcard BEFORE checking languages,
-            // because languages list may be inherited from languageServers._
-            for server_name in servers.keys() {
-                // Skip wildcard entry - we use it for inheritance, not direct lookup
-                if server_name == "_" {
-                    continue;
-                }
-
-                if let Some(resolved_config) =
-                    resolve_language_server_with_wildcard(servers, server_name)
-                        .filter(|c| c.languages.iter().any(|l| l == injection_language))
-                {
-                    return Some(resolved_config);
-                }
-            }
-        }
-
-        None
+        let settings = self.settings_manager.load_settings();
+        self.bridge
+            .get_config_for_language(&settings, host_language, injection_language)
     }
 
     async fn apply_settings(&self, settings: WorkspaceSettings) {
-        // Store settings for auto_install check
-        self.settings.store(Arc::new(settings.clone()));
+        // Store settings via SettingsManager for auto_install check
+        self.settings_manager.apply_settings(settings.clone());
         let summary = self.language.load_settings(settings);
-        self.handle_language_events(&summary.events).await;
+        self.notifier().log_language_events(&summary.events).await;
     }
 
-    async fn report_settings_events(&self, events: &[SettingsEvent]) {
-        for event in events {
-            let message_type = match event.kind {
-                SettingsEventKind::Info => MessageType::INFO,
-                SettingsEventKind::Warning => MessageType::WARNING,
-            };
-            self.client
-                .log_message(message_type, event.message.clone())
-                .await;
-        }
+    async fn report_settings_events(&self, events: &[crate::lsp::SettingsEvent]) {
+        self.notifier().log_settings_events(events).await;
     }
 
     async fn handle_language_events(&self, events: &[LanguageEvent]) {
-        for event in events {
-            match event {
-                LanguageEvent::Log { level, message } => {
-                    let message_type = match level {
-                        LanguageLogLevel::Error => MessageType::ERROR,
-                        LanguageLogLevel::Warning => MessageType::WARNING,
-                        LanguageLogLevel::Info => MessageType::INFO,
-                    };
-                    self.client.log_message(message_type, message.clone()).await;
-                }
-                LanguageEvent::SemanticTokensRefresh { language_id } => {
-                    // Only send refresh if client supports it (LSP @since 3.16.0 compliance).
-                    // Check MUST be before tokio::spawn - can't `continue` from async block.
-                    if !self.supports_semantic_tokens_refresh() {
-                        log::debug!(
-                            "Skipping semantic_tokens_refresh for {} - client does not support it",
-                            language_id
-                        );
-                        continue;
-                    }
-
-                    // Fire-and-forget because the response is just null
-                    //
-                    // Keep the receiver alive without dropping by timeout in order to
-                    // avoid tower-lsp panics (see commit b902e28d)
-                    //
-                    // Trade-off: If a client never responds (e.g., vim-lsp), this causes:
-                    // - A small memory leak in tower-lsp's pending requests map
-                    // - A spawned task waiting indefinitely
-                    let client = self.client.clone();
-                    let lang_id = language_id.clone();
-                    tokio::spawn(async move {
-                        if let Err(err) = client.semantic_tokens_refresh().await {
-                            log::debug!("semantic_tokens_refresh failed for {}: {}", lang_id, err);
-                        }
-                    });
-                }
-            }
-        }
+        self.notifier().log_language_events(events).await;
     }
 
     /// Try to auto-install a language if not already being installed.
+    ///
+    /// Delegates to `AutoInstallManager::try_install()` and handles coordination:
+    /// 1. Dispatches install events to ClientNotifier
+    /// 2. Triggers `reload_language_after_install()` on success
     ///
     /// # Arguments
     /// * `language` - The language to install
@@ -837,169 +465,21 @@ impl Kakehashi {
         text: String,
         is_injection: bool,
     ) -> bool {
-        // Check if language is supported by nvim-treesitter before attempting install
-        // Use cached metadata to avoid repeated HTTP requests
-        let default_data_dir = crate::install::default_data_dir();
-        let fetch_options =
-            default_data_dir
-                .as_ref()
-                .map(|dir| crate::install::metadata::FetchOptions {
-                    data_dir: Some(dir.as_path()),
-                    use_cache: true,
-                });
-        let (should_skip, reason) =
-            super::auto_install::should_skip_unsupported_language(language, fetch_options.as_ref())
+        // Delegate to AutoInstallManager (isolated, returns events)
+        let result = self.auto_install.try_install(language).await;
+
+        // Dispatch events to ClientNotifier
+        self.dispatch_install_events(language, &result.events).await;
+
+        // Handle post-install coordination if successful
+        if let Some(data_dir) = result.outcome.data_dir() {
+            self.reload_language_after_install(language, data_dir, uri, text, is_injection)
                 .await;
-        if let Some(reason) = &reason {
-            let message_type = reason.message_type();
-            let message = reason.message();
-            self.client.log_message(message_type, message).await;
-        }
-        if should_skip {
-            return false; // Not supported - no install triggered
+            return true; // Reload triggered, caller should skip parse
         }
 
-        // Try to start installation (returns false if already installing)
-        if !self.installing_languages.try_start_install(language) {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Language '{}' is already being installed", language),
-                )
-                .await;
-            return true; // Already installing - caller should skip parse
-        }
-
-        // Send progress Begin notification
-        self.client
-            .send_notification::<Progress>(create_progress_begin(language))
-            .await;
-
-        // Get data directory
-        let data_dir = match default_data_dir {
-            Some(dir) => dir,
-            None => {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        "Could not determine data directory for auto-install",
-                    )
-                    .await;
-                // Send progress End notification (failure)
-                self.client
-                    .send_notification::<Progress>(create_progress_end(language, false))
-                    .await;
-                self.installing_languages.finish_install(language);
-                return false; // No data dir - install failed, no parse needed
-            }
-        };
-
-        // Check if parser already exists - skip installation and just reload
-        if crate::install::parser_file_exists(language, &data_dir).is_some() {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!(
-                        "Parser for '{}' already exists. Loading without reinstall...",
-                        language
-                    ),
-                )
-                .await;
-
-            // Send progress End notification (success - already installed)
-            self.client
-                .send_notification::<Progress>(create_progress_end(language, true))
-                .await;
-            self.installing_languages.finish_install(language);
-            self.reload_language_after_install(language, &data_dir, uri, text, is_injection)
-                .await;
-            return true; // Parser exists - reload triggered, caller should skip parse
-        }
-
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!("Auto-installing language '{}' in background...", language),
-            )
-            .await;
-
-        let lang = language.to_string();
-        let result =
-            crate::install::install_language_async(lang.clone(), data_dir.clone(), false).await;
-
-        // Mark installation as complete
-        self.installing_languages.finish_install(&lang);
-
-        // Check if parser file exists after install attempt (even if queries failed)
-        let parser_exists = crate::install::parser_file_exists(&lang, &data_dir).is_some();
-
-        if result.is_success() {
-            // Send progress End notification (success)
-            self.client
-                .send_notification::<Progress>(create_progress_end(&lang, true))
-                .await;
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Successfully installed language '{}'. Reloading...", lang),
-                )
-                .await;
-
-            // Add the installed paths to search paths and reload
-            self.reload_language_after_install(&lang, &data_dir, uri, text, is_injection)
-                .await;
-        } else if parser_exists {
-            // Parser compiled successfully but queries failed (e.g., already exist)
-            // Still try to reload since the parser is available
-            self.client
-                .send_notification::<Progress>(create_progress_end(&lang, true))
-                .await;
-
-            let mut warnings = Vec::new();
-            if let Some(e) = &result.queries_error {
-                warnings.push(format!("queries: {}", e));
-            }
-            self.client
-                .log_message(
-                    MessageType::WARNING,
-                    format!(
-                        "Language '{}' parser installed but with warnings: {}. Reloading...",
-                        lang,
-                        warnings.join("; ")
-                    ),
-                )
-                .await;
-
-            // Still reload - parser is usable even without fresh queries
-            self.reload_language_after_install(&lang, &data_dir, uri, text, is_injection)
-                .await;
-        } else {
-            // Send progress End notification (failure)
-            self.client
-                .send_notification::<Progress>(create_progress_end(&lang, false))
-                .await;
-            let mut errors = Vec::new();
-            if let Some(e) = result.parser_error {
-                errors.push(format!("parser: {}", e));
-            }
-            if let Some(e) = result.queries_error {
-                errors.push(format!("queries: {}", e));
-            }
-            self.client
-                .log_message(
-                    MessageType::ERROR,
-                    format!(
-                        "Failed to install language '{}': {}",
-                        lang,
-                        errors.join("; ")
-                    ),
-                )
-                .await;
-        }
-
-        // Installation was triggered and will complete in background
-        // reload_language_after_install will handle parse_document
-        true
+        // Return based on outcome
+        result.outcome.should_skip_parse()
     }
 
     /// Reload a language after installation and optionally re-parse the document.
@@ -1026,7 +506,7 @@ impl Kakehashi {
         // - Queries: {data_dir}/queries/{language}/
 
         // Update settings to include the new paths
-        let current_settings = self.settings.load();
+        let current_settings = self.settings_manager.load_settings();
         let mut new_search_paths = current_settings.search_paths.clone();
 
         // Add parser directory to search paths
@@ -1123,13 +603,16 @@ impl Kakehashi {
         }
 
         // Build (language, region_id, content) tuples for each injection
-        // Phase 2 (ADR-0019): Use RegionIdTracker with position-based keys
+        // ADR-0019: Use RegionIdTracker with position-based keys
         // No document lock held here - safe to access region_id_tracker
         let injections: Vec<(String, String, String)> = regions
             .iter()
             .map(|region| {
-                let region_id =
-                    InjectionResolver::calculate_region_id(&self.region_id_tracker, uri, region);
+                let region_id = InjectionResolver::calculate_region_id(
+                    self.bridge.region_id_tracker(),
+                    uri,
+                    region,
+                );
                 let content = &text[region.content_node.byte_range()];
                 (
                     region.language.clone(),
@@ -1140,7 +623,7 @@ impl Kakehashi {
             .collect();
 
         // Forward didChange to opened virtual documents
-        self.language_server_pool
+        self.bridge
             .forward_didchange_to_opened_docs(uri, &injections)
             .await;
     }
@@ -1213,9 +696,9 @@ impl Kakehashi {
 impl LanguageServer for Kakehashi {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         // Store client capabilities for LSP compliance checks (e.g., refresh support).
-        // OnceLock::set() returns Err if already set - ignore since LSP spec guarantees
-        // initialize() is called exactly once per session.
-        let _ = self.client_capabilities.set(params.capabilities.clone());
+        // Uses SettingsManager which wraps OnceLock for "set once, read many" semantics.
+        self.settings_manager
+            .set_capabilities(params.capabilities.clone());
 
         // Log capability state for troubleshooting client compatibility issues.
         log::debug!(
@@ -1224,8 +707,8 @@ impl LanguageServer for Kakehashi {
         );
 
         // Debug: Log initialization
-        self.client
-            .log_message(MessageType::INFO, "Received initialization request")
+        self.notifier()
+            .log_info("Received initialization request")
             .await;
 
         // Get root path from workspace folders, root_uri, or current directory
@@ -1255,23 +738,21 @@ impl LanguageServer for Kakehashi {
                 "current working directory (fallback)"
             };
 
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Using workspace root from {}: {}", source, path.display()),
-                )
+            self.notifier()
+                .log_info(format!(
+                    "Using workspace root from {}: {}",
+                    source,
+                    path.display()
+                ))
                 .await;
-            self.root_path.store(Arc::new(Some(path.clone())));
+            self.settings_manager.set_root_path(Some(path.clone()));
         } else {
-            self.client
-                .log_message(
-                    MessageType::WARNING,
-                    "Failed to determine workspace root - config file will not be loaded",
-                )
+            self.notifier()
+                .log_warning("Failed to determine workspace root - config file will not be loaded")
                 .await;
         }
 
-        let root_path = self.root_path.load().as_ref().clone();
+        let root_path = self.settings_manager.root_path().as_ref().clone();
         let settings_outcome = load_settings(
             root_path.as_deref(),
             params
@@ -1287,9 +768,7 @@ impl LanguageServer for Kakehashi {
             .unwrap_or_else(|| WorkspaceSettings::from(TreeSitterSettings::default()));
         self.apply_settings(settings).await;
 
-        self.client
-            .log_message(MessageType::INFO, "server initialized!")
-            .await;
+        self.notifier().log_info("server initialized!").await;
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
                 name: "kakehashi".to_string(),
@@ -1355,15 +834,13 @@ impl LanguageServer for Kakehashi {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        self.client
-            .log_message(MessageType::INFO, "server is ready")
-            .await;
+        self.notifier().log_info("server is ready").await;
     }
 
     async fn shutdown(&self) -> Result<()> {
         // Persist crash detection state before shutdown
         // This enables crash recovery to detect if parsing was in progress
-        if let Err(e) = self.failed_parsers.persist_state() {
+        if let Err(e) = self.auto_install.persist_state() {
             log::warn!(
                 target: "kakehashi::crash_recovery",
                 "Failed to persist crash detection state on shutdown: {}",
@@ -1374,7 +851,7 @@ impl LanguageServer for Kakehashi {
         // Graceful shutdown of all downstream language server connections (ADR-0017)
         // - Transitions to Closing state, sends LSP shutdown/exit handshake
         // - Escalates to SIGTERM/SIGKILL for unresponsive servers (Unix)
-        self.language_server_pool.shutdown_all().await;
+        self.bridge.shutdown_all().await;
 
         Ok(())
     }
@@ -1466,9 +943,7 @@ impl LanguageServer for Kakehashi {
         // Calling refresh would be redundant and can cause deadlocks with clients
         // like vim-lsp that don't respond to workspace/semanticTokens/refresh requests.
 
-        self.client
-            .log_message(MessageType::INFO, "file opened!")
-            .await;
+        self.notifier().log_info("file opened!").await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -1484,18 +959,15 @@ impl LanguageServer for Kakehashi {
         // This ensures that reopening the file will properly reinitialize everything
         self.documents.remove(&uri);
 
-        // Clean up semantic token cache for this document
-        self.semantic_cache.remove(&uri);
-
-        // Cancel any pending semantic token requests for this document
-        self.semantic_request_tracker.cancel_all_for_uri(&uri);
+        // Clean up all caches for this document (semantic tokens, injections, requests)
+        self.cache.remove_document(&uri);
 
         // Clean up region ID mappings for this document (ADR-0019)
-        self.region_id_tracker.cleanup(&uri);
+        self.bridge.cleanup(&uri);
 
         // Close all virtual documents associated with this host document
         // This sends didClose notifications to downstream language servers
-        let closed_docs = self.language_server_pool.close_host_document(&uri).await;
+        let closed_docs = self.bridge.close_host_document(&uri).await;
         if !closed_docs.is_empty() {
             log::debug!(
                 target: "kakehashi::bridge",
@@ -1505,9 +977,7 @@ impl LanguageServer for Kakehashi {
             );
         }
 
-        self.client
-            .log_message(MessageType::INFO, "file closed!")
-            .await;
+        self.notifier().log_info("file closed!").await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -1519,8 +989,8 @@ impl LanguageServer for Kakehashi {
             return;
         };
 
-        self.client
-            .log_message(MessageType::LOG, format!("[DID_CHANGE] START uri={}", uri))
+        self.notifier()
+            .log_trace(format!("[DID_CHANGE] START uri={}", uri))
             .await;
 
         // Retrieve the stored document info
@@ -1529,8 +999,8 @@ impl LanguageServer for Kakehashi {
             match doc {
                 Some(d) => (d.language_id().map(|s| s.to_string()), d.text().to_string()),
                 None => {
-                    self.client
-                        .log_message(MessageType::WARNING, "Document not found for change event")
+                    self.notifier()
+                        .log_warning("Document not found for change event")
                         .await;
                     return;
                 }
@@ -1540,26 +1010,24 @@ impl LanguageServer for Kakehashi {
         // Apply content changes and build tree-sitter edits
         let (text, edits) = apply_content_changes_with_edits(&old_text, params.content_changes);
 
-        // Phase 4 (ADR-0019): Apply START-priority invalidation to region ID tracker
+        // ADR-0019: Apply START-priority invalidation to region ID tracker.
         // Use InputEdits directly for precise invalidation when available,
         // fall back to diff-based approach for full document sync.
         //
         // This must be called AFTER content changes are applied (so we have new text)
         // but BEFORE parse_document (so position sync happens before new tree is built).
-        // Returns ULIDs that were invalidated (Phase 3).
         let invalidated_ulids = if edits.is_empty() {
             // Full document sync: no InputEdits available, reconstruct from diff
-            self.region_id_tracker
-                .apply_text_diff(&uri, &old_text, &text)
+            self.bridge.apply_text_diff(&uri, &old_text, &text)
         } else {
             // Incremental sync: use InputEdits directly (precise, no over-invalidation)
             let edit_infos: Vec<EditInfo> = edits.iter().map(EditInfo::from).collect();
-            self.region_id_tracker.apply_input_edits(&uri, &edit_infos)
+            self.bridge.apply_input_edits(&uri, &edit_infos)
         };
 
         // Invalidate injection caches for regions overlapping with edits (AC4/AC5)
         // Must be called BEFORE parse_document which updates the injection_map
-        self.invalidate_overlapping_injection_caches(&uri, &edits);
+        self.cache.invalidate_for_edits(&uri, &edits);
 
         // Clone text before parse_document consumes it (needed for forward_didchange_to_bridges)
         let text_for_bridge = text.clone();
@@ -1569,14 +1037,14 @@ impl LanguageServer for Kakehashi {
             .await;
 
         // Invalidate semantic token cache to ensure fresh tokens for delta calculations
-        self.semantic_cache.remove(&uri);
+        self.cache.invalidate_semantic(&uri);
 
         // Forward didChange to opened virtual documents in bridge
         self.forward_didchange_to_bridges(&uri, &text_for_bridge)
             .await;
 
-        // Phase 3 (ADR-0019): Close invalidated virtual documents
-        // Send didClose notifications to downstream LSs for orphaned docs
+        // ADR-0019: Close invalidated virtual documents.
+        // Send didClose notifications to downstream LSs for orphaned docs.
         self.close_invalidated_virtual_docs(&uri, &invalidated_ulids)
             .await;
 
@@ -1589,13 +1057,11 @@ impl LanguageServer for Kakehashi {
         // Calling refresh would be redundant and can cause deadlocks with synchronous clients
         // like vim-lsp on Vim, which cannot respond to server requests while processing.
 
-        self.client
-            .log_message(MessageType::INFO, "file changed!")
-            .await;
+        self.notifier().log_info("file changed!").await;
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
-        let root_path = self.root_path.load().as_ref().clone();
+        let root_path = self.settings_manager.root_path().as_ref().clone();
         let settings_outcome = load_settings(
             root_path.as_deref(),
             Some((SettingsSource::ClientConfiguration, params.settings)),
@@ -1604,9 +1070,7 @@ impl LanguageServer for Kakehashi {
 
         if let Some(settings) = settings_outcome.settings {
             self.apply_settings(settings).await;
-            self.client
-                .log_message(MessageType::INFO, "Configuration updated!")
-                .await;
+            self.notifier().log_info("Configuration updated!").await;
         }
     }
 
@@ -1729,153 +1193,9 @@ impl LanguageServer for Kakehashi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::settings::BridgeLanguageConfig;
-    use std::collections::HashMap;
 
-    // Tests for check_semantic_tokens_refresh_support pure function
-    // These test the capability checking logic without needing to construct Kakehashi
-
-    #[test]
-    fn test_check_refresh_support_when_true() {
-        let caps = ClientCapabilities {
-            workspace: Some(WorkspaceClientCapabilities {
-                semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
-                    refresh_support: Some(true),
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert!(check_semantic_tokens_refresh_support(&caps));
-    }
-
-    #[test]
-    fn test_check_refresh_support_when_false() {
-        let caps = ClientCapabilities {
-            workspace: Some(WorkspaceClientCapabilities {
-                semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
-                    refresh_support: Some(false),
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert!(!check_semantic_tokens_refresh_support(&caps));
-    }
-
-    #[test]
-    fn test_check_refresh_support_when_refresh_support_none() {
-        // refreshSupport field is None (null in JSON)
-        let caps = ClientCapabilities {
-            workspace: Some(WorkspaceClientCapabilities {
-                semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
-                    refresh_support: None,
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert!(!check_semantic_tokens_refresh_support(&caps));
-    }
-
-    #[test]
-    fn test_check_refresh_support_when_semantic_tokens_none() {
-        // semantic_tokens field is None
-        let caps = ClientCapabilities {
-            workspace: Some(WorkspaceClientCapabilities {
-                semantic_tokens: None,
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        assert!(!check_semantic_tokens_refresh_support(&caps));
-    }
-
-    #[test]
-    fn test_check_refresh_support_when_workspace_empty() {
-        // workspace is Some but empty (no semantic_tokens)
-        let caps = ClientCapabilities {
-            workspace: Some(WorkspaceClientCapabilities::default()),
-            ..Default::default()
-        };
-        assert!(!check_semantic_tokens_refresh_support(&caps));
-    }
-
-    #[test]
-    fn test_check_refresh_support_when_workspace_none() {
-        // workspace field is None (different from empty!)
-        let caps = ClientCapabilities {
-            workspace: None,
-            ..Default::default()
-        };
-        assert!(!check_semantic_tokens_refresh_support(&caps));
-    }
-
-    #[test]
-    fn test_check_refresh_support_when_capabilities_empty() {
-        // Completely empty capabilities (pre-init state)
-        let caps = ClientCapabilities::default();
-        assert!(!check_semantic_tokens_refresh_support(&caps));
-    }
-
-    #[test]
-    fn should_create_valid_url_from_file_path() {
-        let path = "/tmp/test.rs";
-        let url = Url::from_file_path(path).unwrap();
-        assert!(url.as_str().contains("test.rs"));
-        assert!(url.scheme() == "file");
-    }
-
-    #[test]
-    fn should_handle_invalid_file_paths() {
-        let invalid_path = "not/an/absolute/path";
-        let result = Url::from_file_path(invalid_path);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn should_create_position_with_valid_coordinates() {
-        let pos = Position {
-            line: 10,
-            character: 5,
-        };
-        assert_eq!(pos.line, 10);
-        assert_eq!(pos.character, 5);
-    }
-
-    #[test]
-    fn should_create_valid_range() {
-        let range = Range {
-            start: Position {
-                line: 0,
-                character: 0,
-            },
-            end: Position {
-                line: 1,
-                character: 10,
-            },
-        };
-        assert_eq!(range.start.line, 0);
-        assert_eq!(range.end.line, 1);
-
-        // Validate range ordering
-        assert!(range.start.line <= range.end.line);
-    }
-
-    #[test]
-    fn should_validate_url_schemes() {
-        let valid_urls = vec![
-            "file:///absolute/path/to/file.rs",
-            "file:///home/user/project/src/main.rs",
-        ];
-
-        for url_str in valid_urls {
-            let url = Url::parse(url_str).unwrap();
-            assert_eq!(url.scheme(), "file");
-        }
-    }
-
-    // Note: InstallingLanguages and get_injected_languages tests are in auto_install.rs
+    // Note: Wildcard config resolution tests are in src/config.rs
+    // Note: apply_content_changes_with_edits tests are in src/lsp/text_sync.rs
 
     #[test]
     fn test_check_injected_languages_identifies_missing_parsers() {
@@ -1930,484 +1250,4 @@ mod tests {
     }
 
     // Note: Large integration tests for auto-install are in tests/test_auto_install_integration.rs
-
-    /// PBI-155 Subtask 2: Test wildcard language config inheritance
-    ///
-    /// This test verifies that languages._ (wildcard) settings are inherited
-    /// by specific languages when looking up language configs.
-    ///
-    /// The key behavior:
-    /// - languages._ defines default bridge settings (e.g., disable all by default)
-    /// - languages.markdown overrides only bridge for rust (enable it)
-    /// - When looking up "quarto" (not defined), it should inherit from languages._
-    #[test]
-    fn test_language_config_inherits_from_wildcard() {
-        use crate::config::settings::BridgeLanguageConfig;
-        use crate::config::{LanguageConfig, resolve_language_with_wildcard};
-
-        let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
-
-        // Wildcard language: disable bridging by default (empty bridge filter)
-        let wildcard_bridge = HashMap::new(); // Empty = disable all bridging
-        languages.insert(
-            "_".to_string(),
-            LanguageConfig {
-                library: None,
-                queries: None,
-                highlights: Some(vec!["/default/highlights.scm".to_string()]),
-                locals: None,
-                injections: None,
-                bridge: Some(wildcard_bridge),
-            },
-        );
-
-        // Markdown: enable only rust bridging
-        let mut markdown_bridge = HashMap::new();
-        markdown_bridge.insert("rust".to_string(), BridgeLanguageConfig { enabled: true });
-        languages.insert(
-            "markdown".to_string(),
-            LanguageConfig {
-                library: None,
-                queries: None,
-                highlights: None, // Should inherit from wildcard
-                locals: None,
-                injections: None,
-                bridge: Some(markdown_bridge),
-            },
-        );
-
-        // Test 1: "markdown" should have its own bridge filter (not wildcard's)
-        let markdown = resolve_language_with_wildcard(&languages, "markdown").unwrap();
-        assert!(
-            markdown.highlights.is_some(),
-            "markdown should inherit highlights from wildcard"
-        );
-        assert_eq!(
-            markdown.highlights.as_ref().unwrap(),
-            &vec!["/default/highlights.scm".to_string()],
-            "markdown should inherit highlights from wildcard"
-        );
-        // Bridge should be markdown-specific, not inherited from wildcard
-        let bridge = markdown.bridge.as_ref().unwrap();
-        assert!(
-            bridge.get("rust").is_some(),
-            "markdown bridge should have rust entry"
-        );
-
-        // Test 2: "quarto" (not defined) should get wildcard settings entirely
-        let quarto = resolve_language_with_wildcard(&languages, "quarto").unwrap();
-        assert!(
-            quarto.highlights.is_some(),
-            "quarto should inherit highlights from wildcard"
-        );
-        // Bridge should be wildcard's empty filter (disable all)
-        let quarto_bridge = quarto.bridge.as_ref().unwrap();
-        assert!(
-            quarto_bridge.is_empty(),
-            "quarto should inherit empty bridge filter from wildcard"
-        );
-    }
-
-    /// PBI-155 Subtask 2: Test that LanguageSettings lookup uses wildcard resolution
-    ///
-    /// This test verifies the wiring: when we look up host language settings
-    /// using WorkspaceSettings.languages (HashMap<String, LanguageSettings>),
-    /// we should use wildcard resolution so that undefined languages inherit
-    /// from languages._ settings.
-    ///
-    /// Since get_bridge_config_for_language needs Kakehashi which is hard to instantiate
-    /// in unit tests, we verify the behavior at the LanguageSettings level.
-    #[test]
-    fn test_language_settings_wildcard_lookup_blocks_bridging_for_undefined_host() {
-        use crate::config::{LanguageSettings, resolve_language_settings_with_wildcard};
-
-        let mut languages: HashMap<String, LanguageSettings> = HashMap::new();
-
-        // Wildcard: block all bridging with empty filter
-        languages.insert(
-            "_".to_string(),
-            LanguageSettings::with_bridge(None, None, Some(HashMap::new())),
-        );
-
-        // Look up "quarto" which doesn't exist - should inherit from wildcard
-        let quarto = resolve_language_settings_with_wildcard(&languages, "quarto");
-        assert!(
-            quarto.is_some(),
-            "Looking up undefined 'quarto' should return wildcard settings"
-        );
-
-        let quarto_settings = quarto.unwrap();
-        // The wildcard has empty bridge filter, so is_language_bridgeable should return false
-        assert!(
-            !quarto_settings.is_language_bridgeable("rust"),
-            "quarto (inherited from wildcard) should block bridging for rust"
-        );
-        assert!(
-            !quarto_settings.is_language_bridgeable("python"),
-            "quarto (inherited from wildcard) should block bridging for python"
-        );
-    }
-
-    /// PBI-155 Subtask 3: Test that server lookup uses wildcard resolution
-    ///
-    /// This test verifies that when looking up a language server config by name,
-    /// the wildcard server settings (languageServers._) are merged with specific
-    /// server settings.
-    ///
-    /// Key behavior:
-    /// - languageServers._ defines default initialization options
-    /// - languageServers.rust-analyzer overrides only the cmd
-    /// - The resolved rust-analyzer should have both cmd (from specific) and
-    ///   initialization_options (inherited from wildcard)
-    #[test]
-    fn test_language_server_config_inherits_from_wildcard() {
-        use crate::config::{resolve_language_server_with_wildcard, settings::BridgeServerConfig};
-        use serde_json::json;
-
-        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
-
-        // Wildcard server: default initialization options and workspace_type
-        servers.insert(
-            "_".to_string(),
-            BridgeServerConfig {
-                cmd: vec![],
-                languages: vec![],
-                initialization_options: Some(json!({ "checkOnSave": true })),
-                workspace_type: Some(crate::config::settings::WorkspaceType::Generic),
-            },
-        );
-
-        // rust-analyzer: only specifies cmd and languages
-        servers.insert(
-            "rust-analyzer".to_string(),
-            BridgeServerConfig {
-                cmd: vec!["rust-analyzer".to_string()],
-                languages: vec!["rust".to_string()],
-                initialization_options: None, // Should inherit from wildcard
-                workspace_type: None,         // Should inherit from wildcard
-            },
-        );
-
-        // Test: rust-analyzer should merge with wildcard
-        let ra = resolve_language_server_with_wildcard(&servers, "rust-analyzer").unwrap();
-
-        // cmd from specific
-        assert_eq!(ra.cmd, vec!["rust-analyzer".to_string()]);
-        // languages from specific
-        assert_eq!(ra.languages, vec!["rust".to_string()]);
-        // initialization_options inherited from wildcard
-        assert!(ra.initialization_options.is_some());
-        let opts = ra.initialization_options.as_ref().unwrap();
-        assert_eq!(opts.get("checkOnSave"), Some(&json!(true)));
-        // workspace_type inherited from wildcard
-        assert_eq!(
-            ra.workspace_type,
-            Some(crate::config::settings::WorkspaceType::Generic)
-        );
-    }
-
-    /// Test that server lookup finds servers when languages list is inherited from wildcard.
-    ///
-    /// ADR-0011: When languageServers.rust-analyzer has empty languages but
-    /// languageServers._ specifies languages = ["rust"], the lookup should still
-    /// find rust-analyzer for Rust injections because the languages list is
-    /// inherited from the wildcard during resolution.
-    ///
-    /// This tests the fix for a bug where get_bridge_config_for_language checked
-    /// the unresolved config.languages before applying wildcard resolution.
-    #[test]
-    fn test_language_server_lookup_uses_resolved_languages_from_wildcard() {
-        use crate::config::{resolve_language_server_with_wildcard, settings::BridgeServerConfig};
-
-        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
-
-        // Wildcard server: specifies languages = ["rust", "python"]
-        servers.insert(
-            "_".to_string(),
-            BridgeServerConfig {
-                cmd: vec!["default-lsp".to_string()],
-                languages: vec!["rust".to_string(), "python".to_string()],
-                initialization_options: None,
-                workspace_type: None,
-            },
-        );
-
-        // rust-analyzer: specifies only cmd, inherits languages from wildcard
-        servers.insert(
-            "rust-analyzer".to_string(),
-            BridgeServerConfig {
-                cmd: vec!["rust-analyzer".to_string()],
-                languages: vec![], // Empty - should inherit from wildcard
-                initialization_options: None,
-                workspace_type: None,
-            },
-        );
-
-        // Simulate the lookup logic from get_bridge_config_for_language:
-        // For each server (excluding "_"), resolve it and check if it handles "rust"
-        let injection_language = "rust";
-        let mut found_server: Option<BridgeServerConfig> = None;
-
-        for server_name in servers.keys() {
-            if server_name == "_" {
-                continue;
-            }
-
-            if let Some(resolved_config) =
-                resolve_language_server_with_wildcard(&servers, server_name)
-                && resolved_config
-                    .languages
-                    .iter()
-                    .any(|l| l == injection_language)
-            {
-                found_server = Some(resolved_config);
-                break;
-            }
-        }
-
-        // Should find rust-analyzer because after resolution it has languages = ["rust", "python"]
-        assert!(
-            found_server.is_some(),
-            "Should find a server for 'rust' when languages is inherited from wildcard"
-        );
-        let server = found_server.unwrap();
-        assert_eq!(
-            server.cmd,
-            vec!["rust-analyzer".to_string()],
-            "Should find rust-analyzer server"
-        );
-        assert!(
-            server.languages.contains(&"rust".to_string()),
-            "Resolved server should have 'rust' in languages (inherited from wildcard)"
-        );
-    }
-
-    #[test]
-    fn test_bridge_router_respects_host_filter() {
-        // PBI-108 AC4: Bridge filtering is applied at request time before routing to language servers
-        // This test verifies that is_language_bridgeable is correctly integrated into
-        // the bridge routing logic.
-        //
-        // The actual routing happens in get_bridge_config_for_language which:
-        // 1. Looks up host language settings
-        // 2. Calls is_language_bridgeable to check filter
-        // 3. Returns None if filter blocks the injection language
-        //
-        // We test the is_language_bridgeable logic directly since get_bridge_config_for_language
-        // requires full server initialization which is tested in E2E tests.
-
-        use crate::config::LanguageSettings;
-
-        // Host markdown with bridge filter: only python and r enabled
-        let mut bridge_filter = HashMap::new();
-        bridge_filter.insert("python".to_string(), BridgeLanguageConfig { enabled: true });
-        bridge_filter.insert("r".to_string(), BridgeLanguageConfig { enabled: true });
-        let markdown_settings = LanguageSettings::with_bridge(None, None, Some(bridge_filter));
-
-        // Router should allow python (enabled in filter)
-        assert!(
-            markdown_settings.is_language_bridgeable("python"),
-            "Bridge router should allow python for markdown"
-        );
-
-        // Router should allow r (enabled in filter)
-        assert!(
-            markdown_settings.is_language_bridgeable("r"),
-            "Bridge router should allow r for markdown"
-        );
-
-        // Router should block rust (not in filter)
-        assert!(
-            !markdown_settings.is_language_bridgeable("rust"),
-            "Bridge router should block rust for markdown"
-        );
-
-        // Host quarto with no bridge filter (default: all)
-        let quarto_settings = LanguageSettings::new(None, None);
-
-        // Router should allow all languages
-        assert!(
-            quarto_settings.is_language_bridgeable("python"),
-            "Bridge router should allow python for quarto (no filter)"
-        );
-        assert!(
-            quarto_settings.is_language_bridgeable("rust"),
-            "Bridge router should allow rust for quarto (no filter)"
-        );
-
-        // Host rmd with empty bridge filter (disable all)
-        let rmd_settings = LanguageSettings::with_bridge(None, None, Some(HashMap::new()));
-
-        // Router should block all languages
-        assert!(
-            !rmd_settings.is_language_bridgeable("r"),
-            "Bridge router should block r for rmd (empty filter)"
-        );
-        assert!(
-            !rmd_settings.is_language_bridgeable("python"),
-            "Bridge router should block python for rmd (empty filter)"
-        );
-    }
-
-    // ============================================================
-    // Tests for apply_content_changes_with_edits branch decision
-    // ============================================================
-    // These tests verify that the function returns empty vs non-empty edits
-    // correctly, which controls the branch in did_change between
-    // apply_text_change (full sync) and apply_edits (incremental sync).
-
-    #[test]
-    fn test_apply_content_changes_incremental_produces_edits() {
-        // Incremental change (with range) should produce InputEdits
-        use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
-
-        let old_text = "hello world";
-        let changes = vec![TextDocumentContentChangeEvent {
-            range: Some(Range {
-                start: Position {
-                    line: 0,
-                    character: 6,
-                },
-                end: Position {
-                    line: 0,
-                    character: 11,
-                },
-            }),
-            range_length: Some(5),
-            text: "rust".to_string(),
-        }];
-
-        let (new_text, edits) = super::apply_content_changes_with_edits(old_text, changes);
-
-        // Verify text was updated
-        assert_eq!(new_text, "hello rust");
-
-        // Verify edits is NON-EMPTY (incremental sync path will be taken)
-        assert!(
-            !edits.is_empty(),
-            "Incremental change should produce non-empty edits for apply_edits path"
-        );
-        assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].start_byte, 6);
-        assert_eq!(edits[0].old_end_byte, 11);
-        assert_eq!(edits[0].new_end_byte, 10); // "rust" is 4 bytes
-    }
-
-    #[test]
-    fn test_apply_content_changes_full_sync_produces_empty_edits() {
-        // Full document change (without range) should produce EMPTY edits
-        use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
-
-        let old_text = "hello world";
-        let changes = vec![TextDocumentContentChangeEvent {
-            range: None, // No range = full document sync
-            range_length: None,
-            text: "completely new content".to_string(),
-        }];
-
-        let (new_text, edits) = super::apply_content_changes_with_edits(old_text, changes);
-
-        // Verify text was replaced
-        assert_eq!(new_text, "completely new content");
-
-        // Verify edits is EMPTY (apply_text_change path will be taken)
-        assert!(
-            edits.is_empty(),
-            "Full document sync should produce empty edits for apply_text_change path"
-        );
-    }
-
-    #[test]
-    fn test_apply_content_changes_mixed_clears_edits_on_full_sync() {
-        // Mixed changes: incremental followed by full sync should clear edits
-        use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
-
-        let old_text = "hello world";
-        let changes = vec![
-            // First: incremental change
-            TextDocumentContentChangeEvent {
-                range: Some(Range {
-                    start: Position {
-                        line: 0,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 0,
-                        character: 5,
-                    },
-                }),
-                range_length: Some(5),
-                text: "hi".to_string(),
-            },
-            // Second: full document sync (should clear previous edits)
-            TextDocumentContentChangeEvent {
-                range: None,
-                range_length: None,
-                text: "final content".to_string(),
-            },
-        ];
-
-        let (new_text, edits) = super::apply_content_changes_with_edits(old_text, changes);
-
-        // Verify final text
-        assert_eq!(new_text, "final content");
-
-        // Verify edits is EMPTY because full sync clears all previous edits
-        assert!(
-            edits.is_empty(),
-            "Full document sync should clear previous incremental edits"
-        );
-    }
-
-    #[test]
-    fn test_apply_content_changes_multiple_incremental_accumulates_edits() {
-        // Multiple incremental changes should accumulate edits
-        use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
-
-        let old_text = "aaa bbb ccc";
-        let changes = vec![
-            // First: replace "aaa" with "AAA"
-            TextDocumentContentChangeEvent {
-                range: Some(Range {
-                    start: Position {
-                        line: 0,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 0,
-                        character: 3,
-                    },
-                }),
-                range_length: Some(3),
-                text: "AAA".to_string(),
-            },
-            // Second: replace "ccc" with "CCC" (position adjusted for running coords)
-            TextDocumentContentChangeEvent {
-                range: Some(Range {
-                    start: Position {
-                        line: 0,
-                        character: 8,
-                    },
-                    end: Position {
-                        line: 0,
-                        character: 11,
-                    },
-                }),
-                range_length: Some(3),
-                text: "CCC".to_string(),
-            },
-        ];
-
-        let (new_text, edits) = super::apply_content_changes_with_edits(old_text, changes);
-
-        // Verify final text
-        assert_eq!(new_text, "AAA bbb CCC");
-
-        // Verify multiple edits accumulated (incremental sync path)
-        assert_eq!(
-            edits.len(),
-            2,
-            "Multiple incremental changes should produce multiple edits"
-        );
-    }
 }

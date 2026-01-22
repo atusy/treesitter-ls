@@ -1,0 +1,547 @@
+//! AutoInstallManager - Isolated coordinator for parser auto-installation.
+//!
+//! This module provides `AutoInstallManager`, which handles:
+//! - Deduplicating concurrent install attempts (`InstallingLanguages`)
+//! - Tracking crashed parsers (`FailedParserRegistry`)
+//! - Running the actual installation process
+//! - Generating events for Kakehashi to dispatch to ClientNotifier
+//!
+//! # Design Rationale
+//!
+//! `AutoInstallManager` returns `InstallResult` containing events rather than
+//! directly calling `ClientNotifier`. This keeps the coordinator fully isolated:
+//! - No dependency on `ClientNotifier` or `SettingsManager`
+//! - Pure installation logic + event generation
+//! - Fully unit-testable without mocking LSP infrastructure
+//!
+//! Kakehashi orchestrates by:
+//! 1. Checking `is_auto_install_enabled()` on SettingsManager
+//! 2. Calling `AutoInstallManager::try_install()`
+//! 3. Dispatching returned events to ClientNotifier
+//! 4. Handling post-install coordination (settings update, language reload)
+
+use std::path::PathBuf;
+use tower_lsp_server::ls_types::MessageType;
+
+use crate::language::FailedParserRegistry;
+
+use super::{InstallingLanguages, should_skip_unsupported_language};
+
+/// Result of an installation attempt with all events for Kakehashi to dispatch.
+#[derive(Debug)]
+pub(crate) struct InstallResult {
+    /// What happened during the installation attempt
+    pub outcome: InstallOutcome,
+    /// Events to be dispatched to ClientNotifier by Kakehashi
+    pub events: Vec<InstallEvent>,
+}
+
+/// Outcome of an installation attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InstallOutcome {
+    /// Installation succeeded, parser is ready to use
+    Success {
+        /// Directory where parser and queries were installed
+        data_dir: PathBuf,
+    },
+    /// Parser compiled but queries had warnings (still usable)
+    SuccessWithWarnings {
+        /// Directory where parser and queries were installed
+        data_dir: PathBuf,
+    },
+    /// Parser already exists, just needs reload (no installation performed)
+    AlreadyExists {
+        /// Directory where parser already exists
+        data_dir: PathBuf,
+    },
+    /// Installation already in progress for this language
+    AlreadyInstalling,
+    /// Parser previously crashed, skipping to protect system
+    ParserFailed,
+    /// Language not supported by nvim-treesitter
+    Unsupported,
+    /// Installation failed
+    Failed,
+    /// Could not determine data directory
+    NoDataDir,
+}
+
+impl InstallOutcome {
+    /// Check if the caller should skip parsing after this outcome.
+    ///
+    /// Returns `true` for outcomes where the caller should NOT attempt to parse:
+    /// - `Success`, `SuccessWithWarnings`, `AlreadyExists`: Reload will handle parsing
+    /// - `AlreadyInstalling`: Another task is installing; caller should wait
+    ///
+    /// Returns `false` for outcomes where no installation happened or will happen:
+    /// - `ParserFailed`, `Unsupported`, `Failed`, `NoDataDir`
+    pub(crate) fn should_skip_parse(&self) -> bool {
+        matches!(
+            self,
+            InstallOutcome::Success { .. }
+                | InstallOutcome::SuccessWithWarnings { .. }
+                | InstallOutcome::AlreadyExists { .. }
+                | InstallOutcome::AlreadyInstalling
+        )
+    }
+
+    /// Get the data directory if installation was successful.
+    pub(crate) fn data_dir(&self) -> Option<&PathBuf> {
+        match self {
+            InstallOutcome::Success { data_dir }
+            | InstallOutcome::SuccessWithWarnings { data_dir }
+            | InstallOutcome::AlreadyExists { data_dir } => Some(data_dir),
+            _ => None,
+        }
+    }
+}
+
+/// Events generated during installation for Kakehashi to dispatch.
+#[derive(Debug, Clone)]
+pub(crate) enum InstallEvent {
+    /// Log message to send to client
+    Log { level: MessageType, message: String },
+    /// Progress begin notification
+    ProgressBegin,
+    /// Progress end notification
+    ProgressEnd { success: bool },
+}
+
+/// Isolated coordinator for parser auto-installation.
+///
+/// `AutoInstallManager` handles installation state and execution without
+/// dependencies on other coordinators. It returns events that Kakehashi
+/// dispatches to `ClientNotifier`.
+///
+/// # Thread Safety
+///
+/// `AutoInstallManager` is thread-safe:
+/// - `InstallingLanguages` uses `Arc<Mutex<HashSet>>` for concurrent access
+/// - `FailedParserRegistry` uses `DashSet` and `DashMap` for lock-free access
+///
+/// The struct is cheaply cloneable (all fields are `Arc`-based) for sharing
+/// across async tasks.
+#[derive(Clone)]
+pub(crate) struct AutoInstallManager {
+    /// Tracks languages currently being installed to prevent duplicates
+    installing_languages: InstallingLanguages,
+    /// Tracks parsers that have crashed to prevent repeated failures
+    failed_parsers: FailedParserRegistry,
+}
+
+impl std::fmt::Debug for AutoInstallManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AutoInstallManager")
+            .field("installing_languages", &"InstallingLanguages")
+            .field("failed_parsers", &"FailedParserRegistry")
+            .finish()
+    }
+}
+
+impl AutoInstallManager {
+    /// Create a new `AutoInstallManager`.
+    ///
+    /// # Arguments
+    /// * `installing_languages` - Tracker for concurrent install deduplication
+    /// * `failed_parsers` - Registry of crashed parsers
+    pub fn new(
+        installing_languages: InstallingLanguages,
+        failed_parsers: FailedParserRegistry,
+    ) -> Self {
+        Self {
+            installing_languages,
+            failed_parsers,
+        }
+    }
+
+    /// Initialize the failed parser registry with crash detection.
+    ///
+    /// Uses the default data directory for state storage.
+    /// If initialization fails, returns an empty registry.
+    pub fn init_failed_parser_registry() -> FailedParserRegistry {
+        let state_dir =
+            crate::install::default_data_dir().unwrap_or_else(|| PathBuf::from("/tmp/kakehashi"));
+
+        let registry = FailedParserRegistry::new(&state_dir);
+
+        // Initialize and detect any previous crashes
+        if let Err(e) = registry.init() {
+            log::warn!(
+                target: "kakehashi::crash_recovery",
+                "Failed to initialize crash recovery state: {}",
+                e
+            );
+        }
+
+        registry
+    }
+
+    /// Check if a parser has previously crashed and should be skipped.
+    pub fn is_parser_failed(&self, language: &str) -> bool {
+        self.failed_parsers.is_failed(language)
+    }
+
+    /// Record that parsing is starting for crash detection.
+    ///
+    /// Should be called before parsing a document.
+    pub fn begin_parsing(&self, language: &str) -> std::io::Result<()> {
+        self.failed_parsers.begin_parsing(language)
+    }
+
+    /// Record that parsing completed successfully.
+    ///
+    /// Should be called after parsing completes without crashing.
+    pub fn end_parsing(&self, language: &str) -> std::io::Result<()> {
+        self.failed_parsers.end_parsing_language(language)
+    }
+
+    /// Persist crash detection state on shutdown.
+    ///
+    /// Should be called during graceful shutdown.
+    pub fn persist_state(&self) -> std::io::Result<()> {
+        self.failed_parsers.persist_state()
+    }
+
+    /// Clear a parser from the failed list (e.g., after reinstallation).
+    pub fn clear_failed(&self, language: &str) -> std::io::Result<()> {
+        self.failed_parsers.clear_failed(language)
+    }
+
+    /// Attempt to install a language parser.
+    ///
+    /// Returns `InstallResult` containing:
+    /// - `outcome`: What happened (success, failure, already installing, etc.)
+    /// - `events`: Log and progress events for Kakehashi to dispatch
+    ///
+    /// # Design
+    ///
+    /// This method is intentionally isolated - it does NOT:
+    /// - Call ClientNotifier (returns events instead)
+    /// - Access SettingsManager (Kakehashi checks settings before calling)
+    /// - Call reload_language_after_install (Kakehashi handles post-install)
+    ///
+    /// This enables unit testing without LSP infrastructure.
+    pub async fn try_install(&self, language: &str) -> InstallResult {
+        let mut events = Vec::new();
+
+        // Check if parser previously failed (crash protection)
+        if self.failed_parsers.is_failed(language) {
+            events.push(InstallEvent::Log {
+                level: MessageType::WARNING,
+                message: format!(
+                    "Parser '{}' previously crashed. Skipping auto-install. \
+                     Clear with: kakehashi language clear-failed {}",
+                    language, language
+                ),
+            });
+            return InstallResult {
+                outcome: InstallOutcome::ParserFailed,
+                events,
+            };
+        }
+
+        // Check if language is supported by nvim-treesitter
+        let default_data_dir = crate::install::default_data_dir();
+        let fetch_options =
+            default_data_dir
+                .as_ref()
+                .map(|dir| crate::install::metadata::FetchOptions {
+                    data_dir: Some(dir.as_path()),
+                    use_cache: true,
+                });
+
+        let (should_skip, reason) =
+            should_skip_unsupported_language(language, fetch_options.as_ref()).await;
+
+        if let Some(reason) = &reason {
+            events.push(InstallEvent::Log {
+                level: reason.message_type(),
+                message: reason.message(),
+            });
+        }
+
+        if should_skip {
+            return InstallResult {
+                outcome: InstallOutcome::Unsupported,
+                events,
+            };
+        }
+
+        // Try to start installation (deduplication)
+        if !self.installing_languages.try_start_install(language) {
+            events.push(InstallEvent::Log {
+                level: MessageType::INFO,
+                message: format!("Language '{}' is already being installed", language),
+            });
+            return InstallResult {
+                outcome: InstallOutcome::AlreadyInstalling,
+                events,
+            };
+        }
+
+        // Progress begin
+        events.push(InstallEvent::ProgressBegin);
+
+        // Get data directory
+        let data_dir = match default_data_dir {
+            Some(dir) => dir,
+            None => {
+                events.push(InstallEvent::Log {
+                    level: MessageType::ERROR,
+                    message: "Could not determine data directory for auto-install".to_string(),
+                });
+                events.push(InstallEvent::ProgressEnd { success: false });
+                self.installing_languages.finish_install(language);
+                return InstallResult {
+                    outcome: InstallOutcome::NoDataDir,
+                    events,
+                };
+            }
+        };
+
+        // Check if parser already exists - skip installation and just signal reload
+        if crate::install::parser_file_exists(language, &data_dir).is_some() {
+            events.push(InstallEvent::Log {
+                level: MessageType::INFO,
+                message: format!(
+                    "Parser for '{}' already exists. Loading without reinstall...",
+                    language
+                ),
+            });
+            events.push(InstallEvent::ProgressEnd { success: true });
+            self.installing_languages.finish_install(language);
+            return InstallResult {
+                outcome: InstallOutcome::AlreadyExists {
+                    data_dir: data_dir.clone(),
+                },
+                events,
+            };
+        }
+
+        // Log installation start
+        events.push(InstallEvent::Log {
+            level: MessageType::INFO,
+            message: format!("Auto-installing language '{}' in background...", language),
+        });
+
+        // Run the actual installation
+        let lang = language.to_string();
+        let result =
+            crate::install::install_language_async(lang.clone(), data_dir.clone(), false).await;
+
+        // Mark installation as complete
+        self.installing_languages.finish_install(&lang);
+
+        // Check if parser file exists after install attempt (even if queries failed)
+        let parser_exists = crate::install::parser_file_exists(&lang, &data_dir).is_some();
+
+        if result.is_success() {
+            events.push(InstallEvent::ProgressEnd { success: true });
+            events.push(InstallEvent::Log {
+                level: MessageType::INFO,
+                message: format!("Successfully installed language '{}'. Reloading...", lang),
+            });
+            InstallResult {
+                outcome: InstallOutcome::Success {
+                    data_dir: data_dir.clone(),
+                },
+                events,
+            }
+        } else if parser_exists {
+            // Parser compiled but queries had issues - still usable
+            events.push(InstallEvent::ProgressEnd { success: true });
+
+            let mut warnings = Vec::new();
+            if let Some(e) = &result.queries_error {
+                warnings.push(format!("queries: {}", e));
+            }
+            events.push(InstallEvent::Log {
+                level: MessageType::WARNING,
+                message: format!(
+                    "Language '{}' parser installed but with warnings: {}. Reloading...",
+                    lang,
+                    warnings.join("; ")
+                ),
+            });
+
+            InstallResult {
+                outcome: InstallOutcome::SuccessWithWarnings {
+                    data_dir: data_dir.clone(),
+                },
+                events,
+            }
+        } else {
+            // Installation failed
+            events.push(InstallEvent::ProgressEnd { success: false });
+
+            let mut errors = Vec::new();
+            if let Some(e) = result.parser_error {
+                errors.push(format!("parser: {}", e));
+            }
+            if let Some(e) = result.queries_error {
+                errors.push(format!("queries: {}", e));
+            }
+            events.push(InstallEvent::Log {
+                level: MessageType::ERROR,
+                message: format!(
+                    "Failed to install language '{}': {}",
+                    lang,
+                    errors.join("; ")
+                ),
+            });
+
+            InstallResult {
+                outcome: InstallOutcome::Failed,
+                events,
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn create_test_manager() -> (AutoInstallManager, tempfile::TempDir) {
+        let temp = tempdir().expect("Failed to create temp dir");
+        let installing = InstallingLanguages::new();
+        let failed = FailedParserRegistry::new(temp.path());
+        failed.init().expect("Failed to init registry");
+        (AutoInstallManager::new(installing, failed), temp)
+    }
+
+    #[test]
+    fn test_is_parser_failed_returns_false_for_new_parser() {
+        let (manager, _temp) = create_test_manager();
+        assert!(!manager.is_parser_failed("lua"));
+    }
+
+    #[test]
+    fn test_crash_tracking_workflow() {
+        let (manager, _temp) = create_test_manager();
+
+        // Start parsing
+        manager.begin_parsing("lua").expect("begin_parsing failed");
+
+        // End parsing successfully
+        manager.end_parsing("lua").expect("end_parsing failed");
+
+        // Parser should not be marked as failed
+        assert!(!manager.is_parser_failed("lua"));
+    }
+
+    #[tokio::test]
+    async fn test_try_install_returns_already_installing_on_duplicate() {
+        let (manager, _temp) = create_test_manager();
+
+        // Manually mark as installing
+        manager.installing_languages.try_start_install("lua");
+
+        // Try to install same language
+        let result = manager.try_install("lua").await;
+
+        assert_eq!(result.outcome, InstallOutcome::AlreadyInstalling);
+        assert!(result.events.iter().any(|e| matches!(
+            e,
+            InstallEvent::Log { level: MessageType::INFO, message } if message.contains("already being installed")
+        )));
+    }
+
+    #[tokio::test]
+    async fn test_try_install_returns_parser_failed_for_crashed_parser() {
+        let (manager, _temp) = create_test_manager();
+
+        // Mark parser as failed
+        manager
+            .failed_parsers
+            .mark_failed("bad_parser")
+            .expect("mark_failed failed");
+
+        // Try to install
+        let result = manager.try_install("bad_parser").await;
+
+        assert_eq!(result.outcome, InstallOutcome::ParserFailed);
+        assert!(result.events.iter().any(|e| matches!(
+            e,
+            InstallEvent::Log { level: MessageType::WARNING, message } if message.contains("previously crashed")
+        )));
+    }
+
+    #[test]
+    fn test_clear_failed_removes_parser_from_failed_list() {
+        let (manager, _temp) = create_test_manager();
+
+        // Mark as failed
+        manager
+            .failed_parsers
+            .mark_failed("lua")
+            .expect("mark_failed failed");
+        assert!(manager.is_parser_failed("lua"));
+
+        // Clear
+        manager.clear_failed("lua").expect("clear_failed failed");
+        assert!(!manager.is_parser_failed("lua"));
+    }
+
+    #[test]
+    fn test_install_outcome_should_skip_parse() {
+        // Outcomes that should skip parse (installation handled or in progress)
+        assert!(
+            InstallOutcome::Success {
+                data_dir: PathBuf::from("/tmp")
+            }
+            .should_skip_parse()
+        );
+        assert!(
+            InstallOutcome::SuccessWithWarnings {
+                data_dir: PathBuf::from("/tmp")
+            }
+            .should_skip_parse()
+        );
+        assert!(
+            InstallOutcome::AlreadyExists {
+                data_dir: PathBuf::from("/tmp")
+            }
+            .should_skip_parse()
+        );
+        // AlreadyInstalling: another task is installing, caller should wait
+        assert!(InstallOutcome::AlreadyInstalling.should_skip_parse());
+
+        // Outcomes that should NOT skip parse (no installation will happen)
+        assert!(!InstallOutcome::ParserFailed.should_skip_parse());
+        assert!(!InstallOutcome::Unsupported.should_skip_parse());
+        assert!(!InstallOutcome::Failed.should_skip_parse());
+        assert!(!InstallOutcome::NoDataDir.should_skip_parse());
+    }
+
+    #[test]
+    fn test_install_outcome_data_dir() {
+        let path = PathBuf::from("/test/path");
+
+        assert_eq!(
+            InstallOutcome::Success {
+                data_dir: path.clone()
+            }
+            .data_dir(),
+            Some(&path)
+        );
+        assert_eq!(
+            InstallOutcome::SuccessWithWarnings {
+                data_dir: path.clone()
+            }
+            .data_dir(),
+            Some(&path)
+        );
+        assert_eq!(
+            InstallOutcome::AlreadyExists {
+                data_dir: path.clone()
+            }
+            .data_dir(),
+            Some(&path)
+        );
+
+        assert_eq!(InstallOutcome::AlreadyInstalling.data_dir(), None);
+        assert_eq!(InstallOutcome::Failed.data_dir(), None);
+    }
+}
