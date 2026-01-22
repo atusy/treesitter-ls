@@ -761,7 +761,10 @@ mod tests {
     ///
     /// ADR-0014: Timer resets on any stdout activity (response or notification).
     /// This verifies that receiving a message resets the timer to full duration.
-    #[tokio::test]
+    ///
+    /// Uses paused time for deterministic testing - avoids CI flakiness from
+    /// timing variations under system load.
+    #[tokio::test(start_paused = true)]
     async fn liveness_timer_resets_on_message_activity() {
         use crate::lsp::bridge::protocol::RequestId;
         use std::time::Duration;
@@ -774,14 +777,8 @@ mod tests {
         let _rx1 = router.register(RequestId::new(1)).unwrap();
         let _rx2 = router.register(RequestId::new(2)).unwrap();
 
-        // Write multiple responses with delays
-        // Response 1 comes at t=50ms
-        // Response 2 comes at t=100ms
-        // Timer is 150ms, so without reset it would fire at t=150ms
-        // With reset on response 1, new deadline is t=50ms+150ms=200ms
-        // With reset on response 2, new deadline is t=100ms+150ms=250ms
-        // Test ends at t=200ms, so timer should NOT have fired
-
+        // Write response before splitting - it will be buffered in the pipe
+        // When reader starts, it reads the response and resets the timer
         let response1 = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -791,7 +788,7 @@ mod tests {
 
         let (writer, reader) = conn.split();
 
-        // Spawn reader with liveness timeout
+        // Spawn reader with liveness timeout (150ms)
         let handle = spawn_reader_task_with_liveness(
             reader,
             Arc::clone(&router),
@@ -801,8 +798,15 @@ mod tests {
         // Notify the reader to start the timer
         handle.notify_liveness_start();
 
-        // Wait a bit, then check timer hasn't fired (responses reset it)
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Yield to let reader task process the buffered response
+        // This resets the timer deadline
+        tokio::task::yield_now().await;
+
+        // Advance time past the original timeout (150ms) but before the reset deadline
+        // If timer reset worked: deadline is now ~150ms from when response was processed
+        // If timer didn't reset: it would fire at 150ms
+        tokio::time::advance(Duration::from_millis(160)).await;
+        tokio::task::yield_now().await;
 
         // After first response, pending should be 1 (one request remaining)
         // Timer should have been reset, not fired
