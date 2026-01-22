@@ -1,7 +1,6 @@
 mod text_document;
 
 use tower_lsp_server::jsonrpc::Result;
-use tower_lsp_server::ls_types::notification::Progress;
 use tower_lsp_server::ls_types::request::{
     GotoDeclarationParams, GotoDeclarationResponse, GotoImplementationParams,
     GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
@@ -52,9 +51,10 @@ use crate::language::injection::{
 };
 use crate::language::region_id_tracker::{EditInfo, RegionIdTracker};
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
-use crate::language::{LanguageEvent, LanguageLogLevel};
+use crate::language::LanguageEvent;
 use crate::lsp::bridge::LanguageServerPool;
-use crate::lsp::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
+use crate::lsp::client::{ClientNotifier, check_semantic_tokens_refresh_support};
+use crate::lsp::{SettingsSource, load_settings};
 use crate::text::PositionMapper;
 use arc_swap::ArcSwap;
 use std::path::PathBuf;
@@ -62,7 +62,6 @@ use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
-use super::progress::{create_progress_begin, create_progress_end};
 use super::semantic_request_tracker::SemanticRequestTracker;
 
 /// Convert ls_types::Uri to url::Url
@@ -110,21 +109,6 @@ fn lsp_legend_modifiers() -> Vec<SemanticTokenModifier> {
         .iter()
         .map(|m| SemanticTokenModifier::new(m.as_str()))
         .collect()
-}
-
-/// Check if client capabilities indicate semantic tokens refresh support.
-///
-/// Extracted as a pure function for unit testability - the Kakehashi struct
-/// cannot be constructed in unit tests due to tower_lsp_server::Client dependency.
-///
-/// Returns `false` for any missing/null capability in the chain (defensive
-/// default per LSP spec @since 3.16.0).
-fn check_semantic_tokens_refresh_support(caps: &ClientCapabilities) -> bool {
-    caps.workspace
-        .as_ref()
-        .and_then(|w| w.semantic_tokens.as_ref())
-        .and_then(|st| st.refresh_support)
-        .unwrap_or(false)
 }
 
 /// Apply content changes to text and build tree-sitter InputEdits.
@@ -282,13 +266,20 @@ impl Kakehashi {
         }
     }
 
+    /// Create a `ClientNotifier` for centralized client communication.
+    ///
+    /// The notifier wraps the LSP client and references the stored capabilities,
+    /// providing a clean API for logging, progress notifications, and semantic
+    /// token refresh requests.
+    fn notifier(&self) -> ClientNotifier<'_> {
+        ClientNotifier::new(self.client.clone(), &self.client_capabilities)
+    }
+
     /// Returns true only if client declared workspace.semanticTokens.refreshSupport.
     /// Returns false if initialize() hasn't been called yet (OnceLock is empty).
+    #[allow(dead_code)] // Part of API surface, used internally by notifier
     fn supports_semantic_tokens_refresh(&self) -> bool {
-        self.client_capabilities
-            .get()
-            .map(check_semantic_tokens_refresh_support)
-            .unwrap_or(false)
+        self.notifier().supports_semantic_tokens_refresh()
     }
 
     /// Initialize the failed parser registry with crash detection.
@@ -365,15 +356,12 @@ impl Kakehashi {
             "unknown reason".to_string()
         };
 
-        self.client
-            .log_message(
-                MessageType::WARNING,
-                format!(
-                    "Parser for '{}' not found. Auto-install is disabled because {}. \
-                     Please install the parser manually using: kakehashi language install {}",
-                    language, reason, language
-                ),
-            )
+        self.notifier()
+            .log_warning(format!(
+                "Parser for '{}' not found. Auto-install is disabled because {}. \
+                 Please install the parser manually using: kakehashi language install {}",
+                language, reason, language
+            ))
             .await;
     }
 
@@ -762,61 +750,15 @@ impl Kakehashi {
         // Store settings for auto_install check
         self.settings.store(Arc::new(settings.clone()));
         let summary = self.language.load_settings(settings);
-        self.handle_language_events(&summary.events).await;
+        self.notifier().log_language_events(&summary.events).await;
     }
 
-    async fn report_settings_events(&self, events: &[SettingsEvent]) {
-        for event in events {
-            let message_type = match event.kind {
-                SettingsEventKind::Info => MessageType::INFO,
-                SettingsEventKind::Warning => MessageType::WARNING,
-            };
-            self.client
-                .log_message(message_type, event.message.clone())
-                .await;
-        }
+    async fn report_settings_events(&self, events: &[crate::lsp::SettingsEvent]) {
+        self.notifier().log_settings_events(events).await;
     }
 
     async fn handle_language_events(&self, events: &[LanguageEvent]) {
-        for event in events {
-            match event {
-                LanguageEvent::Log { level, message } => {
-                    let message_type = match level {
-                        LanguageLogLevel::Error => MessageType::ERROR,
-                        LanguageLogLevel::Warning => MessageType::WARNING,
-                        LanguageLogLevel::Info => MessageType::INFO,
-                    };
-                    self.client.log_message(message_type, message.clone()).await;
-                }
-                LanguageEvent::SemanticTokensRefresh { language_id } => {
-                    // Only send refresh if client supports it (LSP @since 3.16.0 compliance).
-                    // Check MUST be before tokio::spawn - can't `continue` from async block.
-                    if !self.supports_semantic_tokens_refresh() {
-                        log::debug!(
-                            "Skipping semantic_tokens_refresh for {} - client does not support it",
-                            language_id
-                        );
-                        continue;
-                    }
-
-                    // Fire-and-forget because the response is just null
-                    //
-                    // Keep the receiver alive without dropping by timeout in order to
-                    // avoid tower-lsp panics (see commit b902e28d)
-                    //
-                    // Trade-off: If a client never responds (e.g., vim-lsp), this causes:
-                    // - A small memory leak in tower-lsp's pending requests map
-                    // - A spawned task waiting indefinitely
-                    let client = self.client.clone();
-                    let lang_id = language_id.clone();
-                    tokio::spawn(async move {
-                        if let Err(err) = client.semantic_tokens_refresh().await {
-                            log::debug!("semantic_tokens_refresh failed for {}: {}", lang_id, err);
-                        }
-                    });
-                }
-            }
-        }
+        self.notifier().log_language_events(events).await;
     }
 
     /// Try to auto-install a language if not already being installed.
@@ -837,6 +779,8 @@ impl Kakehashi {
         text: String,
         is_injection: bool,
     ) -> bool {
+        let notifier = self.notifier();
+
         // Check if language is supported by nvim-treesitter before attempting install
         // Use cached metadata to avoid repeated HTTP requests
         let default_data_dir = crate::install::default_data_dir();
@@ -853,7 +797,7 @@ impl Kakehashi {
         if let Some(reason) = &reason {
             let message_type = reason.message_type();
             let message = reason.message();
-            self.client.log_message(message_type, message).await;
+            notifier.log(message_type, message).await;
         }
         if should_skip {
             return false; // Not supported - no install triggered
@@ -861,34 +805,30 @@ impl Kakehashi {
 
         // Try to start installation (returns false if already installing)
         if !self.installing_languages.try_start_install(language) {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Language '{}' is already being installed", language),
-                )
+            notifier
+                .log_info(format!(
+                    "Language '{}' is already being installed",
+                    language
+                ))
                 .await;
             return true; // Already installing - caller should skip parse
         }
 
         // Send progress Begin notification
-        self.client
-            .send_notification::<Progress>(create_progress_begin(language))
-            .await;
+        notifier.progress_begin(language).await;
 
         // Get data directory
         let data_dir = match default_data_dir {
             Some(dir) => dir,
             None => {
-                self.client
-                    .log_message(
+                notifier
+                    .log(
                         MessageType::ERROR,
                         "Could not determine data directory for auto-install",
                     )
                     .await;
                 // Send progress End notification (failure)
-                self.client
-                    .send_notification::<Progress>(create_progress_end(language, false))
-                    .await;
+                notifier.progress_end(language, false).await;
                 self.installing_languages.finish_install(language);
                 return false; // No data dir - install failed, no parse needed
             }
@@ -896,31 +836,26 @@ impl Kakehashi {
 
         // Check if parser already exists - skip installation and just reload
         if crate::install::parser_file_exists(language, &data_dir).is_some() {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!(
-                        "Parser for '{}' already exists. Loading without reinstall...",
-                        language
-                    ),
-                )
+            notifier
+                .log_info(format!(
+                    "Parser for '{}' already exists. Loading without reinstall...",
+                    language
+                ))
                 .await;
 
             // Send progress End notification (success - already installed)
-            self.client
-                .send_notification::<Progress>(create_progress_end(language, true))
-                .await;
+            notifier.progress_end(language, true).await;
             self.installing_languages.finish_install(language);
             self.reload_language_after_install(language, &data_dir, uri, text, is_injection)
                 .await;
             return true; // Parser exists - reload triggered, caller should skip parse
         }
 
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!("Auto-installing language '{}' in background...", language),
-            )
+        notifier
+            .log_info(format!(
+                "Auto-installing language '{}' in background...",
+                language
+            ))
             .await;
 
         let lang = language.to_string();
@@ -935,14 +870,12 @@ impl Kakehashi {
 
         if result.is_success() {
             // Send progress End notification (success)
-            self.client
-                .send_notification::<Progress>(create_progress_end(&lang, true))
-                .await;
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Successfully installed language '{}'. Reloading...", lang),
-                )
+            notifier.progress_end(&lang, true).await;
+            notifier
+                .log_info(format!(
+                    "Successfully installed language '{}'. Reloading...",
+                    lang
+                ))
                 .await;
 
             // Add the installed paths to search paths and reload
@@ -951,23 +884,18 @@ impl Kakehashi {
         } else if parser_exists {
             // Parser compiled successfully but queries failed (e.g., already exist)
             // Still try to reload since the parser is available
-            self.client
-                .send_notification::<Progress>(create_progress_end(&lang, true))
-                .await;
+            notifier.progress_end(&lang, true).await;
 
             let mut warnings = Vec::new();
             if let Some(e) = &result.queries_error {
                 warnings.push(format!("queries: {}", e));
             }
-            self.client
-                .log_message(
-                    MessageType::WARNING,
-                    format!(
-                        "Language '{}' parser installed but with warnings: {}. Reloading...",
-                        lang,
-                        warnings.join("; ")
-                    ),
-                )
+            notifier
+                .log_warning(format!(
+                    "Language '{}' parser installed but with warnings: {}. Reloading...",
+                    lang,
+                    warnings.join("; ")
+                ))
                 .await;
 
             // Still reload - parser is usable even without fresh queries
@@ -975,9 +903,7 @@ impl Kakehashi {
                 .await;
         } else {
             // Send progress End notification (failure)
-            self.client
-                .send_notification::<Progress>(create_progress_end(&lang, false))
-                .await;
+            notifier.progress_end(&lang, false).await;
             let mut errors = Vec::new();
             if let Some(e) = result.parser_error {
                 errors.push(format!("parser: {}", e));
@@ -985,8 +911,8 @@ impl Kakehashi {
             if let Some(e) = result.queries_error {
                 errors.push(format!("queries: {}", e));
             }
-            self.client
-                .log_message(
+            notifier
+                .log(
                     MessageType::ERROR,
                     format!(
                         "Failed to install language '{}': {}",
@@ -1224,8 +1150,8 @@ impl LanguageServer for Kakehashi {
         );
 
         // Debug: Log initialization
-        self.client
-            .log_message(MessageType::INFO, "Received initialization request")
+        self.notifier()
+            .log_info("Received initialization request")
             .await;
 
         // Get root path from workspace folders, root_uri, or current directory
@@ -1255,17 +1181,17 @@ impl LanguageServer for Kakehashi {
                 "current working directory (fallback)"
             };
 
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!("Using workspace root from {}: {}", source, path.display()),
-                )
+            self.notifier()
+                .log_info(format!(
+                    "Using workspace root from {}: {}",
+                    source,
+                    path.display()
+                ))
                 .await;
             self.root_path.store(Arc::new(Some(path.clone())));
         } else {
-            self.client
-                .log_message(
-                    MessageType::WARNING,
+            self.notifier()
+                .log_warning(
                     "Failed to determine workspace root - config file will not be loaded",
                 )
                 .await;
@@ -1287,9 +1213,7 @@ impl LanguageServer for Kakehashi {
             .unwrap_or_else(|| WorkspaceSettings::from(TreeSitterSettings::default()));
         self.apply_settings(settings).await;
 
-        self.client
-            .log_message(MessageType::INFO, "server initialized!")
-            .await;
+        self.notifier().log_info("server initialized!").await;
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
                 name: "kakehashi".to_string(),
@@ -1355,9 +1279,7 @@ impl LanguageServer for Kakehashi {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        self.client
-            .log_message(MessageType::INFO, "server is ready")
-            .await;
+        self.notifier().log_info("server is ready").await;
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -1466,9 +1388,7 @@ impl LanguageServer for Kakehashi {
         // Calling refresh would be redundant and can cause deadlocks with clients
         // like vim-lsp that don't respond to workspace/semanticTokens/refresh requests.
 
-        self.client
-            .log_message(MessageType::INFO, "file opened!")
-            .await;
+        self.notifier().log_info("file opened!").await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -1505,9 +1425,7 @@ impl LanguageServer for Kakehashi {
             );
         }
 
-        self.client
-            .log_message(MessageType::INFO, "file closed!")
-            .await;
+        self.notifier().log_info("file closed!").await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -1519,8 +1437,8 @@ impl LanguageServer for Kakehashi {
             return;
         };
 
-        self.client
-            .log_message(MessageType::LOG, format!("[DID_CHANGE] START uri={}", uri))
+        self.notifier()
+            .log_trace(format!("[DID_CHANGE] START uri={}", uri))
             .await;
 
         // Retrieve the stored document info
@@ -1529,8 +1447,8 @@ impl LanguageServer for Kakehashi {
             match doc {
                 Some(d) => (d.language_id().map(|s| s.to_string()), d.text().to_string()),
                 None => {
-                    self.client
-                        .log_message(MessageType::WARNING, "Document not found for change event")
+                    self.notifier()
+                        .log_warning("Document not found for change event")
                         .await;
                     return;
                 }
@@ -1589,9 +1507,7 @@ impl LanguageServer for Kakehashi {
         // Calling refresh would be redundant and can cause deadlocks with synchronous clients
         // like vim-lsp on Vim, which cannot respond to server requests while processing.
 
-        self.client
-            .log_message(MessageType::INFO, "file changed!")
-            .await;
+        self.notifier().log_info("file changed!").await;
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
@@ -1604,9 +1520,7 @@ impl LanguageServer for Kakehashi {
 
         if let Some(settings) = settings_outcome.settings {
             self.apply_settings(settings).await;
-            self.client
-                .log_message(MessageType::INFO, "Configuration updated!")
-                .await;
+            self.notifier().log_info("Configuration updated!").await;
         }
     }
 
