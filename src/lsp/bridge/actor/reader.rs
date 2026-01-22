@@ -32,6 +32,114 @@ fn new_liveness_timer(timeout: Duration) -> LivenessTimer {
     Box::pin(tokio::time::sleep(timeout))
 }
 
+/// Encapsulates liveness timer state and logic for the reader task.
+///
+/// This struct consolidates the timer state (active timer, timeout configuration)
+/// and provides methods for timer lifecycle management, improving cohesion
+/// compared to managing multiple variables separately.
+///
+/// # Timer States
+///
+/// - **Inactive**: `timer` is `None`, timeout may or may not be configured
+/// - **Active**: `timer` is `Some`, will fire after configured duration
+///
+/// # Usage Pattern
+///
+/// ```ignore
+/// let mut liveness = LivenessTimerState::new(Some(Duration::from_secs(60)));
+/// liveness.start(&lang_prefix);           // Starts timer when pending 0->1
+/// liveness.reset(&lang_prefix);           // Resets on message activity
+/// liveness.stop(&lang_prefix, "reason");  // Stops when pending returns to 0
+/// ```
+struct LivenessTimerState {
+    /// Active timer future, None when inactive.
+    timer: Option<LivenessTimer>,
+    /// Configured timeout duration, None if liveness is disabled.
+    timeout: Option<Duration>,
+}
+
+impl LivenessTimerState {
+    /// Create a new liveness timer state with optional timeout configuration.
+    ///
+    /// If `timeout` is None, the timer is disabled and all operations are no-ops.
+    fn new(timeout: Option<Duration>) -> Self {
+        Self {
+            timer: None,
+            timeout,
+        }
+    }
+
+    /// Check if the timer is currently active.
+    fn is_active(&self) -> bool {
+        self.timer.is_some()
+    }
+
+    /// Start the liveness timer.
+    ///
+    /// Called when pending count transitions 0->1.
+    /// No-op if timeout is not configured.
+    fn start(&mut self, lang_prefix: &str) {
+        if let Some(timeout) = self.timeout {
+            debug!(
+                target: "kakehashi::bridge::reader",
+                "{}Liveness timer started: {:?}",
+                lang_prefix,
+                timeout
+            );
+            self.timer = Some(new_liveness_timer(timeout));
+        }
+    }
+
+    /// Reset the liveness timer to full duration.
+    ///
+    /// Called on any message activity (response or notification).
+    /// Only resets if timer is currently active.
+    fn reset(&mut self, lang_prefix: &str) {
+        if let Some(timeout) = self.timeout {
+            if self.timer.is_some() {
+                debug!(
+                    target: "kakehashi::bridge::reader",
+                    "{}Liveness timer reset on message activity",
+                    lang_prefix
+                );
+                self.timer = Some(new_liveness_timer(timeout));
+            }
+        }
+    }
+
+    /// Stop the liveness timer.
+    ///
+    /// Called when pending count returns to 0 or shutdown begins.
+    /// Only logs if timer was actually active.
+    fn stop(&mut self, lang_prefix: &str, reason: &str) {
+        if self.timer.take().is_some() {
+            debug!(
+                target: "kakehashi::bridge::reader",
+                "{}Liveness timer stopped: {}",
+                lang_prefix,
+                reason
+            );
+        }
+    }
+
+    /// Get the configured timeout duration (for logging on expiry).
+    fn timeout_duration(&self) -> Duration {
+        self.timeout.unwrap_or_default()
+    }
+
+    /// Take a reference to the timer for use in select!.
+    ///
+    /// Returns a future that completes when the timer fires, or pends forever
+    /// if no timer is active.
+    async fn wait(&mut self) {
+        if let Some(ref mut timer) = self.timer {
+            timer.await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
 /// Handle to a running Reader Task, managing its lifetime via RAII.
 ///
 /// This struct owns the resources needed to control and clean up the reader task.
@@ -310,8 +418,8 @@ async fn reader_loop_with_liveness(
         .map(|l| format!("[{}] ", l))
         .unwrap_or_default();
 
-    // Liveness timer state: None when inactive, Some(Sleep) when active
-    let mut liveness_timer: Option<LivenessTimer> = None;
+    // Consolidated liveness timer state (ADR-0014)
+    let mut liveness = LivenessTimerState::new(liveness_timeout);
 
     loop {
         tokio::select! {
@@ -328,14 +436,7 @@ async fn reader_loop_with_liveness(
             }
 
             // Check for liveness timeout (if timer is active)
-            _ = async {
-                if let Some(ref mut timer) = liveness_timer {
-                    timer.await;
-                } else {
-                    // No timer active, pend forever
-                    std::future::pending::<()>().await;
-                }
-            } => {
+            _ = liveness.wait() => {
                 // Liveness timeout fired - server is unresponsive
                 // This warn! is the primary observability signal for production debugging.
                 // The pending_count is included for debugging stuck request scenarios.
@@ -344,7 +445,7 @@ async fn reader_loop_with_liveness(
                     target: "kakehashi::bridge::reader",
                     "{}Liveness timeout expired after {:?}, server appears hung - failing {} pending request(s)",
                     lang_prefix,
-                    liveness_timeout.unwrap_or_default(),
+                    liveness.timeout_duration(),
                     pending_count
                 );
                 router.fail_all("bridge: liveness timeout - server unresponsive");
@@ -355,27 +456,12 @@ async fn reader_loop_with_liveness(
 
             // Check for liveness timer start notification (pending 0->1)
             Some(()) = liveness_start_rx.recv() => {
-                if let Some(timeout) = liveness_timeout {
-                    debug!(
-                        target: "kakehashi::bridge::reader",
-                        "{}Liveness timer started: {:?}",
-                        lang_prefix,
-                        timeout
-                    );
-                    liveness_timer = Some(new_liveness_timer(timeout));
-                }
+                liveness.start(&lang_prefix);
             }
 
             // Check for liveness timer stop notification (shutdown began - ADR-0018 Phase 4)
             Some(()) = liveness_stop_rx.recv() => {
-                if liveness_timer.is_some() {
-                    debug!(
-                        target: "kakehashi::bridge::reader",
-                        "{}Liveness timer stopped: shutdown began",
-                        lang_prefix
-                    );
-                    liveness_timer = None;
-                }
+                liveness.stop(&lang_prefix, "shutdown began");
             }
 
             // Try to read a message (lowest priority)
@@ -383,25 +469,13 @@ async fn reader_loop_with_liveness(
                 match result {
                     Ok(message) => {
                         // Reset liveness timer on any message activity (ADR-0014)
-                        if let Some(timeout) = liveness_timeout && liveness_timer.is_some() {
-                            debug!(
-                                target: "kakehashi::bridge::reader",
-                                "{}Liveness timer reset on message activity",
-                                lang_prefix
-                            );
-                            liveness_timer = Some(new_liveness_timer(timeout));
-                        }
+                        liveness.reset(&lang_prefix);
 
                         handle_message(message, &router, &lang_prefix);
 
                         // Check if pending count returned to 0 - stop timer
-                        if liveness_timer.is_some() && router.pending_count() == 0 {
-                            debug!(
-                                target: "kakehashi::bridge::reader",
-                                "{}Liveness timer stopped: pending count is 0",
-                                lang_prefix
-                            );
-                            liveness_timer = None;
+                        if liveness.is_active() && router.pending_count() == 0 {
+                            liveness.stop(&lang_prefix, "pending count is 0");
                         }
                     }
                     Err(e) => {
