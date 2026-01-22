@@ -3,17 +3,22 @@
 //! This module provides the LanguageServerPool which manages connections to
 //! downstream language servers per ADR-0016 (Server Pool Coordination).
 //!
-//! Phase 1: Single-LS-per-Language routing (language → single server).
+//! Currently implements single-LS-per-language routing (language → single server).
 
 mod connection_handle;
 mod connection_state;
 mod document_tracker;
+mod handshake;
+mod shutdown;
 mod shutdown_timeout;
 #[cfg(test)]
 mod test_helpers;
 
+use handshake::perform_lsp_handshake;
+
 pub(crate) use connection_handle::ConnectionHandle;
 pub(crate) use connection_state::ConnectionState;
+use document_tracker::DocumentOpenDecision;
 use document_tracker::DocumentTracker;
 pub(crate) use document_tracker::OpenedVirtualDoc;
 pub(crate) use shutdown_timeout::GlobalShutdownTimeout;
@@ -27,10 +32,7 @@ use tokio::sync::Mutex;
 use url::Url;
 
 use super::connection::SplitConnectionWriter;
-use super::protocol::{
-    VirtualDocumentUri, build_bridge_didopen_notification, build_initialize_request,
-    build_initialized_notification, validate_initialize_response,
-};
+use super::protocol::{VirtualDocumentUri, build_bridge_didopen_notification};
 
 /// Timeout for LSP initialize handshake (ADR-0018 Tier 0: 30-60s recommended).
 ///
@@ -43,14 +45,12 @@ use super::connection::AsyncBridgeConnection;
 
 /// Pool of connections to downstream language servers (ADR-0016).
 ///
-/// Implements Phase 1: Single-LS-per-Language routing where each injection
-/// language maps to exactly one downstream server.
+/// Each injection language maps to exactly one downstream server (single-LS-per-language).
 ///
 /// Provides lazy initialization of connections and handles the LSP handshake
 /// (initialize/initialized) for each language server.
 ///
-/// Connection state is embedded in each ConnectionHandle (ADR-0015 per-connection state),
-/// eliminating the previous architectural flaw of having a separate state map.
+/// Connection state is embedded in each ConnectionHandle (ADR-0015 per-connection state).
 pub(crate) struct LanguageServerPool {
     /// Map of language -> connection handle (wraps connection with its state)
     connections: Mutex<HashMap<String, Arc<ConnectionHandle>>>,
@@ -113,7 +113,7 @@ impl LanguageServerPool {
     /// Remove a document from all tracking state.
     ///
     /// Removes the document from version tracking and opened state.
-    /// Used by did_close module for cleanup, and by Phase 3
+    /// Used by did_close module for cleanup and by
     /// close_invalidated_virtual_docs for invalidated region cleanup.
     pub(crate) async fn untrack_document(&self, virtual_uri: &VirtualDocumentUri) {
         self.document_tracker.untrack_document(virtual_uri).await
@@ -149,6 +149,13 @@ impl LanguageServerPool {
     /// Returns error if another request is in the process of opening (race condition).
     ///
     /// The `cleanup_on_error` closure is called before returning error to clean up resources.
+    ///
+    /// # Decision Logic
+    ///
+    /// Uses `DocumentOpenDecision` to determine action:
+    /// - `SendDidOpen`: Send didOpen notification, mark as opened
+    /// - `AlreadyOpened`: Skip (no-op), document was already opened
+    /// - `PendingError`: Race condition, call cleanup and return error
     pub(crate) async fn ensure_document_opened<F>(
         &self,
         writer: &mut SplitConnectionWriter,
@@ -160,24 +167,28 @@ impl LanguageServerPool {
     where
         F: FnOnce(),
     {
-        if self
+        match self
             .document_tracker
-            .should_send_didopen(host_uri, virtual_uri)
+            .document_open_decision(host_uri, virtual_uri)
             .await
         {
-            let did_open = build_bridge_didopen_notification(virtual_uri, virtual_content);
-            if let Err(e) = writer.write_message(&did_open).await {
-                cleanup_on_error();
-                return Err(e);
+            DocumentOpenDecision::SendDidOpen => {
+                let did_open = build_bridge_didopen_notification(virtual_uri, virtual_content);
+                if let Err(e) = writer.write_message(&did_open).await {
+                    cleanup_on_error();
+                    return Err(e);
+                }
+                self.document_tracker.mark_document_opened(virtual_uri);
+                Ok(())
             }
-            self.document_tracker.mark_document_opened(virtual_uri);
-        } else if !self.document_tracker.is_document_opened(virtual_uri) {
-            cleanup_on_error();
-            return Err(io::Error::other(
-                "bridge: document not yet opened (didOpen pending)",
-            ));
+            DocumentOpenDecision::AlreadyOpened => Ok(()),
+            DocumentOpenDecision::PendingError => {
+                cleanup_on_error();
+                Err(io::Error::other(
+                    "bridge: document not yet opened (didOpen pending)",
+                ))
+            }
         }
-        Ok(())
     }
 
     /// Increment the version of a virtual document and return the new version.
@@ -227,256 +238,6 @@ impl LanguageServerPool {
             Duration::from_secs(INIT_TIMEOUT_SECS),
         )
         .await
-    }
-
-    /// Drains a JoinSet, logging any task panics with the provided context.
-    async fn drain_join_set(join_set: &mut tokio::task::JoinSet<()>, task_context: &str) {
-        while let Some(result) = join_set.join_next().await {
-            if let Err(e) = result {
-                log::error!(
-                    target: "kakehashi::bridge",
-                    "{} panicked: {}",
-                    task_context,
-                    e
-                );
-            }
-        }
-    }
-
-    /// Initiate graceful shutdown of all connections.
-    ///
-    /// Called during LSP server shutdown to cleanly terminate all downstream
-    /// language servers. Performs LSP shutdown/exit handshake per ADR-0017.
-    ///
-    /// # Usage
-    ///
-    /// This method should be called exactly once during the LSP `shutdown` handler.
-    /// Multiple concurrent calls are safe (due to state machine monotonicity) but
-    /// wasteful, as connections already in Closing/Closed state are skipped.
-    ///
-    /// # Shutdown Behavior by State
-    ///
-    /// - Ready/Initializing: Perform full LSP shutdown handshake
-    /// - Failed: Skip LSP handshake, go directly to Closed (stdin unavailable)
-    /// - Closing/Closed: Already shutting down, skip
-    ///
-    /// All shutdowns run in parallel with a global timeout (ADR-0017).
-    /// Uses the default GlobalShutdownTimeout (10s) per ADR-0018.
-    pub(crate) async fn shutdown_all(&self) {
-        self.shutdown_all_with_timeout(GlobalShutdownTimeout::default())
-            .await;
-    }
-
-    /// Initiate graceful shutdown of all connections with a global timeout.
-    ///
-    /// This is the primary shutdown method per ADR-0017. It wraps parallel shutdown
-    /// of all connections under a single global ceiling. When the timeout expires,
-    /// remaining connections are force-killed with SIGTERM->SIGKILL escalation.
-    ///
-    /// # Arguments
-    /// * `timeout` - Global shutdown timeout (5-15s per ADR-0018)
-    ///
-    /// # Behavior
-    ///
-    /// 1. All Ready/Initializing connections begin graceful shutdown in parallel
-    /// 2. Failed connections transition directly to Closed (skip LSP handshake)
-    /// 3. If global timeout expires before all complete:
-    ///    - Remaining connections receive force_kill (SIGTERM->SIGKILL on Unix)
-    ///    - All connections transition to Closed state
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let timeout = GlobalShutdownTimeout::new(Duration::from_secs(10))?;
-    /// pool.shutdown_all_with_timeout(timeout).await;
-    /// ```
-    pub(crate) async fn shutdown_all_with_timeout(&self, timeout: GlobalShutdownTimeout) {
-        // Track connections that were skipped for logging (minimize lock duration)
-        let mut failed_connections: Vec<String> = Vec::new();
-        let mut already_closing: Vec<String> = Vec::new();
-
-        // Collect handles to shutdown - release lock before async operations
-        let handles_to_shutdown: Vec<(String, Arc<ConnectionHandle>)> = {
-            let connections = self.connections.lock().await;
-            connections
-                .iter()
-                .filter_map(|(language, handle)| match handle.state() {
-                    ConnectionState::Ready | ConnectionState::Initializing => {
-                        Some((language.clone(), Arc::clone(handle)))
-                    }
-                    ConnectionState::Failed => {
-                        failed_connections.push(language.clone());
-                        handle.complete_shutdown();
-                        None
-                    }
-                    ConnectionState::Closing | ConnectionState::Closed => {
-                        already_closing.push(language.clone());
-                        None
-                    }
-                })
-                .collect()
-        };
-
-        // Log after releasing lock (same pattern as force_kill_all)
-        for language in failed_connections {
-            log::debug!(
-                target: "kakehashi::bridge",
-                "Shutting down {} connection (Failed → Closed)",
-                language
-            );
-        }
-        for language in already_closing {
-            log::debug!(
-                target: "kakehashi::bridge",
-                "Connection {} already shutting down or closed",
-                language
-            );
-        }
-
-        if handles_to_shutdown.is_empty() {
-            return;
-        }
-
-        // Spawn graceful shutdown tasks into JoinSet (outside timeout so we can abort on timeout)
-        let mut join_set = tokio::task::JoinSet::new();
-        for (language, handle) in handles_to_shutdown {
-            join_set.spawn(async move {
-                log::debug!(
-                    target: "kakehashi::bridge",
-                    "Performing graceful shutdown for {} connection",
-                    language
-                );
-                if let Err(e) = handle.graceful_shutdown().await {
-                    log::warn!(
-                        target: "kakehashi::bridge",
-                        "Graceful shutdown failed for {}: {}",
-                        language, e
-                    );
-                }
-            });
-        }
-
-        // Wait for all shutdowns to complete with global timeout
-        let graceful_result = tokio::time::timeout(
-            timeout.as_duration(),
-            Self::drain_join_set(&mut join_set, "Shutdown task"),
-        )
-        .await;
-
-        // Handle timeout: abort remaining tasks and force-kill connections
-        if graceful_result.is_err() {
-            log::warn!(
-                target: "kakehashi::bridge",
-                "Global shutdown timeout ({:?}) expired, force-killing remaining connections",
-                timeout.as_duration()
-            );
-
-            // Abort still-running graceful shutdown tasks to avoid duplicate logs and wasted work.
-            // Note: force_kill is idempotent (returns early if process exited), so any race is harmless.
-            join_set.abort_all();
-
-            self.force_kill_all().await;
-        }
-    }
-
-    /// Force-kill all connections with platform-appropriate escalation.
-    ///
-    /// This is the fallback when global shutdown timeout expires.
-    /// Per ADR-0017, this method terminates all non-closed connections and
-    /// transitions them to Closed state.
-    ///
-    /// # Platform-Specific Behavior
-    ///
-    /// **Unix**: Uses SIGTERM->SIGKILL escalation (2s grace period)
-    /// **Windows**: Uses TerminateProcess directly (no grace period)
-    ///
-    /// The method executes kills in parallel to minimize total shutdown time.
-    pub(crate) async fn force_kill_all(&self) {
-        // Collect handles to force-kill (minimize lock duration - no logging inside lock)
-        let handles_with_info: Vec<(String, ConnectionState, Arc<ConnectionHandle>)> = {
-            let connections = self.connections.lock().await;
-            connections
-                .iter()
-                .filter_map(|(language, handle)| {
-                    let state = handle.state();
-                    if state != ConnectionState::Closed {
-                        Some((language.clone(), state, Arc::clone(handle)))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        };
-
-        // Log after releasing lock
-        for (language, state, _) in &handles_with_info {
-            log::debug!(
-                target: "kakehashi::bridge",
-                "Force-killing {} connection (state: {:?})",
-                language,
-                state
-            );
-        }
-
-        // Force-kill all connections in parallel with SIGTERM->SIGKILL escalation.
-        // Using JoinSet for parallel execution ensures O(1) force-kill time for N connections
-        // instead of O(N * 2s) when done sequentially (2s is SIGTERM->SIGKILL wait).
-        let mut join_set = tokio::task::JoinSet::new();
-        for (_, _, handle) in handles_with_info {
-            join_set.spawn(async move {
-                handle.force_kill().await;
-                handle.complete_shutdown();
-            });
-        }
-
-        // Wait for all force-kills to complete
-        Self::drain_join_set(&mut join_set, "Force-kill task").await;
-    }
-
-    /// Perform the LSP initialize/initialized handshake.
-    ///
-    /// Sends the initialize request, waits for the response, and sends the
-    /// initialized notification. This function is called by `get_or_create_connection_with_timeout`
-    /// after the connection is spawned and the reader task is running.
-    ///
-    /// # Arguments
-    /// * `handle` - The connection handle (in Initializing state)
-    /// * `init_request_id` - Pre-registered request ID (always 1)
-    /// * `init_response_rx` - Pre-registered receiver for initialize response
-    /// * `init_options` - Server-specific initialization options
-    ///
-    /// # Returns
-    /// * `Ok(())` - Handshake completed successfully
-    /// * `Err(e)` - Handshake failed (server error, I/O error)
-    async fn perform_lsp_handshake(
-        handle: &ConnectionHandle,
-        init_request_id: super::protocol::RequestId,
-        init_response_rx: tokio::sync::oneshot::Receiver<serde_json::Value>,
-        init_options: Option<serde_json::Value>,
-    ) -> io::Result<()> {
-        // 1. Build and send initialize request
-        let init_request = build_initialize_request(init_request_id, init_options);
-        {
-            let mut writer = handle.writer().await;
-            writer.write_message(&init_request).await?;
-        }
-
-        // 2. Wait for initialize response via pre-registered receiver
-        let response = init_response_rx
-            .await
-            .map_err(|_| io::Error::other("bridge: initialize response channel closed"))?;
-
-        // 3. Validate response
-        validate_initialize_response(&response)?;
-
-        // 4. Send initialized notification
-        let initialized = build_initialized_notification();
-        {
-            let mut writer = handle.writer().await;
-            writer.write_message(&initialized).await?;
-        }
-
-        Ok(())
     }
 }
 
@@ -585,7 +346,7 @@ impl LanguageServerPool {
         let init_options = server_config.initialization_options.clone();
         let init_result = tokio::time::timeout(
             timeout,
-            Self::perform_lsp_handshake(&handle, init_request_id, init_response_rx, init_options),
+            perform_lsp_handshake(&handle, init_request_id, init_response_rx, init_options),
         )
         .await;
 
@@ -644,8 +405,7 @@ mod tests {
         );
     }
 
-    /// Test that requests during Initializing state return error immediately (non-blocking).
-    /// Verifies both hover and completion fail fast with exact error message per ADR-0015.
+    /// Test that requests during Initializing state return error immediately.
     #[tokio::test]
     async fn request_during_init_returns_error_immediately() {
         use std::sync::Arc;
@@ -712,13 +472,6 @@ mod tests {
     }
 
     /// Test that requests during Failed state trigger retry with a new server.
-    ///
-    /// When a connection is in Failed state and a request comes in, the retry mechanism:
-    /// 1. Removes the failed connection from cache
-    /// 2. Spawns a fresh server process
-    /// 3. Succeeds if the new server initializes correctly
-    ///
-    /// This test uses lua-language-server which should initialize successfully.
     #[tokio::test]
     async fn request_during_failed_triggers_retry_with_new_server() {
         use std::sync::Arc;
@@ -797,7 +550,6 @@ mod tests {
     }
 
     /// Test that requests succeed when ConnectionState is Ready.
-    /// This is a regression test to ensure the init check doesn't block valid requests.
     #[tokio::test]
     async fn request_succeeds_when_state_is_ready() {
         use std::sync::Arc;
@@ -870,11 +622,7 @@ mod tests {
         );
     }
 
-    /// Test that timeout returns error and transitions connection to Failed state.
-    ///
-    /// With the async fast-fail architecture (ADR-0015), connections are stored
-    /// immediately in Initializing state. On timeout, they transition to Failed
-    /// state. Subsequent requests will remove the failed entry and spawn fresh.
+    /// Test that timeout transitions connection to Failed state.
     #[tokio::test]
     async fn connection_transitions_to_failed_state_on_timeout() {
         let pool = LanguageServerPool::new();
@@ -907,10 +655,6 @@ mod tests {
     }
 
     /// Test that initialization times out when downstream server doesn't respond.
-    ///
-    /// This test uses a mock server that reads input but never writes output,
-    /// simulating an unresponsive downstream language server.
-    /// The initialization handshake should timeout.
     #[tokio::test]
     async fn init_times_out_when_server_unresponsive() {
         let pool = LanguageServerPool::new();
@@ -937,10 +681,7 @@ mod tests {
         assert!(result.is_err(), "Connection should fail with timeout error");
     }
 
-    /// Test that timeout returns io::Error with io::ErrorKind::TimedOut.
-    ///
-    /// This verifies the error is properly typed so callers can distinguish
-    /// timeout errors from other I/O errors.
+    /// Test that timeout returns io::ErrorKind::TimedOut.
     #[tokio::test]
     async fn init_timeout_returns_timed_out_error_kind() {
         let pool = LanguageServerPool::new();
@@ -978,10 +719,6 @@ mod tests {
     /// 1. Remove the failed connection from the cache
     /// 2. Spawn a fresh server process
     /// 3. Return success if the new server initializes correctly
-    ///
-    /// This test verifies the retry mechanism using a two-phase approach:
-    /// - Phase 1: Insert a Failed connection handle for "lua"
-    /// - Phase 2: Call get_or_create_connection, expect it to spawn new server
     #[tokio::test]
     async fn failed_connection_retry_removes_cache_and_spawns_new_server() {
         if !lua_ls_available() {
@@ -990,7 +727,7 @@ mod tests {
 
         let pool = LanguageServerPool::new();
 
-        // Phase 1: Insert a Failed connection handle
+        // Setup: Insert a Failed connection handle
         {
             let handle = create_handle_with_state(ConnectionState::Failed).await;
             pool.connections
@@ -1006,7 +743,7 @@ mod tests {
             assert_eq!(handle.state(), ConnectionState::Failed, "Should be Failed");
         }
 
-        // Phase 2: Request connection - should remove failed entry and spawn new server
+        // Test: Request connection - should remove failed entry and spawn new server
         let config = lua_ls_config();
 
         let result = pool
@@ -1057,7 +794,7 @@ mod tests {
 
         let pool = LanguageServerPool::new();
 
-        // Phase 1: First attempt with unresponsive server - should timeout
+        // First attempt with unresponsive server - should timeout
         let unresponsive_config = BridgeServerConfig {
             cmd: vec![
                 "sh".to_string(),
@@ -1096,7 +833,7 @@ mod tests {
             }
         }
 
-        // Phase 2: Second attempt with working server - should succeed immediately
+        // Second attempt with working server - should succeed immediately
         let working_config = lua_ls_config();
 
         let result = pool
@@ -1310,7 +1047,7 @@ mod tests {
 
     /// Test that ConnectionHandle is NOT cached after timeout.
     ///
-    /// With the Reader Task architecture (ADR-0015 Phase A), failed connections
+    /// With the Reader Task architecture (ADR-0015), failed connections
     /// are NOT cached because a ConnectionHandle requires:
     /// - A successfully split connection (writer + reader)
     /// - A running reader task
@@ -1344,9 +1081,11 @@ mod tests {
     // ========================================
     // ensure_document_opened tests
     // ========================================
-    // Note: Unit tests for should_send_didopen, is_document_opened, mark_document_opened,
-    // and remove_matching_virtual_docs live in document_tracker.rs.
-    // These integration tests verify ensure_document_opened behavior with I/O.
+    // Decision logic unit tests (DocumentOpenDecision) live in document_tracker.rs.
+    // These integration tests verify ensure_document_opened I/O behavior:
+    // - Writing didOpen notification to downstream
+    // - Cleanup callback invocation on error
+    // - Post-condition: document marked as opened
 
     /// Test that ensure_document_opened sends didOpen when document is not yet opened.
     ///
@@ -1627,7 +1366,7 @@ mod tests {
     }
 
     // ========================================
-    // Sprint 12: Connection State Machine Integration Tests
+    // Connection State Machine Integration Tests
     // ========================================
     // Unit tests for ConnectionState enum live in connection_state.rs.
     // These integration tests verify pool behavior with different connection states.
@@ -1703,7 +1442,7 @@ mod tests {
     }
 
     // ========================================
-    // Sprint 12 Phase 2: LSP Shutdown Handshake Tests
+    // LSP Shutdown Handshake Tests
     // ========================================
 
     /// Test that shutdown sends LSP shutdown request and receives response.
@@ -1751,17 +1490,6 @@ mod tests {
     }
 
     /// Test that graceful shutdown acquires exclusive writer access.
-    ///
-    /// ADR-0017 three-phase synchronization: The current architecture uses a Mutex
-    /// to serialize all writer access, which provides exclusive access during shutdown.
-    /// This test verifies that:
-    /// 1. Shutdown transitions to Closing state first (rejects new operations)
-    /// 2. Shutdown acquires writer lock for shutdown request
-    /// 3. After shutdown completes, state is Closed
-    ///
-    /// Note: The full three-phase writer loop synchronization (signal stop, wait idle,
-    /// exclusive access) applies to future writer loop architecture. Current Mutex-based
-    /// architecture provides equivalent synchronization.
     #[tokio::test]
     async fn graceful_shutdown_acquires_exclusive_writer_access() {
         // Create a connection to a mock server
@@ -1873,15 +1601,10 @@ mod tests {
     }
 
     // ========================================
-    // Sprint 12 Phase 3: Forced Shutdown Tests
+    // Forced Shutdown Tests
     // ========================================
 
-    /// Test that unresponsive process receives SIGTERM then SIGKILL escalation.
-    ///
-    /// ADR-0017: When LSP shutdown handshake times out, escalate to process signals.
-    /// This test uses a script that ignores SIGTERM to verify SIGKILL escalation.
-    ///
-    /// Note: This test is Unix-specific due to process signal handling.
+    /// Test SIGTERM->SIGKILL escalation for unresponsive processes (Unix only).
     #[cfg(unix)]
     #[tokio::test]
     async fn unresponsive_process_receives_sigterm_then_sigkill() {
@@ -1931,15 +1654,6 @@ mod tests {
     }
 
     /// Test that shutdown with pending requests fails those requests and then completes.
-    ///
-    /// ADR-0017 end-to-end shutdown sequence:
-    /// 1. Create a connection with in-flight requests
-    /// 2. Initiate shutdown (begin_shutdown transitions to Closing)
-    /// 3. Pending requests should receive REQUEST_FAILED error (router channels closed)
-    /// 4. LSP shutdown/exit handshake should complete
-    /// 5. Connection should transition to Closed state
-    ///
-    /// This test uses lua-language-server to verify real LSP shutdown behavior.
     #[tokio::test]
     async fn shutdown_with_pending_requests_fails_requests_then_completes() {
         use std::sync::Arc;
@@ -2014,9 +1728,6 @@ mod tests {
     }
 
     /// Test that new requests during Closing state receive REQUEST_FAILED immediately.
-    ///
-    /// This verifies operation gating during shutdown - the acceptance criterion that
-    /// "new requests in Closing state receive REQUEST_FAILED error".
     #[tokio::test]
     async fn new_request_during_closing_receives_request_failed() {
         use std::sync::Arc;
@@ -2069,17 +1780,11 @@ mod tests {
     }
 
     // ============================================================
-    // Sprint 13: Global Shutdown Timeout Integration Tests
+    // Global Shutdown Timeout Integration Tests
     // ============================================================
     // Unit tests for GlobalShutdownTimeout newtype live in shutdown_timeout.rs.
-    // These integration tests verify pool shutdown behavior with the timeout.
 
     /// Test that shutdown_all completes within configured timeout even with hung servers.
-    ///
-    /// ADR-0017: Global timeout wraps all parallel shutdowns.
-    /// This test verifies that:
-    /// 1. shutdown_all_with_timeout() accepts a GlobalShutdownTimeout
-    /// 2. Shutdown completes within the timeout even if servers hang
     #[tokio::test]
     async fn shutdown_all_completes_within_global_timeout_with_hung_servers() {
         let pool = LanguageServerPool::new();
@@ -2119,12 +1824,7 @@ mod tests {
         }
     }
 
-    /// Test that multiple servers shut down concurrently, total time bounded by global timeout.
-    ///
-    /// ADR-0017: N servers should shut down in O(1) time, not O(N).
-    /// This test verifies:
-    /// 1. Multiple hung servers all receive shutdown in parallel
-    /// 2. Total shutdown time is bounded by global timeout (not N * per-server)
+    /// Test that multiple servers shut down concurrently (O(1) not O(N) time).
     #[tokio::test]
     async fn multiple_servers_shutdown_concurrently_bounded_by_global_timeout() {
         let pool = LanguageServerPool::new();
@@ -2171,14 +1871,10 @@ mod tests {
     }
 
     // ============================================================
-    // Sprint 13: Phase 3 - Force-kill fallback
+    // Force-kill Fallback Tests
     // ============================================================
 
-    /// Test that force_kill_all() sends signals to all remaining connections.
-    ///
-    /// ADR-0017: When global timeout expires, force_kill_all() is called.
-    /// This test verifies force_kill_all() method exists and transitions
-    /// all connections to Closed state.
+    /// Test that force_kill_all() terminates all remaining connections.
     #[tokio::test]
     #[cfg(unix)]
     async fn force_kill_all_terminates_all_connections() {
@@ -2211,15 +1907,7 @@ mod tests {
         }
     }
 
-    /// Test that shutdown_all_with_timeout wires force_kill fallback correctly.
-    ///
-    /// ADR-0017: When global timeout expires, remaining connections are force-killed.
-    /// This test verifies all connections end up in Closed state regardless of
-    /// how graceful shutdown proceeds.
-    ///
-    /// Note: Full timeout behavior testing depends on removing the per-connection
-    /// timeout (subtask 6). For now, we verify the force_kill path is wired and
-    /// all connections reach Closed state.
+    /// Test that shutdown_all_with_timeout ensures all connections reach Closed state.
     #[tokio::test]
     #[cfg(unix)]
     async fn shutdown_with_timeout_ensures_all_connections_closed() {
@@ -2255,69 +1943,10 @@ mod tests {
     }
 
     // ============================================================
-    // Sprint 13: Phase 4 - Cleanup (remove per-connection timeout)
-    // ============================================================
-
-    /// Architectural verification: graceful_shutdown has no internal timeout.
-    ///
-    /// ADR-0018: Global shutdown is the only ceiling. The per-connection timeout
-    /// was removed; graceful_shutdown waits indefinitely for response, relying
-    /// on the caller (shutdown_all_with_timeout) to enforce the global timeout.
-    ///
-    /// # Design Rationale
-    ///
-    /// Previously, graceful_shutdown() had a hardcoded SHUTDOWN_TIMEOUT of 5 seconds.
-    /// This caused timeout multiplication: N connections × 5s when shutting down
-    /// sequentially, or unpredictable behavior with parallel shutdowns.
-    ///
-    /// Per ADR-0018, the timeout was removed. Now:
-    /// - graceful_shutdown() waits indefinitely for the LSP shutdown response
-    /// - shutdown_all_with_timeout() wraps ALL parallel shutdowns in a single
-    ///   global timeout (5-15s configurable)
-    /// - Fast servers complete quickly; slow servers use remaining budget
-    /// - When global timeout expires, force_kill_all() terminates remaining connections
-    ///
-    /// # Verification
-    ///
-    /// This test verifies the design by checking that:
-    /// 1. GlobalShutdownTimeout provides the only configurable timeout
-    /// 2. graceful_shutdown() has no Duration constant or timeout wrapper
-    ///
-    /// The actual runtime behavior is tested by:
-    /// - `shutdown_all_completes_within_global_timeout_with_hung_servers`
-    /// - `multiple_servers_shutdown_concurrently_bounded_by_global_timeout`
-    #[test]
-    fn graceful_shutdown_relies_on_global_timeout_not_internal() {
-        // Verify the architectural property: GlobalShutdownTimeout is the only timeout config
-        let timeout = GlobalShutdownTimeout::default();
-        assert_eq!(
-            timeout.as_duration(),
-            Duration::from_secs(10),
-            "Default global timeout should be 10s per ADR-0018"
-        );
-
-        // The absence of SHUTDOWN_TIMEOUT constant in graceful_shutdown() is verified by:
-        // 1. Code review during PR
-        // 2. The integration tests above which would fail if internal timeout existed
-        //    (hung servers would timeout individually instead of being bounded by global)
-    }
-
-    // ============================================================
-    // Sprint 13: Phase 5 - Robustness (writer-idle budget verification)
+    // Writer Synchronization Tests
     // ============================================================
 
     /// Test that writer synchronization is within graceful_shutdown scope.
-    ///
-    /// ADR-0017: Writer-idle wait (2s) counts against global budget, not additional time.
-    ///
-    /// The current Mutex-based architecture provides equivalent synchronization:
-    /// - graceful_shutdown() acquires writer lock via self.writer().await
-    /// - This blocks until any ongoing writes complete
-    /// - The wait is part of graceful_shutdown(), counting against global timeout
-    /// - No separate 2s timeout needed - the global timeout (shutdown_all_with_timeout) provides the ceiling
-    ///
-    /// This test verifies the architectural property that writer synchronization
-    /// happens INSIDE graceful_shutdown, not as a separate pre-step.
     #[tokio::test]
     async fn writer_synchronization_is_within_graceful_shutdown_scope() {
         let handle = create_handle_with_state(ConnectionState::Ready).await;

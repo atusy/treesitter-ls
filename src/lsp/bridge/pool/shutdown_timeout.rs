@@ -209,6 +209,11 @@ mod tests {
     ///
     /// Default should be exactly 10s per ADR-0018 recommendation - a balance between
     /// allowing graceful shutdown for fast servers and bounding user wait time.
+    ///
+    /// This also documents the architectural property: GlobalShutdownTimeout is the
+    /// only timeout configuration for shutdown. Individual connection shutdowns
+    /// don't have their own timeouts - they're bounded by this global ceiling.
+    /// (See `connection_handle.rs` for the implementation that relies on this.)
     #[test]
     fn global_shutdown_timeout_default() {
         let default_timeout = GlobalShutdownTimeout::default();

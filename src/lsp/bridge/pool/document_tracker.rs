@@ -8,6 +8,45 @@
 
 use std::collections::{HashMap, HashSet};
 
+/// Decision result for document open handling.
+///
+/// This enum represents the three possible outcomes when determining
+/// whether to send a didOpen notification for a virtual document.
+/// Extracted to enable pure unit testing of the decision logic.
+///
+/// # State Machine
+///
+/// ```text
+/// Document State          | should_send_didopen | is_document_opened | Decision
+/// ------------------------|---------------------|--------------------|-----------
+/// Never seen              | true                | N/A                | SendDidOpen
+/// Opened (didOpen sent)   | false               | true               | AlreadyOpened
+/// Pending (race condition)| false               | false              | PendingError
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DocumentOpenDecision {
+    /// Document has not been opened yet - send didOpen notification.
+    ///
+    /// This occurs when `should_send_didopen()` returns true, meaning
+    /// the document was not previously registered for this session.
+    SendDidOpen,
+
+    /// Document was already opened - skip didOpen (no-op).
+    ///
+    /// This occurs when `should_send_didopen()` returns false (document
+    /// is registered) AND `is_document_opened()` returns true (didOpen
+    /// was successfully sent previously).
+    AlreadyOpened,
+
+    /// Race condition: another request is opening this document.
+    ///
+    /// This occurs when `should_send_didopen()` returns false (document
+    /// is registered by another request) AND `is_document_opened()` returns
+    /// false (didOpen hasn't been sent yet). The caller should fail fast
+    /// with an error to avoid duplicate didOpen notifications.
+    PendingError,
+}
+
 use log::warn;
 use tokio::sync::Mutex;
 use url::Url;
@@ -151,6 +190,40 @@ impl DocumentTracker {
         }
     }
 
+    /// Determine the action to take for document opening.
+    ///
+    /// This is the pure decision logic extracted from `ensure_document_opened`.
+    /// It determines whether to send didOpen, skip, or return an error based
+    /// on the current document state.
+    ///
+    /// # Returns
+    ///
+    /// - `SendDidOpen`: Document not registered - should send didOpen
+    /// - `AlreadyOpened`: Document already opened - skip (no-op)
+    /// - `PendingError`: Race condition - another request is opening this document
+    ///
+    /// # Side Effects
+    ///
+    /// When returning `SendDidOpen`, this method also:
+    /// - Registers the document version (sets to 1)
+    /// - Records the host-to-virtual mapping for didClose propagation
+    ///
+    /// The caller MUST call `mark_document_opened()` after successfully
+    /// sending the didOpen notification.
+    pub(super) async fn document_open_decision(
+        &self,
+        host_uri: &Url,
+        virtual_uri: &VirtualDocumentUri,
+    ) -> DocumentOpenDecision {
+        if self.should_send_didopen(host_uri, virtual_uri).await {
+            DocumentOpenDecision::SendDidOpen
+        } else if self.is_document_opened(virtual_uri) {
+            DocumentOpenDecision::AlreadyOpened
+        } else {
+            DocumentOpenDecision::PendingError
+        }
+    }
+
     /// Increment the version of a virtual document and return the new version.
     ///
     /// Returns None if the document has not been opened.
@@ -180,9 +253,6 @@ impl DocumentTracker {
     /// Note: Does NOT remove from `host_to_virtual`. That cleanup is handled
     /// separately by `remove_host_virtual_docs()` or `remove_matching_virtual_docs()`,
     /// which are called before this method in the close flow.
-    ///
-    /// Used by did_close module for cleanup, and by Phase 3
-    /// close_invalidated_virtual_docs for invalidated region cleanup.
     pub(crate) async fn untrack_document(&self, virtual_uri: &VirtualDocumentUri) {
         let uri_string = virtual_uri.to_uri_string();
         let language = virtual_uri.language();
@@ -430,6 +500,128 @@ mod tests {
         assert!(
             tracker.is_document_opened(&virtual_uri),
             "is_document_opened should return true after mark_document_opened"
+        );
+    }
+
+    // ========================================
+    // DocumentOpenDecision unit tests
+    // ========================================
+    // These tests verify the pure decision logic without I/O.
+    // Migrated from pool.rs integration tests.
+
+    /// Test that document_open_decision returns SendDidOpen for new document.
+    ///
+    /// Happy path: Document not registered → SendDidOpen
+    /// No I/O required - pure decision logic.
+    #[tokio::test]
+    async fn document_open_decision_returns_send_didopen_for_new_document() {
+        let tracker = DocumentTracker::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
+
+        let decision = tracker
+            .document_open_decision(&host_uri, &virtual_uri)
+            .await;
+
+        assert_eq!(
+            decision,
+            DocumentOpenDecision::SendDidOpen,
+            "New document should return SendDidOpen"
+        );
+    }
+
+    /// Test that document_open_decision returns AlreadyOpened for opened document.
+    ///
+    /// Already opened path: Document registered AND marked as opened → AlreadyOpened
+    /// No I/O required - pure decision logic.
+    #[tokio::test]
+    async fn document_open_decision_returns_already_opened_for_opened_document() {
+        let tracker = DocumentTracker::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
+
+        // Simulate successful didOpen flow: register then mark opened
+        tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        tracker.mark_document_opened(&virtual_uri);
+
+        let decision = tracker
+            .document_open_decision(&host_uri, &virtual_uri)
+            .await;
+
+        assert_eq!(
+            decision,
+            DocumentOpenDecision::AlreadyOpened,
+            "Already opened document should return AlreadyOpened"
+        );
+    }
+
+    /// Test that document_open_decision returns PendingError for pending document.
+    ///
+    /// Race condition: Document registered (by another request) but NOT marked → PendingError
+    /// This happens when concurrent requests race to open the same document.
+    /// No I/O required - pure decision logic.
+    #[tokio::test]
+    async fn document_open_decision_returns_pending_error_for_pending_document() {
+        let tracker = DocumentTracker::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
+
+        // Simulate race condition: another request registered but hasn't finished didOpen
+        tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        // Deliberately do NOT call mark_document_opened
+
+        let decision = tracker
+            .document_open_decision(&host_uri, &virtual_uri)
+            .await;
+
+        assert_eq!(
+            decision,
+            DocumentOpenDecision::PendingError,
+            "Pending document should return PendingError"
+        );
+    }
+
+    /// Test DocumentOpenDecision state transitions.
+    ///
+    /// Verifies the full state machine:
+    /// 1. New document → SendDidOpen
+    /// 2. After registration (not marked) → PendingError
+    /// 3. After marking opened → AlreadyOpened
+    #[tokio::test]
+    async fn document_open_decision_state_transitions() {
+        let tracker = DocumentTracker::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
+
+        // State 1: New document
+        let decision = tracker
+            .document_open_decision(&host_uri, &virtual_uri)
+            .await;
+        assert_eq!(decision, DocumentOpenDecision::SendDidOpen);
+
+        // Note: document_open_decision with SendDidOpen has side effect of registering
+        // So subsequent calls see the document as registered but not opened
+
+        // State 2: Registered but not opened (simulates race condition for OTHER callers)
+        // Since first call already registered, subsequent call sees PendingError
+        let decision = tracker
+            .document_open_decision(&host_uri, &virtual_uri)
+            .await;
+        assert_eq!(
+            decision,
+            DocumentOpenDecision::PendingError,
+            "After first SendDidOpen, subsequent calls should see PendingError until marked"
+        );
+
+        // State 3: After marking opened
+        tracker.mark_document_opened(&virtual_uri);
+        let decision = tracker
+            .document_open_decision(&host_uri, &virtual_uri)
+            .await;
+        assert_eq!(
+            decision,
+            DocumentOpenDecision::AlreadyOpened,
+            "After marking, should return AlreadyOpened"
         );
     }
 
