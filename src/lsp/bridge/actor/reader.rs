@@ -298,6 +298,9 @@ async fn reader_loop_with_liveness(
                 }
             } => {
                 // Liveness timeout fired - server is unresponsive
+                // NOTE: This warn! is the primary observability signal for production debugging.
+                // Consider adding metrics (counter for timeout events) if more detailed
+                // monitoring is needed in the future.
                 warn!(
                     target: "kakehashi::bridge::reader",
                     "Liveness timeout expired, server appears hung - failing pending requests"
