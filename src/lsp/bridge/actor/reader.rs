@@ -77,9 +77,9 @@ pub(crate) struct ReaderTaskHandle {
 
     /// Cancellation token to signal graceful shutdown.
     ///
-    /// When this token is dropped, it is automatically cancelled, causing the
-    /// reader loop's `cancel_token.cancelled()` future to complete. This triggers
-    /// a clean exit from the reader loop.
+    /// When dropped, the token is automatically cancelled, causing the reader
+    /// loop's `cancel_token.cancelled()` future to complete. This ensures the
+    /// reader task exits when the handle is dropped (RAII cleanup).
     _cancel_token: CancellationToken,
 
     /// Sender for liveness timer start notifications.
@@ -87,6 +87,12 @@ pub(crate) struct ReaderTaskHandle {
     /// Used by ConnectionHandle to notify the reader when the first request
     /// is registered (pending 0->1), triggering the liveness timer to start.
     liveness_start_tx: mpsc::Sender<()>,
+
+    /// Sender for liveness timer stop notifications (ADR-0018 Phase 4).
+    ///
+    /// Used by ConnectionHandle to stop the liveness timer when shutdown begins.
+    /// Global shutdown (Tier 3) overrides liveness timeout (Tier 2).
+    liveness_stop_tx: mpsc::Sender<()>,
 
     /// Receiver for liveness failure notification (ADR-0014 Phase 3).
     ///
@@ -103,6 +109,28 @@ impl ReaderTaskHandle {
     pub(crate) fn notify_liveness_start(&self) {
         // Use try_send to avoid blocking. If channel is full, timer is already running.
         let _ = self.liveness_start_tx.try_send(());
+    }
+
+    /// Stop the liveness timer without canceling the reader task (ADR-0018 Phase 4).
+    ///
+    /// Called by ConnectionHandle when shutdown begins. Global shutdown (Tier 3)
+    /// overrides liveness timeout (Tier 2), but the reader task continues running
+    /// to receive the shutdown response.
+    ///
+    /// Non-blocking: if the channel is full, the stop is already in progress.
+    pub(crate) fn stop_liveness_timer(&self) {
+        // Use try_send to avoid blocking
+        let _ = self.liveness_stop_tx.try_send(());
+    }
+
+    /// Cancel the reader task entirely.
+    ///
+    /// This triggers the cancellation token, causing the reader loop to exit
+    /// cleanly on its next iteration. Used for full connection teardown
+    /// (e.g., when ReaderTaskHandle is dropped).
+    #[cfg(test)] // Currently only used in tests; production uses stop_liveness_timer
+    pub(crate) fn cancel(&self) {
+        self._cancel_token.cancel();
     }
 
     /// Check if a liveness failure has been signaled.
@@ -176,6 +204,9 @@ pub(crate) fn spawn_reader_task_with_liveness(
     // Channel for liveness timer start notifications (capacity 1, latest notification wins)
     let (liveness_start_tx, liveness_start_rx) = mpsc::channel(1);
 
+    // Channel for liveness timer stop notifications (Phase 4: shutdown integration)
+    let (liveness_stop_tx, liveness_stop_rx) = mpsc::channel(1);
+
     // Channel for liveness failure notification (Phase 3: state transition signaling)
     let (liveness_failed_tx, liveness_failed_rx) = oneshot::channel();
 
@@ -185,6 +216,7 @@ pub(crate) fn spawn_reader_task_with_liveness(
         token_clone,
         liveness_timeout,
         liveness_start_rx,
+        liveness_stop_rx,
         liveness_failed_tx,
     ));
 
@@ -192,6 +224,7 @@ pub(crate) fn spawn_reader_task_with_liveness(
         _join_handle: join_handle,
         _cancel_token: cancel_token,
         liveness_start_tx,
+        liveness_stop_tx,
         liveness_failed_rx: std::sync::Mutex::new(Some(liveness_failed_rx)),
     }
 }
@@ -206,11 +239,21 @@ async fn reader_loop(
     router: Arc<ResponseRouter>,
     cancel_token: CancellationToken,
 ) {
-    // Create a dummy receiver that never receives (liveness disabled)
-    let (_tx, rx) = mpsc::channel(1);
+    // Create dummy receivers that never receive (liveness disabled)
+    let (_start_tx, start_rx) = mpsc::channel(1);
+    let (_stop_tx, stop_rx) = mpsc::channel(1);
     // Create a dummy sender that we'll drop (no liveness failure signaling in test helper)
     let (failed_tx, _failed_rx) = oneshot::channel();
-    reader_loop_with_liveness(reader, router, cancel_token, None, rx, failed_tx).await
+    reader_loop_with_liveness(
+        reader,
+        router,
+        cancel_token,
+        None,
+        start_rx,
+        stop_rx,
+        failed_tx,
+    )
+    .await
 }
 
 /// The main reader loop with optional liveness timeout support.
@@ -220,7 +263,7 @@ async fn reader_loop(
 /// When `liveness_timeout` is Some:
 /// - Timer starts when a notification is received on `liveness_start_rx` (pending 0->1)
 /// - Timer resets on any message received (response or notification)
-/// - Timer stops when pending count returns to 0
+/// - Timer stops when pending count returns to 0 OR when stop notification received
 /// - Timer firing triggers Ready->Failed transition via router.fail_all() and signals via liveness_failed_tx
 async fn reader_loop_with_liveness(
     mut reader: BridgeReader,
@@ -228,6 +271,7 @@ async fn reader_loop_with_liveness(
     cancel_token: CancellationToken,
     liveness_timeout: Option<Duration>,
     mut liveness_start_rx: mpsc::Receiver<()>,
+    mut liveness_stop_rx: mpsc::Receiver<()>,
     liveness_failed_tx: oneshot::Sender<()>,
 ) {
     // Liveness timer state: None when inactive, Some(Sleep) when active
@@ -275,6 +319,17 @@ async fn reader_loop_with_liveness(
                         timeout
                     );
                     liveness_timer = Some(Box::pin(tokio::time::sleep(timeout)));
+                }
+            }
+
+            // Check for liveness timer stop notification (shutdown began - ADR-0018 Phase 4)
+            Some(()) = liveness_stop_rx.recv() => {
+                if liveness_timer.is_some() {
+                    debug!(
+                        target: "kakehashi::bridge::reader",
+                        "Liveness timer stopped: shutdown began"
+                    );
+                    liveness_timer = None;
                 }
             }
 

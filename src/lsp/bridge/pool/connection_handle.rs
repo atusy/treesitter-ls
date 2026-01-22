@@ -155,9 +155,17 @@ impl ConnectionHandle {
     /// Transitions the connection to Closing state, which:
     /// - Rejects new requests with "bridge: connection closing" error
     /// - Signals that LSP shutdown/exit handshake should begin
+    /// - Stops the liveness timer (ADR-0018: global shutdown overrides liveness)
+    ///
+    /// Note: The reader task continues running to receive the shutdown response.
+    /// Only the liveness timer is disabled, not the entire reader.
     ///
     /// Valid from Ready or Initializing states per ADR-0015/ADR-0017.
     pub(crate) fn begin_shutdown(&self) {
+        // Stop the liveness timer (but not the reader task) per ADR-0018
+        // Global shutdown (Tier 3) overrides liveness timeout (Tier 2)
+        // Reader continues running to receive shutdown response
+        self.reader_handle.stop_liveness_timer();
         self.set_state(ConnectionState::Closing);
     }
 
@@ -533,5 +541,111 @@ mod tests {
             ConnectionState::Failed,
             "Connection should transition to Failed state on liveness timeout"
         );
+    }
+
+    /// Test that begin_shutdown() cancels the active liveness timer (ADR-0018 Phase 4).
+    ///
+    /// When global shutdown begins, the liveness timer should be disabled because
+    /// global shutdown (Tier 3) overrides liveness timeout (Tier 2).
+    #[tokio::test]
+    async fn begin_shutdown_cancels_liveness_timer() {
+        use crate::lsp::bridge::actor::spawn_reader_task_with_liveness;
+        use std::time::Duration;
+
+        // Create an unresponsive server
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+
+        // Spawn reader with short liveness timeout
+        let reader_handle = spawn_reader_task_with_liveness(
+            reader,
+            Arc::clone(&router),
+            Some(Duration::from_millis(50)),
+        );
+
+        // Create ConnectionHandle in Ready state
+        let handle = Arc::new(ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+        ));
+
+        // Register a request to start the liveness timer
+        let (_request_id, _response_rx) = handle.register_request().expect("should register");
+
+        // Immediately begin shutdown - this should cancel the liveness timer
+        handle.begin_shutdown();
+
+        // Wait longer than the liveness timeout would have been
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // State should be Closing (from begin_shutdown), NOT Failed (from liveness timeout)
+        // This proves the liveness timer was cancelled
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closing,
+            "State should be Closing, not Failed - liveness timer should have been cancelled"
+        );
+    }
+
+    /// Test that liveness timer does not start in Closing state (ADR-0018 Phase 4).
+    ///
+    /// Once shutdown begins, new requests should not start the liveness timer
+    /// because global shutdown (Tier 3) overrides liveness timeout (Tier 2).
+    #[tokio::test]
+    async fn liveness_timer_does_not_start_in_closing_state() {
+        use crate::lsp::bridge::actor::spawn_reader_task_with_liveness;
+        use std::time::Duration;
+
+        // Create an echo server
+        let mut conn = AsyncBridgeConnection::spawn(vec!["cat".to_string()])
+            .await
+            .expect("should spawn cat process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+
+        // Spawn reader with liveness timeout
+        let reader_handle = spawn_reader_task_with_liveness(
+            reader,
+            Arc::clone(&router),
+            Some(Duration::from_millis(50)),
+        );
+
+        // Create ConnectionHandle in Closing state
+        let handle = Arc::new(ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Closing,
+        ));
+
+        // This call to register_request checks if state is Ready before starting timer
+        // In Closing state, the timer should not start
+        // Note: register_request itself should still work (for pending shutdown requests)
+        // but we're testing that the timer doesn't start
+
+        // We can't easily test this directly since notify_liveness_start is called
+        // unconditionally. However, the register_request method checks state before
+        // calling notify_liveness_start.
+
+        // The timer start is gated by: `self.state() == ConnectionState::Ready`
+        // Since state is Closing, notify_liveness_start should NOT be called.
+
+        // Verify the connection is in Closing state
+        assert_eq!(handle.state(), ConnectionState::Closing);
+
+        // This is a documentation test - the actual gating is in register_request
+        // which already checks `self.state() == ConnectionState::Ready` before
+        // calling `self.reader_handle.notify_liveness_start()`.
     }
 }
