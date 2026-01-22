@@ -601,7 +601,10 @@ mod tests {
     ///
     /// Once shutdown begins, new requests should not start the liveness timer
     /// because global shutdown (Tier 3) overrides liveness timeout (Tier 2).
-    #[tokio::test]
+    ///
+    /// Test strategy: Register a request in Closing state, wait beyond timeout
+    /// duration, verify connection stays in Closing (not Failed).
+    #[tokio::test(start_paused = true)]
     async fn liveness_timer_does_not_start_in_closing_state() {
         use crate::lsp::bridge::actor::spawn_reader_task_with_liveness;
         use std::time::Duration;
@@ -614,12 +617,12 @@ mod tests {
         let (writer, reader) = conn.split();
         let router = Arc::new(ResponseRouter::new());
 
+        // Short timeout so we can wait past it
+        let timeout = Duration::from_millis(50);
+
         // Spawn reader with liveness timeout
-        let reader_handle = spawn_reader_task_with_liveness(
-            reader,
-            Arc::clone(&router),
-            Some(Duration::from_millis(50)),
-        );
+        let reader_handle =
+            spawn_reader_task_with_liveness(reader, Arc::clone(&router), Some(timeout));
 
         // Create ConnectionHandle in Closing state
         let handle = Arc::new(ConnectionHandle::with_state(
@@ -629,24 +632,27 @@ mod tests {
             ConnectionState::Closing,
         ));
 
-        // This call to register_request checks if state is Ready before starting timer
-        // In Closing state, the timer should not start
-        // Note: register_request itself should still work (for pending shutdown requests)
-        // but we're testing that the timer doesn't start
+        // Register a request - this should NOT start the liveness timer
+        // because register_request checks `state == Ready` before notifying
+        let result = handle.register_request();
+        assert!(
+            result.is_ok(),
+            "register_request should succeed even in Closing state"
+        );
+        let (_request_id, _rx) = result.unwrap();
 
-        // We can't easily test this directly since notify_liveness_start is called
-        // unconditionally. However, the register_request method checks state before
-        // calling notify_liveness_start.
+        // Advance time well beyond the timeout duration
+        // If timer started, the connection would transition to Failed
+        tokio::time::advance(timeout * 3).await;
+        tokio::task::yield_now().await; // Allow pending tasks to execute
 
-        // The timer start is gated by: `self.state() == ConnectionState::Ready`
-        // Since state is Closing, notify_liveness_start should NOT be called.
-
-        // Verify the connection is in Closing state
-        assert_eq!(handle.state(), ConnectionState::Closing);
-
-        // This is a documentation test - the actual gating is in register_request
-        // which already checks `self.state() == ConnectionState::Ready` before
-        // calling `self.reader_handle.notify_liveness_start()`.
+        // Connection should still be Closing, not Failed
+        // This proves the liveness timer never started
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closing,
+            "Connection should remain Closing - liveness timer should NOT have started"
+        );
     }
 
     /// Integration test: liveness timer resets on response activity.
