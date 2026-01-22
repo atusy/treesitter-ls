@@ -20,9 +20,9 @@
 //! - After `initialize()`: Capabilities are checked to determine if refresh is supported
 
 use std::sync::OnceLock;
+use tower_lsp_server::Client;
 use tower_lsp_server::ls_types::notification::Progress;
 use tower_lsp_server::ls_types::{ClientCapabilities, MessageType};
-use tower_lsp_server::Client;
 
 use crate::language::{LanguageEvent, LanguageLogLevel};
 use crate::lsp::{SettingsEvent, SettingsEventKind};

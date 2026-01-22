@@ -5,34 +5,31 @@ use tower_lsp_server::ls_types::request::{
     GotoDeclarationParams, GotoDeclarationResponse, GotoImplementationParams,
     GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
 };
-use tower_lsp_server::ls_types::{
-    ClientCapabilities, CompletionOptions, CompletionParams, CompletionResponse,
-    DeclarationCapability, DidChangeConfigurationParams, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentHighlight,
-    DocumentHighlightParams, DocumentLink, DocumentLinkOptions, DocumentLinkParams,
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    Hover, HoverParams, HoverProviderCapability, ImplementationProviderCapability,
-    InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location,
-    MessageType, Moniker, MonikerParams, OneOf, ReferenceParams, RenameParams, SaveOptions,
-    SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, SemanticTokenModifier,
-    SemanticTokenType, SemanticTokensDeltaParams, SemanticTokensFullDeltaResult,
-    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
-    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
-    SignatureHelpOptions, SignatureHelpParams, TextDocumentContentChangeEvent,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, TypeDefinitionProviderCapability, Uri, WorkDoneProgressOptions,
-    WorkspaceEdit,
-};
 #[cfg(feature = "experimental")]
 use tower_lsp_server::ls_types::{
     ColorInformation, ColorPresentation, ColorPresentationParams, ColorProviderCapability,
     DocumentColorParams,
 };
-#[cfg(test)]
 use tower_lsp_server::ls_types::{
-    Position, Range, SemanticTokensWorkspaceClientCapabilities, WorkspaceClientCapabilities,
+    CompletionOptions, CompletionParams, CompletionResponse, DeclarationCapability,
+    DidChangeConfigurationParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentHighlight, DocumentHighlightParams, DocumentLink,
+    DocumentLinkOptions, DocumentLinkParams, DocumentSymbolParams, DocumentSymbolResponse,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
+    ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
+    InlayHint, InlayHintParams, Location, MessageType, Moniker, MonikerParams, OneOf,
+    ReferenceParams, RenameParams, SaveOptions, SelectionRange, SelectionRangeParams,
+    SelectionRangeProviderCapability, SemanticTokenModifier, SemanticTokenType,
+    SemanticTokensDeltaParams, SemanticTokensFullDeltaResult, SemanticTokensFullOptions,
+    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensRangeParams,
+    SemanticTokensRangeResult, SemanticTokensResult, SemanticTokensServerCapabilities,
+    ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
+    TextDocumentContentChangeEvent, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TypeDefinitionProviderCapability, Uri,
+    WorkDoneProgressOptions, WorkspaceEdit,
 };
+#[cfg(test)]
+use tower_lsp_server::ls_types::{Position, Range};
 use tower_lsp_server::{Client, LanguageServer};
 use tree_sitter::InputEdit;
 use url::Url;
@@ -46,19 +43,18 @@ use crate::config::{
     resolve_language_settings_with_wildcard,
 };
 use crate::document::DocumentStore;
+use crate::language::LanguageEvent;
 use crate::language::injection::{
     CacheableInjectionRegion, InjectionResolver, collect_all_injections,
 };
 use crate::language::region_id_tracker::{EditInfo, RegionIdTracker};
 use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
-use crate::language::LanguageEvent;
 use crate::lsp::bridge::LanguageServerPool;
 use crate::lsp::client::{ClientNotifier, check_semantic_tokens_refresh_support};
+use crate::lsp::settings_manager::SettingsManager;
 use crate::lsp::{SettingsSource, load_settings};
 use crate::text::PositionMapper;
-use arc_swap::ArcSwap;
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 
 use super::auto_install::{InstallingLanguages, get_injected_languages};
@@ -193,13 +189,8 @@ pub struct Kakehashi {
     injection_map: InjectionMap,
     /// Per-injection semantic token cache (AC4/AC5 targeted invalidation)
     injection_token_cache: InjectionTokenCache,
-    root_path: ArcSwap<Option<PathBuf>>,
-    /// Settings including auto_install flag
-    settings: ArcSwap<WorkspaceSettings>,
-    /// Client capabilities from initialize() - immutable after initialization.
-    /// Uses OnceLock to enforce "set once, read many" semantics per LSP protocol.
-    /// Guards server-to-client requests (e.g., workspace/semanticTokens/refresh).
-    client_capabilities: OnceLock<ClientCapabilities>,
+    /// Consolidated settings, capabilities, and workspace root management
+    settings_manager: SettingsManager,
     /// Tracks languages currently being installed
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed
@@ -222,9 +213,7 @@ impl std::fmt::Debug for Kakehashi {
             .field("semantic_cache", &"SemanticTokenCache")
             .field("injection_map", &"InjectionMap")
             .field("injection_token_cache", &"InjectionTokenCache")
-            .field("root_path", &"ArcSwap<Option<PathBuf>>")
-            .field("settings", &"ArcSwap<WorkspaceSettings>")
-            .field("client_capabilities", &"OnceLock<ClientCapabilities>")
+            .field("settings_manager", &"SettingsManager")
             .field("installing_languages", &"InstallingLanguages")
             .field("failed_parsers", &"FailedParserRegistry")
             .field("language_server_pool", &"LanguageServerPool")
@@ -252,12 +241,7 @@ impl Kakehashi {
             semantic_cache: SemanticTokenCache::new(),
             injection_map: InjectionMap::new(),
             injection_token_cache: InjectionTokenCache::new(),
-            root_path: ArcSwap::new(Arc::new(None)),
-            settings: ArcSwap::new(Arc::new(WorkspaceSettings::default())),
-            // Empty until initialize() sets actual client capabilities.
-            // OnceLock ensures this can only be set once (during initialize).
-            // Before initialize(), capability checks return false (defensive default).
-            client_capabilities: OnceLock::new(),
+            settings_manager: SettingsManager::new(),
             installing_languages: InstallingLanguages::new(),
             failed_parsers,
             semantic_request_tracker: SemanticRequestTracker::new(),
@@ -272,14 +256,10 @@ impl Kakehashi {
     /// providing a clean API for logging, progress notifications, and semantic
     /// token refresh requests.
     fn notifier(&self) -> ClientNotifier<'_> {
-        ClientNotifier::new(self.client.clone(), &self.client_capabilities)
-    }
-
-    /// Returns true only if client declared workspace.semanticTokens.refreshSupport.
-    /// Returns false if initialize() hasn't been called yet (OnceLock is empty).
-    #[allow(dead_code)] // Part of API surface, used internally by notifier
-    fn supports_semantic_tokens_refresh(&self) -> bool {
-        self.notifier().supports_semantic_tokens_refresh()
+        ClientNotifier::new(
+            self.client.clone(),
+            self.settings_manager.client_capabilities_lock(),
+        )
     }
 
     /// Initialize the failed parser registry with crash detection.
@@ -306,32 +286,15 @@ impl Kakehashi {
 
     /// Check if auto-install is enabled.
     ///
-    /// Returns `false` if:
-    /// - `autoInstall` is explicitly set to `false` in settings
-    /// - `searchPaths` doesn't include the default data directory (auto-install
-    ///   would install to a location that isn't being searched)
+    /// Delegates to SettingsManager for the actual check.
     fn is_auto_install_enabled(&self) -> bool {
-        let settings = self.settings.load();
-
-        // If explicitly disabled, return false
-        if !settings.auto_install {
-            return false;
-        }
-
-        // Check if searchPaths includes the default data directory
-        // If not, auto-install would be useless (installed parsers wouldn't be found)
-        self.search_paths_include_default_data_dir(&settings.search_paths)
+        self.settings_manager.is_auto_install_enabled()
     }
 
     /// Check if the given search paths include the default data directory.
     fn search_paths_include_default_data_dir(&self, search_paths: &[String]) -> bool {
-        let Some(default_dir) = crate::install::default_data_dir() else {
-            // Can't determine default dir - allow auto-install anyway
-            return true;
-        };
-
-        let default_str = default_dir.to_string_lossy();
-        search_paths.iter().any(|p| p == default_str.as_ref())
+        self.settings_manager
+            .search_paths_include_default_data_dir(search_paths)
     }
 
     /// Notify user that parser is missing and needs manual installation.
@@ -339,7 +302,7 @@ impl Kakehashi {
     /// Called when a parser fails to load and auto-install is disabled
     /// (either explicitly or because searchPaths doesn't include the default data dir).
     async fn notify_parser_missing(&self, language: &str) {
-        let settings = self.settings.load();
+        let settings = self.settings_manager.load_settings();
 
         // Check why auto-install is disabled
         let reason = if !settings.auto_install {
@@ -706,7 +669,7 @@ impl Kakehashi {
         host_language: &str,
         injection_language: &str,
     ) -> Option<crate::config::settings::BridgeServerConfig> {
-        let settings = self.settings.load();
+        let settings = self.settings_manager.load_settings();
 
         // Use wildcard resolution for host language lookup (ADR-0011)
         // This allows languages._ to define default bridge filters
@@ -747,8 +710,8 @@ impl Kakehashi {
     }
 
     async fn apply_settings(&self, settings: WorkspaceSettings) {
-        // Store settings for auto_install check
-        self.settings.store(Arc::new(settings.clone()));
+        // Store settings via SettingsManager for auto_install check
+        self.settings_manager.apply_settings(settings.clone());
         let summary = self.language.load_settings(settings);
         self.notifier().log_language_events(&summary.events).await;
     }
@@ -952,7 +915,7 @@ impl Kakehashi {
         // - Queries: {data_dir}/queries/{language}/
 
         // Update settings to include the new paths
-        let current_settings = self.settings.load();
+        let current_settings = self.settings_manager.load_settings();
         let mut new_search_paths = current_settings.search_paths.clone();
 
         // Add parser directory to search paths
@@ -1139,9 +1102,9 @@ impl Kakehashi {
 impl LanguageServer for Kakehashi {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         // Store client capabilities for LSP compliance checks (e.g., refresh support).
-        // OnceLock::set() returns Err if already set - ignore since LSP spec guarantees
-        // initialize() is called exactly once per session.
-        let _ = self.client_capabilities.set(params.capabilities.clone());
+        // Uses SettingsManager which wraps OnceLock for "set once, read many" semantics.
+        self.settings_manager
+            .set_capabilities(params.capabilities.clone());
 
         // Log capability state for troubleshooting client compatibility issues.
         log::debug!(
@@ -1188,16 +1151,14 @@ impl LanguageServer for Kakehashi {
                     path.display()
                 ))
                 .await;
-            self.root_path.store(Arc::new(Some(path.clone())));
+            self.settings_manager.set_root_path(Some(path.clone()));
         } else {
             self.notifier()
-                .log_warning(
-                    "Failed to determine workspace root - config file will not be loaded",
-                )
+                .log_warning("Failed to determine workspace root - config file will not be loaded")
                 .await;
         }
 
-        let root_path = self.root_path.load().as_ref().clone();
+        let root_path = self.settings_manager.root_path().as_ref().clone();
         let settings_outcome = load_settings(
             root_path.as_deref(),
             params
@@ -1511,7 +1472,7 @@ impl LanguageServer for Kakehashi {
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
-        let root_path = self.root_path.load().as_ref().clone();
+        let root_path = self.settings_manager.root_path().as_ref().clone();
         let settings_outcome = load_settings(
             root_path.as_deref(),
             Some((SettingsSource::ClientConfiguration, params.settings)),
@@ -1644,55 +1605,11 @@ impl LanguageServer for Kakehashi {
 mod tests {
     use super::*;
     use crate::config::settings::BridgeLanguageConfig;
-    use rstest::rstest;
     use std::collections::HashMap;
 
-    /// Tests for check_semantic_tokens_refresh_support pure function
-    /// These test the capability checking logic without needing to construct Kakehashi
-    ///
-    /// Arguments control what's present at each level:
-    /// - `workspace`: Whether workspace field is Some
-    /// - `semantic_tokens`: Whether semantic_tokens is Some (requires workspace)
-    /// - `refresh_support`: The actual refresh_support value (requires semantic_tokens)
-    /// - `expected`: The expected result of refresh support
-    #[rstest]
-    #[case::refresh_support_true(true, true, Some(true), true)]
-    #[case::refresh_support_false(true, true, Some(false), false)]
-    #[case::refresh_support_none(true, true, None, false)]
-    #[case::semantic_tokens_none(true, false, None, false)]
-    #[case::workspace_empty(true, false, None, false)]
-    #[case::workspace_none(false, false, None, false)]
-    fn test_check_refresh_support(
-        #[case] workspace: bool,
-        #[case] semantic_tokens: bool,
-        #[case] refresh_support: Option<bool>,
-        #[case] expected: bool,
-    ) {
-        let caps = ClientCapabilities {
-            workspace: if workspace {
-                Some(WorkspaceClientCapabilities {
-                    semantic_tokens: if semantic_tokens {
-                        Some(SemanticTokensWorkspaceClientCapabilities { refresh_support })
-                    } else {
-                        None
-                    },
-                    ..Default::default()
-                })
-            } else {
-                None
-            },
-            ..Default::default()
-        };
-        assert_eq!(check_semantic_tokens_refresh_support(&caps), expected);
-    }
-
-    #[test]
-    fn test_check_refresh_support_when_capabilities_empty() {
-        // Completely empty capabilities (pre-init state)
-        // Keep as separate test to explicitly document Default behavior
-        let caps = ClientCapabilities::default();
-        assert!(!check_semantic_tokens_refresh_support(&caps));
-    }
+    // Note: test_check_refresh_support tests have been moved to:
+    // - client.rs: tests for check_semantic_tokens_refresh_support pure function
+    // - settings_manager.rs: tests for SettingsManager.supports_semantic_tokens_refresh
 
     #[test]
     fn should_create_valid_url_from_file_path() {
