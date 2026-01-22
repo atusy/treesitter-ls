@@ -104,13 +104,13 @@ pub struct Kakehashi {
     language: LanguageCoordinator,
     parser_pool: Mutex<DocumentParserPool>,
     documents: DocumentStore,
-    /// Unified cache coordinator for semantic tokens, injections, and request tracking (Phase 4)
+    /// Unified cache coordinator for semantic tokens, injections, and request tracking
     cache: CacheCoordinator,
     /// Consolidated settings, capabilities, and workspace root management
     settings_manager: SettingsManager,
     /// Isolated coordinator for parser auto-installation
     auto_install: AutoInstallManager,
-    /// Bridge coordinator for pool + region ID tracking (Phase 5)
+    /// Bridge coordinator for downstream LS pool and region ID tracking
     bridge: BridgeCoordinator,
 }
 
@@ -134,7 +134,7 @@ impl Kakehashi {
         let language = LanguageCoordinator::new();
         let parser_pool = language.create_document_parser_pool();
 
-        // Initialize auto-install manager with crash detection (Phase 3)
+        // Initialize auto-install manager with crash detection
         let failed_parsers = AutoInstallManager::init_failed_parser_registry();
         let auto_install = AutoInstallManager::new(InstallingLanguages::new(), failed_parsers);
 
@@ -227,7 +227,7 @@ impl Kakehashi {
             .await;
     }
 
-    /// Send didClose for invalidated virtual documents (Phase 3).
+    /// Send didClose for invalidated virtual documents.
     ///
     /// When region IDs are invalidated (e.g., due to edits touching their START),
     /// the corresponding virtual documents become orphaned in downstream LSs.
@@ -603,7 +603,7 @@ impl Kakehashi {
         }
 
         // Build (language, region_id, content) tuples for each injection
-        // Phase 2 (ADR-0019): Use RegionIdTracker with position-based keys
+        // ADR-0019: Use RegionIdTracker with position-based keys
         // No document lock held here - safe to access region_id_tracker
         let injections: Vec<(String, String, String)> = regions
             .iter()
@@ -1010,13 +1010,12 @@ impl LanguageServer for Kakehashi {
         // Apply content changes and build tree-sitter edits
         let (text, edits) = apply_content_changes_with_edits(&old_text, params.content_changes);
 
-        // Phase 4 (ADR-0019): Apply START-priority invalidation to region ID tracker
+        // ADR-0019: Apply START-priority invalidation to region ID tracker.
         // Use InputEdits directly for precise invalidation when available,
         // fall back to diff-based approach for full document sync.
         //
         // This must be called AFTER content changes are applied (so we have new text)
         // but BEFORE parse_document (so position sync happens before new tree is built).
-        // Returns ULIDs that were invalidated (Phase 3).
         let invalidated_ulids = if edits.is_empty() {
             // Full document sync: no InputEdits available, reconstruct from diff
             self.bridge.apply_text_diff(&uri, &old_text, &text)
@@ -1044,8 +1043,8 @@ impl LanguageServer for Kakehashi {
         self.forward_didchange_to_bridges(&uri, &text_for_bridge)
             .await;
 
-        // Phase 3 (ADR-0019): Close invalidated virtual documents
-        // Send didClose notifications to downstream LSs for orphaned docs
+        // ADR-0019: Close invalidated virtual documents.
+        // Send didClose notifications to downstream LSs for orphaned docs.
         self.close_invalidated_virtual_docs(&uri, &invalidated_ulids)
             .await;
 
@@ -1195,9 +1194,8 @@ impl LanguageServer for Kakehashi {
 mod tests {
     use super::*;
 
-    // Note: Wildcard config resolution tests moved to src/config.rs (Phase 6.1)
-    // Note: URL/Position utility tests removed (tested standard library, not our code)
-    // Note: apply_content_changes_with_edits tests moved to src/lsp/text_sync.rs (Phase 6.2)
+    // Note: Wildcard config resolution tests are in src/config.rs
+    // Note: apply_content_changes_with_edits tests are in src/lsp/text_sync.rs
 
     #[test]
     fn test_check_injected_languages_identifies_missing_parsers() {
