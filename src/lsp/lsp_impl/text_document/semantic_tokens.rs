@@ -166,8 +166,8 @@ impl Kakehashi {
             }
 
             if doc_is_current {
-                if self.failed_parsers.is_failed(language_name)
-                    && let Err(error) = self.failed_parsers.clear_failed(language_name)
+                if self.auto_install.is_parser_failed(language_name)
+                    && let Err(error) = self.auto_install.clear_failed(language_name)
                 {
                     log::warn!(
                         target: "kakehashi::crash_recovery",

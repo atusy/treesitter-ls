@@ -17,8 +17,8 @@ use tower_lsp_server::ls_types::{
     DocumentLinkOptions, DocumentLinkParams, DocumentSymbolParams, DocumentSymbolResponse,
     GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
     ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
-    InlayHint, InlayHintParams, Location, MessageType, Moniker, MonikerParams, OneOf,
-    ReferenceParams, RenameParams, SaveOptions, SelectionRange, SelectionRangeParams,
+    InlayHint, InlayHintParams, Location, Moniker, MonikerParams, OneOf, ReferenceParams,
+    RenameParams, SaveOptions, SelectionRange, SelectionRangeParams,
     SelectionRangeProviderCapability, SemanticTokenModifier, SemanticTokenType,
     SemanticTokensDeltaParams, SemanticTokensFullDeltaResult, SemanticTokensFullOptions,
     SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensRangeParams,
@@ -48,16 +48,17 @@ use crate::language::injection::{
     CacheableInjectionRegion, InjectionResolver, collect_all_injections,
 };
 use crate::language::region_id_tracker::{EditInfo, RegionIdTracker};
-use crate::language::{DocumentParserPool, FailedParserRegistry, LanguageCoordinator};
+use crate::language::{DocumentParserPool, LanguageCoordinator};
 use crate::lsp::bridge::LanguageServerPool;
 use crate::lsp::client::{ClientNotifier, check_semantic_tokens_refresh_support};
 use crate::lsp::settings_manager::SettingsManager;
 use crate::lsp::{SettingsSource, load_settings};
 use crate::text::PositionMapper;
-use std::path::PathBuf;
 use tokio::sync::Mutex;
 
-use super::auto_install::{InstallingLanguages, get_injected_languages};
+use super::auto_install::{
+    AutoInstallManager, InstallEvent, InstallingLanguages, get_injected_languages,
+};
 use super::semantic_request_tracker::SemanticRequestTracker;
 
 /// Convert ls_types::Uri to url::Url
@@ -191,10 +192,8 @@ pub struct Kakehashi {
     injection_token_cache: InjectionTokenCache,
     /// Consolidated settings, capabilities, and workspace root management
     settings_manager: SettingsManager,
-    /// Tracks languages currently being installed
-    installing_languages: InstallingLanguages,
-    /// Tracks parsers that have crashed
-    failed_parsers: FailedParserRegistry,
+    /// Isolated coordinator for parser auto-installation
+    auto_install: AutoInstallManager,
     /// Tracks active semantic token requests for cancellation support
     semantic_request_tracker: SemanticRequestTracker,
     /// Pool of downstream language server connections (ADR-0016)
@@ -214,8 +213,7 @@ impl std::fmt::Debug for Kakehashi {
             .field("injection_map", &"InjectionMap")
             .field("injection_token_cache", &"InjectionTokenCache")
             .field("settings_manager", &"SettingsManager")
-            .field("installing_languages", &"InstallingLanguages")
-            .field("failed_parsers", &"FailedParserRegistry")
+            .field("auto_install", &"AutoInstallManager")
             .field("language_server_pool", &"LanguageServerPool")
             .field("region_id_tracker", &"RegionIdTracker")
             .finish_non_exhaustive()
@@ -227,8 +225,9 @@ impl Kakehashi {
         let language = LanguageCoordinator::new();
         let parser_pool = language.create_document_parser_pool();
 
-        // Initialize failed parser registry with crash detection
-        let failed_parsers = Self::init_failed_parser_registry();
+        // Initialize auto-install manager with crash detection (Phase 3)
+        let failed_parsers = AutoInstallManager::init_failed_parser_registry();
+        let auto_install = AutoInstallManager::new(InstallingLanguages::new(), failed_parsers);
 
         // Language server pool (ADR-0016: Server Pool Coordination)
         let language_server_pool = LanguageServerPool::new();
@@ -242,8 +241,7 @@ impl Kakehashi {
             injection_map: InjectionMap::new(),
             injection_token_cache: InjectionTokenCache::new(),
             settings_manager: SettingsManager::new(),
-            installing_languages: InstallingLanguages::new(),
-            failed_parsers,
+            auto_install,
             semantic_request_tracker: SemanticRequestTracker::new(),
             language_server_pool,
             region_id_tracker: RegionIdTracker::new(),
@@ -262,28 +260,6 @@ impl Kakehashi {
         )
     }
 
-    /// Initialize the failed parser registry with crash detection.
-    ///
-    /// Uses the default data directory for state storage.
-    /// If initialization fails, returns an empty registry.
-    fn init_failed_parser_registry() -> FailedParserRegistry {
-        let state_dir =
-            crate::install::default_data_dir().unwrap_or_else(|| PathBuf::from("/tmp/kakehashi"));
-
-        let registry = FailedParserRegistry::new(&state_dir);
-
-        // Initialize and detect any previous crashes
-        if let Err(e) = registry.init() {
-            log::warn!(
-                target: "kakehashi::crash_recovery",
-                "Failed to initialize crash recovery state: {}",
-                e
-            );
-        }
-
-        registry
-    }
-
     /// Check if auto-install is enabled.
     ///
     /// Delegates to SettingsManager for the actual check.
@@ -295,6 +271,27 @@ impl Kakehashi {
     fn search_paths_include_default_data_dir(&self, search_paths: &[String]) -> bool {
         self.settings_manager
             .search_paths_include_default_data_dir(search_paths)
+    }
+
+    /// Dispatch install events to ClientNotifier.
+    ///
+    /// This method bridges AutoInstallManager (isolated) with ClientNotifier.
+    /// AutoInstallManager returns events, Kakehashi dispatches them.
+    async fn dispatch_install_events(&self, language: &str, events: &[InstallEvent]) {
+        let notifier = self.notifier();
+        for event in events {
+            match event {
+                InstallEvent::Log { level, message } => {
+                    notifier.log(*level, message.clone()).await;
+                }
+                InstallEvent::ProgressBegin => {
+                    notifier.progress_begin(language).await;
+                }
+                InstallEvent::ProgressEnd { success } => {
+                    notifier.progress_end(language, *success).await;
+                }
+            }
+        }
     }
 
     /// Notify user that parser is missing and needs manual installation.
@@ -515,7 +512,7 @@ impl Kakehashi {
 
         if let Some(language_name) = language_name {
             // Check if this parser has previously crashed
-            if self.failed_parsers.is_failed(&language_name) {
+            if self.auto_install.is_parser_failed(&language_name) {
                 log::warn!(
                     target: "kakehashi::crash_recovery",
                     "Skipping parsing for '{}' - parser previously crashed",
@@ -552,7 +549,7 @@ impl Kakehashi {
 
                     let language_name_clone = language_name.clone();
                     let text_clone = text.clone();
-                    let failed_parsers = self.failed_parsers.clone();
+                    let auto_install = self.auto_install.clone();
 
                     // Parse in spawn_blocking with timeout to avoid blocking tokio worker thread
                     // and prevent infinite hangs on pathological input
@@ -562,12 +559,12 @@ impl Kakehashi {
                         PARSE_TIMEOUT,
                         tokio::task::spawn_blocking(move || {
                             // Record that we're about to parse (for crash detection)
-                            let _ = failed_parsers.begin_parsing(&language_name_clone);
+                            let _ = auto_install.begin_parsing(&language_name_clone);
 
                             let parse_result = parser.parse(&text_clone, old_tree.as_ref());
 
                             // Parsing succeeded without crash - clear the state for this language
-                            let _ = failed_parsers.end_parsing_language(&language_name_clone);
+                            let _ = auto_install.end_parsing(&language_name_clone);
 
                             (parser, parse_result)
                         }),
@@ -726,6 +723,10 @@ impl Kakehashi {
 
     /// Try to auto-install a language if not already being installed.
     ///
+    /// Delegates to `AutoInstallManager::try_install()` and handles coordination:
+    /// 1. Dispatches install events to ClientNotifier
+    /// 2. Triggers `reload_language_after_install()` on success
+    ///
     /// # Arguments
     /// * `language` - The language to install
     /// * `uri` - The document URI that triggered the install
@@ -742,153 +743,21 @@ impl Kakehashi {
         text: String,
         is_injection: bool,
     ) -> bool {
-        let notifier = self.notifier();
+        // Delegate to AutoInstallManager (isolated, returns events)
+        let result = self.auto_install.try_install(language).await;
 
-        // Check if language is supported by nvim-treesitter before attempting install
-        // Use cached metadata to avoid repeated HTTP requests
-        let default_data_dir = crate::install::default_data_dir();
-        let fetch_options =
-            default_data_dir
-                .as_ref()
-                .map(|dir| crate::install::metadata::FetchOptions {
-                    data_dir: Some(dir.as_path()),
-                    use_cache: true,
-                });
-        let (should_skip, reason) =
-            super::auto_install::should_skip_unsupported_language(language, fetch_options.as_ref())
+        // Dispatch events to ClientNotifier
+        self.dispatch_install_events(language, &result.events).await;
+
+        // Handle post-install coordination if successful
+        if let Some(data_dir) = result.outcome.data_dir() {
+            self.reload_language_after_install(language, data_dir, uri, text, is_injection)
                 .await;
-        if let Some(reason) = &reason {
-            let message_type = reason.message_type();
-            let message = reason.message();
-            notifier.log(message_type, message).await;
-        }
-        if should_skip {
-            return false; // Not supported - no install triggered
+            return true; // Reload triggered, caller should skip parse
         }
 
-        // Try to start installation (returns false if already installing)
-        if !self.installing_languages.try_start_install(language) {
-            notifier
-                .log_info(format!(
-                    "Language '{}' is already being installed",
-                    language
-                ))
-                .await;
-            return true; // Already installing - caller should skip parse
-        }
-
-        // Send progress Begin notification
-        notifier.progress_begin(language).await;
-
-        // Get data directory
-        let data_dir = match default_data_dir {
-            Some(dir) => dir,
-            None => {
-                notifier
-                    .log(
-                        MessageType::ERROR,
-                        "Could not determine data directory for auto-install",
-                    )
-                    .await;
-                // Send progress End notification (failure)
-                notifier.progress_end(language, false).await;
-                self.installing_languages.finish_install(language);
-                return false; // No data dir - install failed, no parse needed
-            }
-        };
-
-        // Check if parser already exists - skip installation and just reload
-        if crate::install::parser_file_exists(language, &data_dir).is_some() {
-            notifier
-                .log_info(format!(
-                    "Parser for '{}' already exists. Loading without reinstall...",
-                    language
-                ))
-                .await;
-
-            // Send progress End notification (success - already installed)
-            notifier.progress_end(language, true).await;
-            self.installing_languages.finish_install(language);
-            self.reload_language_after_install(language, &data_dir, uri, text, is_injection)
-                .await;
-            return true; // Parser exists - reload triggered, caller should skip parse
-        }
-
-        notifier
-            .log_info(format!(
-                "Auto-installing language '{}' in background...",
-                language
-            ))
-            .await;
-
-        let lang = language.to_string();
-        let result =
-            crate::install::install_language_async(lang.clone(), data_dir.clone(), false).await;
-
-        // Mark installation as complete
-        self.installing_languages.finish_install(&lang);
-
-        // Check if parser file exists after install attempt (even if queries failed)
-        let parser_exists = crate::install::parser_file_exists(&lang, &data_dir).is_some();
-
-        if result.is_success() {
-            // Send progress End notification (success)
-            notifier.progress_end(&lang, true).await;
-            notifier
-                .log_info(format!(
-                    "Successfully installed language '{}'. Reloading...",
-                    lang
-                ))
-                .await;
-
-            // Add the installed paths to search paths and reload
-            self.reload_language_after_install(&lang, &data_dir, uri, text, is_injection)
-                .await;
-        } else if parser_exists {
-            // Parser compiled successfully but queries failed (e.g., already exist)
-            // Still try to reload since the parser is available
-            notifier.progress_end(&lang, true).await;
-
-            let mut warnings = Vec::new();
-            if let Some(e) = &result.queries_error {
-                warnings.push(format!("queries: {}", e));
-            }
-            notifier
-                .log_warning(format!(
-                    "Language '{}' parser installed but with warnings: {}. Reloading...",
-                    lang,
-                    warnings.join("; ")
-                ))
-                .await;
-
-            // Still reload - parser is usable even without fresh queries
-            self.reload_language_after_install(&lang, &data_dir, uri, text, is_injection)
-                .await;
-        } else {
-            // Send progress End notification (failure)
-            notifier.progress_end(&lang, false).await;
-            let mut errors = Vec::new();
-            if let Some(e) = result.parser_error {
-                errors.push(format!("parser: {}", e));
-            }
-            if let Some(e) = result.queries_error {
-                errors.push(format!("queries: {}", e));
-            }
-            notifier
-                .log(
-                    MessageType::ERROR,
-                    format!(
-                        "Failed to install language '{}': {}",
-                        lang,
-                        errors.join("; ")
-                    ),
-                )
-                .await;
-        }
-
-        // Installation was triggered and will complete in background
-        // reload_language_after_install will handle parse_document
-        true
+        // Return based on outcome
+        result.outcome.should_skip_parse()
     }
 
     /// Reload a language after installation and optionally re-parse the document.
@@ -1246,7 +1115,7 @@ impl LanguageServer for Kakehashi {
     async fn shutdown(&self) -> Result<()> {
         // Persist crash detection state before shutdown
         // This enables crash recovery to detect if parsing was in progress
-        if let Err(e) = self.failed_parsers.persist_state() {
+        if let Err(e) = self.auto_install.persist_state() {
             log::warn!(
                 target: "kakehashi::crash_recovery",
                 "Failed to persist crash detection state on shutdown: {}",
