@@ -7,16 +7,19 @@
 //!
 //! - `actor` - Actor components (ResponseRouter, Reader task) for async I/O (ADR-0015)
 //! - `connection` - AsyncBridgeConnection for process spawning and I/O
+//! - `coordinator` - BridgeCoordinator for unified pool + region ID tracking (Phase 5)
 //! - `protocol` - VirtualDocumentUri, request building, and response transformation
 //! - `pool` - LanguageServerPool for server pool coordination (ADR-0016)
 
 mod actor;
 mod connection;
+mod coordinator;
 mod pool;
 mod protocol;
 mod text_document;
 
 // Re-export public types
+pub(crate) use coordinator::BridgeCoordinator;
 pub(crate) use pool::LanguageServerPool;
 
 /// Integration tests for the bridge module.

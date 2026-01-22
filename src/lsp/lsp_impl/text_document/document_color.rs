@@ -56,7 +56,7 @@ impl Kakehashi {
 
         // Collect all injection regions
         let all_regions = InjectionResolver::resolve_all(
-            &self.region_id_tracker,
+            self.bridge.region_id_tracker(),
             &uri,
             snapshot.tree(),
             snapshot.text(),
@@ -88,7 +88,8 @@ impl Kakehashi {
 
             // Send document color request via language server pool
             let response = self
-                .language_server_pool
+                .bridge
+                .pool()
                 .send_document_color_request(
                     &server_config,
                     &uri,

@@ -35,16 +35,13 @@ use tree_sitter::InputEdit;
 use url::Url;
 
 use crate::analysis::{LEGEND_MODIFIERS, LEGEND_TYPES};
-use crate::config::{
-    TreeSitterSettings, WorkspaceSettings, resolve_language_server_with_wildcard,
-    resolve_language_settings_with_wildcard,
-};
+use crate::config::{TreeSitterSettings, WorkspaceSettings};
 use crate::document::DocumentStore;
 use crate::language::LanguageEvent;
 use crate::language::injection::{InjectionResolver, collect_all_injections};
-use crate::language::region_id_tracker::{EditInfo, RegionIdTracker};
+use crate::language::region_id_tracker::EditInfo;
 use crate::language::{DocumentParserPool, LanguageCoordinator};
-use crate::lsp::bridge::LanguageServerPool;
+use crate::lsp::bridge::BridgeCoordinator;
 use crate::lsp::client::{ClientNotifier, check_semantic_tokens_refresh_support};
 use crate::lsp::settings_manager::SettingsManager;
 use crate::lsp::{SettingsSource, load_settings};
@@ -185,10 +182,8 @@ pub struct Kakehashi {
     settings_manager: SettingsManager,
     /// Isolated coordinator for parser auto-installation
     auto_install: AutoInstallManager,
-    /// Pool of downstream language server connections (ADR-0016)
-    language_server_pool: LanguageServerPool,
-    /// Stable ULID-based region ID tracker (ADR-0019 Phase 1)
-    region_id_tracker: RegionIdTracker,
+    /// Bridge coordinator for pool + region ID tracking (Phase 5)
+    bridge: BridgeCoordinator,
 }
 
 impl std::fmt::Debug for Kakehashi {
@@ -201,8 +196,7 @@ impl std::fmt::Debug for Kakehashi {
             .field("cache", &"CacheCoordinator")
             .field("settings_manager", &"SettingsManager")
             .field("auto_install", &"AutoInstallManager")
-            .field("language_server_pool", &"LanguageServerPool")
-            .field("region_id_tracker", &"RegionIdTracker")
+            .field("bridge", &"BridgeCoordinator")
             .finish_non_exhaustive()
     }
 }
@@ -216,9 +210,6 @@ impl Kakehashi {
         let failed_parsers = AutoInstallManager::init_failed_parser_registry();
         let auto_install = AutoInstallManager::new(InstallingLanguages::new(), failed_parsers);
 
-        // Language server pool (ADR-0016: Server Pool Coordination)
-        let language_server_pool = LanguageServerPool::new();
-
         Self {
             client,
             language,
@@ -227,8 +218,7 @@ impl Kakehashi {
             cache: CacheCoordinator::new(),
             settings_manager: SettingsManager::new(),
             auto_install,
-            language_server_pool,
-            region_id_tracker: RegionIdTracker::new(),
+            bridge: BridgeCoordinator::new(),
         }
     }
 
@@ -316,7 +306,7 @@ impl Kakehashi {
     /// This method cleans them up by:
     ///
     /// 1. Clearing injection token cache for invalidated ULIDs
-    /// 2. Delegating to LanguageServerPool for tracking cleanup and didClose
+    /// 2. Delegating to BridgeCoordinator for tracking cleanup and didClose
     ///
     /// Documents that were never opened (not in host_to_virtual) are automatically
     /// skipped - they don't need didClose since didOpen was never sent.
@@ -333,8 +323,8 @@ impl Kakehashi {
         self.cache
             .remove_injection_tokens_for_ulids(host_uri, invalidated_ulids);
 
-        // Delegate to pool for tracking cleanup and didClose notifications
-        self.language_server_pool
+        // Delegate to bridge coordinator for tracking cleanup and didClose notifications
+        self.bridge
             .close_invalidated_docs(host_uri, invalidated_ulids)
             .await;
     }
@@ -494,14 +484,8 @@ impl Kakehashi {
 
     /// Get bridge server config for a given injection language from settings.
     ///
-    /// Looks up the bridge.servers configuration and finds a server that handles
-    /// the specified language. Returns None if:
-    /// - No server is configured for this injection language, OR
-    /// - The host language has a bridge filter that excludes this injection language
-    ///
-    /// Uses wildcard resolution (ADR-0011) for host language lookup:
-    /// - If host language is not defined, inherits from languages._ if present
-    /// - This allows setting default bridge filters for all hosts via languages._
+    /// Convenience wrapper that loads settings and delegates to the bridge coordinator.
+    /// This method stays in Kakehashi for backward compatibility with handlers.
     ///
     /// # Arguments
     /// * `host_language` - The language of the host document (e.g., "markdown")
@@ -512,43 +496,8 @@ impl Kakehashi {
         injection_language: &str,
     ) -> Option<crate::config::settings::BridgeServerConfig> {
         let settings = self.settings_manager.load_settings();
-
-        // Use wildcard resolution for host language lookup (ADR-0011)
-        // This allows languages._ to define default bridge filters
-        if let Some(host_settings) =
-            resolve_language_settings_with_wildcard(&settings.languages, host_language)
-            && !host_settings.is_language_bridgeable(injection_language)
-        {
-            log::debug!(
-                target: "kakehashi::bridge",
-                "Bridge filter for {} blocks injection language {}",
-                host_language,
-                injection_language
-            );
-            return None;
-        }
-
-        // Check if language servers exist
-        if let Some(ref servers) = settings.language_servers {
-            // Look for a server that handles this language
-            // ADR-0011: Resolve each server with wildcard BEFORE checking languages,
-            // because languages list may be inherited from languageServers._
-            for server_name in servers.keys() {
-                // Skip wildcard entry - we use it for inheritance, not direct lookup
-                if server_name == "_" {
-                    continue;
-                }
-
-                if let Some(resolved_config) =
-                    resolve_language_server_with_wildcard(servers, server_name)
-                        .filter(|c| c.languages.iter().any(|l| l == injection_language))
-                {
-                    return Some(resolved_config);
-                }
-            }
-        }
-
-        None
+        self.bridge
+            .get_config_for_language(&settings, host_language, injection_language)
     }
 
     async fn apply_settings(&self, settings: WorkspaceSettings) {
@@ -731,8 +680,11 @@ impl Kakehashi {
         let injections: Vec<(String, String, String)> = regions
             .iter()
             .map(|region| {
-                let region_id =
-                    InjectionResolver::calculate_region_id(&self.region_id_tracker, uri, region);
+                let region_id = InjectionResolver::calculate_region_id(
+                    self.bridge.region_id_tracker(),
+                    uri,
+                    region,
+                );
                 let content = &text[region.content_node.byte_range()];
                 (
                     region.language.clone(),
@@ -743,7 +695,7 @@ impl Kakehashi {
             .collect();
 
         // Forward didChange to opened virtual documents
-        self.language_server_pool
+        self.bridge
             .forward_didchange_to_opened_docs(uri, &injections)
             .await;
     }
@@ -971,7 +923,7 @@ impl LanguageServer for Kakehashi {
         // Graceful shutdown of all downstream language server connections (ADR-0017)
         // - Transitions to Closing state, sends LSP shutdown/exit handshake
         // - Escalates to SIGTERM/SIGKILL for unresponsive servers (Unix)
-        self.language_server_pool.shutdown_all().await;
+        self.bridge.shutdown_all().await;
 
         Ok(())
     }
@@ -1083,11 +1035,11 @@ impl LanguageServer for Kakehashi {
         self.cache.remove_document(&uri);
 
         // Clean up region ID mappings for this document (ADR-0019)
-        self.region_id_tracker.cleanup(&uri);
+        self.bridge.cleanup(&uri);
 
         // Close all virtual documents associated with this host document
         // This sends didClose notifications to downstream language servers
-        let closed_docs = self.language_server_pool.close_host_document(&uri).await;
+        let closed_docs = self.bridge.close_host_document(&uri).await;
         if !closed_docs.is_empty() {
             log::debug!(
                 target: "kakehashi::bridge",
@@ -1139,12 +1091,11 @@ impl LanguageServer for Kakehashi {
         // Returns ULIDs that were invalidated (Phase 3).
         let invalidated_ulids = if edits.is_empty() {
             // Full document sync: no InputEdits available, reconstruct from diff
-            self.region_id_tracker
-                .apply_text_diff(&uri, &old_text, &text)
+            self.bridge.apply_text_diff(&uri, &old_text, &text)
         } else {
             // Incremental sync: use InputEdits directly (precise, no over-invalidation)
             let edit_infos: Vec<EditInfo> = edits.iter().map(EditInfo::from).collect();
-            self.region_id_tracker.apply_input_edits(&uri, &edit_infos)
+            self.bridge.apply_input_edits(&uri, &edit_infos)
         };
 
         // Invalidate injection caches for regions overlapping with edits (AC4/AC5)
