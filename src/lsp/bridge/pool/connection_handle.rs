@@ -333,6 +333,9 @@ impl ConnectionHandle {
     ///
     /// Takes the oneshot receiver and request ID, waits for response with
     /// 30-second timeout. On timeout, removes the pending entry from router.
+    ///
+    /// Also checks for liveness timeout failure and transitions to Failed state
+    /// if the reader task signaled a liveness timeout (ADR-0014 Phase 3).
     pub(crate) async fn wait_for_response(
         &self,
         request_id: RequestId,
@@ -343,8 +346,22 @@ impl ConnectionHandle {
         const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
         match timeout(REQUEST_TIMEOUT, response_rx).await {
-            Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err(io::Error::other("bridge: response channel closed")),
+            Ok(Ok(response)) => {
+                // Check if this was an error response from liveness timeout
+                // If so, transition to Failed state (ADR-0014 Phase 3)
+                if self.reader_handle.check_liveness_failed() {
+                    self.set_state(ConnectionState::Failed);
+                }
+                Ok(response)
+            }
+            Ok(Err(_)) => {
+                // Channel closed - check if due to liveness timeout
+                // If so, transition to Failed state (ADR-0014 Phase 3)
+                if self.reader_handle.check_liveness_failed() {
+                    self.set_state(ConnectionState::Failed);
+                }
+                Err(io::Error::other("bridge: response channel closed"))
+            }
             Err(_) => {
                 // Timeout - clean up pending entry
                 self.router().remove(request_id);
@@ -445,5 +462,76 @@ mod tests {
         // Can access router
         let _router = handle.router();
         // Router is accessible (test passes if no panic)
+    }
+
+    /// Test that liveness timeout triggers Ready->Failed state transition (ADR-0014 Phase 3).
+    ///
+    /// When the liveness timer fires:
+    /// 1. router.fail_all() sends error responses to pending requests
+    /// 2. ConnectionHandle transitions to Failed state
+    /// 3. Failed state triggers SpawnNew action on next request
+    #[tokio::test]
+    async fn liveness_timeout_transitions_to_failed_state() {
+        use crate::lsp::bridge::actor::spawn_reader_task_with_liveness;
+        use std::time::Duration;
+
+        // Create an unresponsive server (consumes input, never outputs)
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+
+        // Spawn reader with short liveness timeout
+        let reader_handle = spawn_reader_task_with_liveness(
+            reader,
+            Arc::clone(&router),
+            Some(Duration::from_millis(50)),
+        );
+
+        // Create ConnectionHandle in Ready state
+        let handle = Arc::new(ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+        ));
+
+        // Verify initial state is Ready
+        assert_eq!(handle.state(), ConnectionState::Ready);
+
+        // Register a request - this will notify the reader to start the liveness timer
+        let (request_id, response_rx) = handle.register_request().expect("should register request");
+
+        // Wait for response - this will block until liveness timeout fires
+        // The response will be an error from router.fail_all()
+        let result = handle.wait_for_response(request_id, response_rx).await;
+
+        // Response should be Ok (error response from fail_all is still delivered)
+        let response = result.expect("should receive error response from fail_all");
+        assert!(
+            response.get("error").is_some(),
+            "Response should be an error: {:?}",
+            response
+        );
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("liveness timeout"),
+            "Error should mention liveness timeout"
+        );
+
+        // After liveness timeout, connection should be in Failed state (Phase 3)
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Failed,
+            "Connection should transition to Failed state on liveness timeout"
+        );
     }
 }

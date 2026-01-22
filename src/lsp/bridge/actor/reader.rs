@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use log::{debug, warn};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -87,6 +87,12 @@ pub(crate) struct ReaderTaskHandle {
     /// Used by ConnectionHandle to notify the reader when the first request
     /// is registered (pending 0->1), triggering the liveness timer to start.
     liveness_start_tx: mpsc::Sender<()>,
+
+    /// Receiver for liveness failure notification (ADR-0014 Phase 3).
+    ///
+    /// When the liveness timeout fires, the reader task sends () on this channel.
+    /// ConnectionHandle checks this to transition to Failed state.
+    liveness_failed_rx: std::sync::Mutex<Option<oneshot::Receiver<()>>>,
 }
 
 impl ReaderTaskHandle {
@@ -97,6 +103,37 @@ impl ReaderTaskHandle {
     pub(crate) fn notify_liveness_start(&self) {
         // Use try_send to avoid blocking. If channel is full, timer is already running.
         let _ = self.liveness_start_tx.try_send(());
+    }
+
+    /// Check if a liveness failure has been signaled.
+    ///
+    /// Returns true if the reader task signaled a liveness timeout failure.
+    /// This is a one-time check - once it returns true, subsequent calls return false.
+    ///
+    /// Used by ConnectionHandle to detect liveness timeout and transition to Failed state.
+    pub(crate) fn check_liveness_failed(&self) -> bool {
+        let mut guard = self
+            .liveness_failed_rx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        if let Some(mut rx) = guard.take() {
+            match rx.try_recv() {
+                Ok(()) => true, // Liveness timeout fired
+                Err(oneshot::error::TryRecvError::Empty) => {
+                    // Not yet failed, put it back
+                    *guard = Some(rx);
+                    false
+                }
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    // Sender dropped without sending - reader exited normally
+                    false
+                }
+            }
+        } else {
+            // Already consumed
+            false
+        }
     }
 }
 
@@ -139,18 +176,23 @@ pub(crate) fn spawn_reader_task_with_liveness(
     // Channel for liveness timer start notifications (capacity 1, latest notification wins)
     let (liveness_start_tx, liveness_start_rx) = mpsc::channel(1);
 
+    // Channel for liveness failure notification (Phase 3: state transition signaling)
+    let (liveness_failed_tx, liveness_failed_rx) = oneshot::channel();
+
     let join_handle = tokio::spawn(reader_loop_with_liveness(
         reader,
         router,
         token_clone,
         liveness_timeout,
         liveness_start_rx,
+        liveness_failed_tx,
     ));
 
     ReaderTaskHandle {
         _join_handle: join_handle,
         _cancel_token: cancel_token,
         liveness_start_tx,
+        liveness_failed_rx: std::sync::Mutex::new(Some(liveness_failed_rx)),
     }
 }
 
@@ -166,7 +208,9 @@ async fn reader_loop(
 ) {
     // Create a dummy receiver that never receives (liveness disabled)
     let (_tx, rx) = mpsc::channel(1);
-    reader_loop_with_liveness(reader, router, cancel_token, None, rx).await
+    // Create a dummy sender that we'll drop (no liveness failure signaling in test helper)
+    let (failed_tx, _failed_rx) = oneshot::channel();
+    reader_loop_with_liveness(reader, router, cancel_token, None, rx, failed_tx).await
 }
 
 /// The main reader loop with optional liveness timeout support.
@@ -177,13 +221,14 @@ async fn reader_loop(
 /// - Timer starts when a notification is received on `liveness_start_rx` (pending 0->1)
 /// - Timer resets on any message received (response or notification)
 /// - Timer stops when pending count returns to 0
-/// - Timer firing triggers Ready->Failed transition via router.fail_all()
+/// - Timer firing triggers Ready->Failed transition via router.fail_all() and signals via liveness_failed_tx
 async fn reader_loop_with_liveness(
     mut reader: BridgeReader,
     router: Arc<ResponseRouter>,
     cancel_token: CancellationToken,
     liveness_timeout: Option<Duration>,
     mut liveness_start_rx: mpsc::Receiver<()>,
+    liveness_failed_tx: oneshot::Sender<()>,
 ) {
     // Liveness timer state: None when inactive, Some(Sleep) when active
     let mut liveness_timer: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
@@ -216,7 +261,8 @@ async fn reader_loop_with_liveness(
                     "Liveness timeout expired, server appears hung - failing pending requests"
                 );
                 router.fail_all("bridge: liveness timeout - server unresponsive");
-                // Note: State transition to Failed happens in Phase 3
+                // Signal liveness failure for state transition (ADR-0014 Phase 3)
+                let _ = liveness_failed_tx.send(());
                 break;
             }
 
