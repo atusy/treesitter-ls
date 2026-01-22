@@ -180,9 +180,6 @@ impl DocumentTracker {
     /// Note: Does NOT remove from `host_to_virtual`. That cleanup is handled
     /// separately by `remove_host_virtual_docs()` or `remove_matching_virtual_docs()`,
     /// which are called before this method in the close flow.
-    ///
-    /// Used by did_close module for cleanup, and by Phase 3
-    /// close_invalidated_virtual_docs for invalidated region cleanup.
     pub(crate) async fn untrack_document(&self, virtual_uri: &VirtualDocumentUri) {
         let uri_string = virtual_uri.to_uri_string();
         let language = virtual_uri.language();
