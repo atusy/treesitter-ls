@@ -24,6 +24,14 @@ use tokio_util::sync::CancellationToken;
 use super::super::connection::BridgeReader;
 use super::ResponseRouter;
 
+/// Type alias for the pinned liveness timer future.
+type LivenessTimer = std::pin::Pin<Box<tokio::time::Sleep>>;
+
+/// Creates a new liveness timer that will fire after the given duration.
+fn new_liveness_timer(timeout: Duration) -> LivenessTimer {
+    Box::pin(tokio::time::sleep(timeout))
+}
+
 /// Handle to a running Reader Task, managing its lifetime via RAII.
 ///
 /// This struct owns the resources needed to control and clean up the reader task.
@@ -265,7 +273,7 @@ async fn reader_loop_with_liveness(
     liveness_failed_tx: oneshot::Sender<()>,
 ) {
     // Liveness timer state: None when inactive, Some(Sleep) when active
-    let mut liveness_timer: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
+    let mut liveness_timer: Option<LivenessTimer> = None;
 
     loop {
         tokio::select! {
@@ -308,7 +316,7 @@ async fn reader_loop_with_liveness(
                         "Liveness timer started: {:?}",
                         timeout
                     );
-                    liveness_timer = Some(Box::pin(tokio::time::sleep(timeout)));
+                    liveness_timer = Some(new_liveness_timer(timeout));
                 }
             }
 
@@ -333,7 +341,7 @@ async fn reader_loop_with_liveness(
                                 target: "kakehashi::bridge::reader",
                                 "Liveness timer reset on message activity"
                             );
-                            liveness_timer = Some(Box::pin(tokio::time::sleep(timeout)));
+                            liveness_timer = Some(new_liveness_timer(timeout));
                         }
 
                         handle_message(message, &router);
