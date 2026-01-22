@@ -276,8 +276,9 @@ impl LanguageServerPool {
         let existing_state = connections.get(language).map(|h| h.state());
         match decide_connection_action(existing_state) {
             ConnectionAction::ReturnExisting => {
-                // Safe: we just checked that the connection exists and is Ready
-                return Ok(Arc::clone(connections.get(language).unwrap()));
+                return Ok(Arc::clone(connections.get(language).expect(
+                    "Invariant violation: Connection expected for ReturnExisting action",
+                )));
             }
             ConnectionAction::FailFast(msg) => {
                 return Err(io::Error::other(msg));
