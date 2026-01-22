@@ -61,7 +61,66 @@ const scrum: ScrumDashboard = {
       status: "draft",
     },
   ],
-  sprint: null,
+  sprint: {
+    number: 14,
+    pbi_id: "pbi-liveness-timeout",
+    goal: "Implement liveness timeout to detect and recover from hung downstream servers",
+    status: "in_progress",
+    subtasks: [
+      // Phase 1: Foundation (LivenessTimeout newtype)
+      {
+        test: "Unit test: LivenessTimeout type accepts 30-120s range, rejects out-of-range values",
+        implementation: "Add LivenessTimeout newtype with validation in pool module (follow GlobalShutdownTimeout pattern)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0018: Liveness Timeout is Tier 2 (30-120s)", "Follow GlobalShutdownTimeout pattern: new(), default(), as_duration()"],
+      },
+      // Phase 2: Timer Infrastructure (start/stop/reset mechanics)
+      {
+        test: "Unit test: Liveness timer starts when pending count transitions 0 to 1 in Ready state",
+        implementation: "Add liveness_timer field to reader task; start timer on first request registration",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0014: Timer starts when pending=0 transitions to pending=1", "Timer not running when pending=0"],
+      },
+      {
+        test: "Unit test: Liveness timer resets on any stdout activity (response or notification)",
+        implementation: "Reader task handle_message() signals timer reset on ANY message (response OR notification)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0014: Reset on any stdout activity while active", "Use tokio::time::sleep with select! for cancellation/reset"],
+      },
+      {
+        test: "Unit test: Liveness timer stops when pending count returns to 0",
+        implementation: "Stop timer when last response received (pending 1->0) without state transition",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0014: Timer stops when pending count returns to 0", "No state transition on timer stop"],
+      },
+      // Phase 3: State Transitions (Ready->Failed on timeout)
+      {
+        test: "Unit test: Ready to Failed transition on liveness timeout expiry with router.fail_all()",
+        implementation: "On timeout: set ConnectionState::Failed via handle.set_state(); call router.fail_all()",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0014: Timeout fires while pending>0 triggers Ready->Failed", "Failed state triggers SpawnNew action on next request"],
+      },
+      // Phase 4: Shutdown Integration (global shutdown override)
+      {
+        test: "Unit test: begin_shutdown() cancels active liveness timer; timer does not start in Closing state",
+        implementation: "Liveness timer disabled during Closing state (global shutdown overrides per ADR-0018)",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0018: Global shutdown (Tier 3) overrides Liveness (Tier 2)", "Liveness STOPS when entering Closing state"],
+      },
+    ],
+  },
   completed: [
     {
       number: 13,
