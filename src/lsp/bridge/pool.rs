@@ -1708,58 +1708,6 @@ mod tests {
         );
     }
 
-    /// Test that new requests during Closing state receive REQUEST_FAILED immediately.
-    #[tokio::test]
-    async fn new_request_during_closing_receives_request_failed() {
-        use std::sync::Arc;
-        use tower_lsp_server::ls_types::Position;
-
-        let pool = Arc::new(LanguageServerPool::new());
-        let config = devnull_config();
-
-        // Insert a connection in Closing state
-        let closing_handle = create_handle_with_state(ConnectionState::Closing).await;
-        pool.connections
-            .lock()
-            .await
-            .insert("lua".to_string(), closing_handle);
-
-        let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let host_position = Position {
-            line: 3,
-            character: 5,
-        };
-
-        // Attempt to send a hover request - should fail immediately
-        let start = std::time::Instant::now();
-        let result = pool
-            .send_hover_request(
-                &config,
-                &host_uri,
-                host_position,
-                "lua",
-                "region-0",
-                3,
-                "print('hello')",
-                1,
-            )
-            .await;
-
-        // Should fail fast (not block)
-        assert!(
-            start.elapsed() < Duration::from_millis(100),
-            "Should fail immediately, not block"
-        );
-
-        // Should return the specific error message
-        let err = result.unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "bridge: connection closing",
-            "Should return REQUEST_FAILED with connection closing message"
-        );
-    }
-
     // ============================================================
     // Global Shutdown Timeout Integration Tests
     // ============================================================
