@@ -38,39 +38,6 @@ mod tests {
     use super::*;
     use crate::lsp::bridge::pool::test_helpers::*;
 
-    /// Test that ConnectionState enum has exactly 5 states.
-    ///
-    /// States: Initializing, Ready, Failed, Closing, Closed
-    /// This test verifies the enum is exhaustively enumerable.
-    #[test]
-    fn connection_state_has_all_five_states() {
-        // Verify all 5 states exist by constructing them
-        let states = [
-            ConnectionState::Initializing,
-            ConnectionState::Ready,
-            ConnectionState::Failed,
-            ConnectionState::Closing,
-            ConnectionState::Closed,
-        ];
-
-        // Verify we have exactly 5 states
-        assert_eq!(
-            states.len(),
-            5,
-            "ConnectionState should have exactly 5 variants"
-        );
-
-        // Verify each state has the expected Debug representation
-        assert_eq!(
-            format!("{:?}", ConnectionState::Initializing),
-            "Initializing"
-        );
-        assert_eq!(format!("{:?}", ConnectionState::Ready), "Ready");
-        assert_eq!(format!("{:?}", ConnectionState::Failed), "Failed");
-        assert_eq!(format!("{:?}", ConnectionState::Closing), "Closing");
-        assert_eq!(format!("{:?}", ConnectionState::Closed), "Closed");
-    }
-
     /// Test that Ready state transitions to Closing on shutdown signal.
     ///
     /// ADR-0015: Ready → Closing transition occurs when shutdown is initiated.

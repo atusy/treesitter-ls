@@ -5,6 +5,7 @@
 //!
 //! Currently implements single-LS-per-language routing (language → single server).
 
+mod connection_action;
 mod connection_handle;
 mod connection_state;
 mod document_tracker;
@@ -14,6 +15,7 @@ mod shutdown_timeout;
 #[cfg(test)]
 mod test_helpers;
 
+use connection_action::{ConnectionAction, decide_connection_action};
 use handshake::perform_lsp_handshake;
 
 pub(crate) use connection_handle::ConnectionHandle;
@@ -270,41 +272,21 @@ impl LanguageServerPool {
         let mut connections = self.connections.lock().await;
 
         // Check if we already have a connection for this language
-        if let Some(handle) = connections.get(language) {
-            // Check state atomically with connection lookup (ADR-0015 Operation Gating)
-            match handle.state() {
-                ConnectionState::Initializing => {
-                    return Err(io::Error::other("bridge: downstream server initializing"));
-                }
-                ConnectionState::Failed => {
-                    // Remove failed connection, allow respawn on next attempt
+        // Use pure decision function for testability (ADR-0015 Operation Gating)
+        let existing_state = connections.get(language).map(|h| h.state());
+        match decide_connection_action(existing_state) {
+            ConnectionAction::ReturnExisting => {
+                return Ok(Arc::clone(connections.get(language).expect(
+                    "Invariant violation: Connection expected for ReturnExisting action",
+                )));
+            }
+            ConnectionAction::FailFast(msg) => {
+                return Err(io::Error::other(msg));
+            }
+            ConnectionAction::SpawnNew => {
+                // Remove stale connection if present (Failed or Closed state)
+                if existing_state.is_some() {
                     connections.remove(language);
-                    drop(connections);
-                    // Recursive call to spawn fresh connection (boxed to avoid infinite future size)
-                    return Box::pin(self.get_or_create_connection_with_timeout(
-                        language,
-                        server_config,
-                        timeout,
-                    ))
-                    .await;
-                }
-                ConnectionState::Ready => {
-                    return Ok(Arc::clone(handle));
-                }
-                ConnectionState::Closing => {
-                    // Connection is shutting down, reject new requests
-                    return Err(io::Error::other("bridge: connection closing"));
-                }
-                ConnectionState::Closed => {
-                    // Connection is terminated, remove from pool and respawn
-                    connections.remove(language);
-                    drop(connections);
-                    return Box::pin(self.get_or_create_connection_with_timeout(
-                        language,
-                        server_config,
-                        timeout,
-                    ))
-                    .await;
                 }
             }
         }
@@ -633,13 +615,23 @@ mod tests {
             .get_or_create_connection_with_timeout("test", &config, Duration::from_millis(100))
             .await;
 
-        // Should return timeout error
-        assert!(result.is_err(), "Should fail with timeout");
-        assert_eq!(
-            result.err().unwrap().kind(),
-            io::ErrorKind::TimedOut,
-            "Error should be TimedOut"
-        );
+        // Should return timeout error with correct kind and descriptive message
+        match result {
+            Ok(_) => panic!("Should fail with timeout"),
+            Err(err) => {
+                assert_eq!(
+                    err.kind(),
+                    io::ErrorKind::TimedOut,
+                    "Error should be TimedOut"
+                );
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("timeout"),
+                    "Error message should mention timeout: {}",
+                    msg
+                );
+            }
+        }
 
         // With async fast-fail architecture, failed connections are in Failed state
         // (will be removed on next request attempt via Failed state handling)
@@ -679,38 +671,6 @@ mod tests {
 
         // Should return an error
         assert!(result.is_err(), "Connection should fail with timeout error");
-    }
-
-    /// Test that timeout returns io::ErrorKind::TimedOut.
-    #[tokio::test]
-    async fn init_timeout_returns_timed_out_error_kind() {
-        let pool = LanguageServerPool::new();
-        let config = devnull_config_for_language("test");
-
-        let result = pool
-            .get_or_create_connection_with_timeout("test", &config, Duration::from_millis(100))
-            .await;
-
-        match result {
-            Ok(_) => panic!("Should return an error"),
-            Err(err) => {
-                // Verify error kind is TimedOut
-                assert_eq!(
-                    err.kind(),
-                    io::ErrorKind::TimedOut,
-                    "Error kind should be TimedOut, got: {:?}",
-                    err.kind()
-                );
-
-                // Verify error message is descriptive
-                let msg = err.to_string();
-                assert!(
-                    msg.contains("timeout") || msg.contains("unresponsive"),
-                    "Error message should mention timeout: {}",
-                    msg
-                );
-            }
-        }
     }
 
     /// Test that failed connection is removed from cache and new server is spawned on retry.
@@ -1045,39 +1005,6 @@ mod tests {
         );
     }
 
-    /// Test that ConnectionHandle is NOT cached after timeout.
-    ///
-    /// With the Reader Task architecture (ADR-0015), failed connections
-    /// are NOT cached because a ConnectionHandle requires:
-    /// - A successfully split connection (writer + reader)
-    /// - A running reader task
-    /// - A response router
-    ///
-    /// When initialization times out, the connection transitions to Failed state.
-    /// Subsequent requests will remove the failed entry and spawn fresh.
-    #[tokio::test]
-    async fn connection_handle_transitions_to_failed_after_timeout() {
-        let pool = LanguageServerPool::new();
-        let config = devnull_config_for_language("test");
-
-        // First attempt - should timeout
-        let result = pool
-            .get_or_create_connection_with_timeout("test", &config, Duration::from_millis(100))
-            .await;
-        assert!(result.is_err(), "First attempt should fail with timeout");
-
-        // With async fast-fail architecture, connection is stored and transitions to Failed
-        let connections = pool.connections.lock().await;
-        if let Some(handle) = connections.get("test") {
-            assert_eq!(
-                handle.state(),
-                ConnectionState::Failed,
-                "Connection should be in Failed state after timeout"
-            );
-        }
-        // Note: Connection will be removed on next request attempt via Failed state handling
-    }
-
     // ========================================
     // ensure_document_opened tests
     // ========================================
@@ -1268,9 +1195,9 @@ mod tests {
 
         let (mut writer, _reader) = conn.split();
 
-        // Track if cleanup was called (SHOULD be called in error path)
-        let cleanup_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let cleanup_called_clone = cleanup_called.clone();
+        // Track cleanup calls with counter to verify called exactly once
+        let cleanup_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let cleanup_count_clone = cleanup_count.clone();
 
         // Call ensure_document_opened - should fail and call cleanup
         let result = pool
@@ -1280,7 +1207,7 @@ mod tests {
                 &virtual_uri,
                 virtual_content,
                 move || {
-                    cleanup_called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                    cleanup_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 },
             )
             .await;
@@ -1299,69 +1226,17 @@ mod tests {
             err
         );
 
-        // CRITICAL: Cleanup callback SHOULD have been called
-        assert!(
-            cleanup_called.load(std::sync::atomic::Ordering::SeqCst),
-            "Cleanup callback MUST be called when returning error for pending didOpen"
+        // CRITICAL: Cleanup callback MUST be called exactly once
+        assert_eq!(
+            cleanup_count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "Cleanup callback must be called exactly once for pending didOpen error"
         );
 
         // Document should still NOT be marked as opened
         assert!(
             !pool.is_document_opened(&virtual_uri),
             "Document should still NOT be marked as opened after error"
-        );
-    }
-
-    /// Test that cleanup callback receives correct context for resource cleanup.
-    ///
-    /// The cleanup callback is typically used to remove a registered request from
-    /// the router. This test verifies the callback is invoked correctly and can
-    /// perform cleanup operations.
-    #[tokio::test]
-    async fn ensure_document_opened_cleanup_callback_can_perform_cleanup() {
-        use super::super::protocol::VirtualDocumentUri;
-
-        let pool = LanguageServerPool::new();
-        let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-        let virtual_content = "print('hello')";
-
-        // Simulate pending didOpen state (inconsistent state)
-        pool.should_send_didopen(&host_uri, &virtual_uri).await;
-
-        // Create a mock writer
-        let mut conn = AsyncBridgeConnection::spawn(vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            "cat > /dev/null".to_string(),
-        ])
-        .await
-        .expect("should spawn cat process");
-
-        let (mut writer, _reader) = conn.split();
-
-        // Use a counter to verify cleanup is called exactly once
-        let cleanup_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let cleanup_count_clone = cleanup_count.clone();
-
-        // Call ensure_document_opened - should fail and call cleanup
-        let _result = pool
-            .ensure_document_opened(
-                &mut writer,
-                &host_uri,
-                &virtual_uri,
-                virtual_content,
-                move || {
-                    cleanup_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                },
-            )
-            .await;
-
-        // Cleanup should have been called exactly once
-        assert_eq!(
-            cleanup_count.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "Cleanup callback should be called exactly once"
         );
     }
 
@@ -1727,58 +1602,6 @@ mod tests {
         );
     }
 
-    /// Test that new requests during Closing state receive REQUEST_FAILED immediately.
-    #[tokio::test]
-    async fn new_request_during_closing_receives_request_failed() {
-        use std::sync::Arc;
-        use tower_lsp_server::ls_types::Position;
-
-        let pool = Arc::new(LanguageServerPool::new());
-        let config = devnull_config();
-
-        // Insert a connection in Closing state
-        let closing_handle = create_handle_with_state(ConnectionState::Closing).await;
-        pool.connections
-            .lock()
-            .await
-            .insert("lua".to_string(), closing_handle);
-
-        let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let host_position = Position {
-            line: 3,
-            character: 5,
-        };
-
-        // Attempt to send a hover request - should fail immediately
-        let start = std::time::Instant::now();
-        let result = pool
-            .send_hover_request(
-                &config,
-                &host_uri,
-                host_position,
-                "lua",
-                "region-0",
-                3,
-                "print('hello')",
-                1,
-            )
-            .await;
-
-        // Should fail fast (not block)
-        assert!(
-            start.elapsed() < Duration::from_millis(100),
-            "Should fail immediately, not block"
-        );
-
-        // Should return the specific error message
-        let err = result.unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "bridge: connection closing",
-            "Should return REQUEST_FAILED with connection closing message"
-        );
-    }
-
     // ============================================================
     // Global Shutdown Timeout Integration Tests
     // ============================================================
@@ -1873,39 +1696,6 @@ mod tests {
     // ============================================================
     // Force-kill Fallback Tests
     // ============================================================
-
-    /// Test that force_kill_all() terminates all remaining connections.
-    #[tokio::test]
-    #[cfg(unix)]
-    async fn force_kill_all_terminates_all_connections() {
-        let pool = LanguageServerPool::new();
-
-        // Insert multiple connections in Ready state
-        for i in 0..2 {
-            let handle = create_handle_with_state(ConnectionState::Ready).await;
-            pool.connections
-                .lock()
-                .await
-                .insert(format!("server_{}", i), handle);
-        }
-
-        // Call force_kill_all directly
-        pool.force_kill_all().await;
-
-        // All connections should be in Closed state
-        let connections = pool.connections.lock().await;
-        for i in 0..2 {
-            let key = format!("server_{}", i);
-            if let Some(handle) = connections.get(&key) {
-                assert_eq!(
-                    handle.state(),
-                    ConnectionState::Closed,
-                    "Connection {} should be Closed after force_kill_all()",
-                    key
-                );
-            }
-        }
-    }
 
     /// Test that shutdown_all_with_timeout ensures all connections reach Closed state.
     #[tokio::test]

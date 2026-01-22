@@ -113,25 +113,6 @@ impl Default for GlobalShutdownTimeout {
 mod tests {
     use super::*;
 
-    /// Test that GlobalShutdownTimeout type accepts values in the 5-15s range.
-    ///
-    /// ADR-0018 specifies the global shutdown timeout should be 5-15s.
-    /// This test verifies the newtype validation accepts valid values.
-    #[test]
-    fn global_shutdown_timeout_accepts_valid_range() {
-        // Minimum valid: 5 seconds
-        let min_timeout = GlobalShutdownTimeout::new(Duration::from_secs(5));
-        assert!(min_timeout.is_ok(), "5s should be valid minimum");
-
-        // Maximum valid: 15 seconds
-        let max_timeout = GlobalShutdownTimeout::new(Duration::from_secs(15));
-        assert!(max_timeout.is_ok(), "15s should be valid maximum");
-
-        // Middle of range: 10 seconds
-        let mid_timeout = GlobalShutdownTimeout::new(Duration::from_secs(10));
-        assert!(mid_timeout.is_ok(), "10s should be valid");
-    }
-
     /// Test that GlobalShutdownTimeout type rejects values outside 5-15s range.
     ///
     /// ADR-0018 specifies the global shutdown timeout should be 5-15s.
