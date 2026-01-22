@@ -6,7 +6,7 @@
 use kakehashi::document::DocumentStore;
 use kakehashi::language::LanguageCoordinator;
 use kakehashi::language::injection::collect_all_injections;
-use kakehashi::lsp::auto_install::InstallingLanguages;
+use kakehashi::lsp::auto_install::{InstallingLanguages, InstallingLanguagesExt};
 use std::collections::HashSet;
 use tree_sitter::{Parser, Query};
 use url::Url;

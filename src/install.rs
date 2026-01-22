@@ -7,6 +7,7 @@ pub mod cache;
 pub mod metadata;
 pub mod parser;
 pub mod queries;
+pub(crate) mod support_check;
 
 /// Test helper module for setting up mock metadata cache.
 #[cfg(test)]
