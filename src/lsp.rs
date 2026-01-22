@@ -1,5 +1,6 @@
 pub mod auto_install;
 mod bridge;
+mod cache;
 mod client;
 mod settings_manager;
 

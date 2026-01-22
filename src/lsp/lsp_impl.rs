@@ -34,19 +34,14 @@ use tower_lsp_server::{Client, LanguageServer};
 use tree_sitter::InputEdit;
 use url::Url;
 
-use crate::analysis::next_result_id;
-use crate::analysis::{
-    InjectionMap, InjectionTokenCache, LEGEND_MODIFIERS, LEGEND_TYPES, SemanticTokenCache,
-};
+use crate::analysis::{LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::config::{
     TreeSitterSettings, WorkspaceSettings, resolve_language_server_with_wildcard,
     resolve_language_settings_with_wildcard,
 };
 use crate::document::DocumentStore;
 use crate::language::LanguageEvent;
-use crate::language::injection::{
-    CacheableInjectionRegion, InjectionResolver, collect_all_injections,
-};
+use crate::language::injection::{InjectionResolver, collect_all_injections};
 use crate::language::region_id_tracker::{EditInfo, RegionIdTracker};
 use crate::language::{DocumentParserPool, LanguageCoordinator};
 use crate::lsp::bridge::LanguageServerPool;
@@ -59,7 +54,7 @@ use tokio::sync::Mutex;
 use super::auto_install::{
     AutoInstallManager, InstallEvent, InstallingLanguages, get_injected_languages,
 };
-use super::semantic_request_tracker::SemanticRequestTracker;
+use super::cache::CacheCoordinator;
 
 /// Convert ls_types::Uri to url::Url
 ///
@@ -184,18 +179,12 @@ pub struct Kakehashi {
     language: LanguageCoordinator,
     parser_pool: Mutex<DocumentParserPool>,
     documents: DocumentStore,
-    /// Dedicated cache for semantic tokens with result_id validation
-    semantic_cache: SemanticTokenCache,
-    /// Tracks injection regions per document for targeted invalidation
-    injection_map: InjectionMap,
-    /// Per-injection semantic token cache (AC4/AC5 targeted invalidation)
-    injection_token_cache: InjectionTokenCache,
+    /// Unified cache coordinator for semantic tokens, injections, and request tracking (Phase 4)
+    cache: CacheCoordinator,
     /// Consolidated settings, capabilities, and workspace root management
     settings_manager: SettingsManager,
     /// Isolated coordinator for parser auto-installation
     auto_install: AutoInstallManager,
-    /// Tracks active semantic token requests for cancellation support
-    semantic_request_tracker: SemanticRequestTracker,
     /// Pool of downstream language server connections (ADR-0016)
     language_server_pool: LanguageServerPool,
     /// Stable ULID-based region ID tracker (ADR-0019 Phase 1)
@@ -209,9 +198,7 @@ impl std::fmt::Debug for Kakehashi {
             .field("language", &"LanguageCoordinator")
             .field("parser_pool", &"Mutex<DocumentParserPool>")
             .field("documents", &"DocumentStore")
-            .field("semantic_cache", &"SemanticTokenCache")
-            .field("injection_map", &"InjectionMap")
-            .field("injection_token_cache", &"InjectionTokenCache")
+            .field("cache", &"CacheCoordinator")
             .field("settings_manager", &"SettingsManager")
             .field("auto_install", &"AutoInstallManager")
             .field("language_server_pool", &"LanguageServerPool")
@@ -237,12 +224,9 @@ impl Kakehashi {
             language,
             parser_pool: Mutex::new(parser_pool),
             documents: DocumentStore::new(),
-            semantic_cache: SemanticTokenCache::new(),
-            injection_map: InjectionMap::new(),
-            injection_token_cache: InjectionTokenCache::new(),
+            cache: CacheCoordinator::new(),
             settings_manager: SettingsManager::new(),
             auto_install,
-            semantic_request_tracker: SemanticRequestTracker::new(),
             language_server_pool,
             region_id_tracker: RegionIdTracker::new(),
         }
@@ -325,43 +309,6 @@ impl Kakehashi {
             .await;
     }
 
-    /// Invalidate injection caches for regions that overlap with edits.
-    ///
-    /// Called BEFORE parse_document to use pre-edit byte offsets against pre-edit
-    /// injection regions. This implements AC4/AC5 (PBI-083): edits outside injections
-    /// preserve caches, edits inside invalidate only affected regions.
-    ///
-    /// PBI-167: Uses O(log n) interval tree query instead of O(n) iteration.
-    fn invalidate_overlapping_injection_caches(&self, uri: &Url, edits: &[InputEdit]) {
-        if edits.is_empty() {
-            return;
-        }
-
-        // Find all regions that overlap with any edit using O(log n) queries
-        for edit in edits {
-            let edit_start = edit.start_byte;
-            let edit_end = edit.old_end_byte;
-
-            // Query interval tree for overlapping regions (O(log n) instead of O(n))
-            if let Some(overlapping_regions) = self
-                .injection_map
-                .find_overlapping(uri, edit_start, edit_end)
-            {
-                for region in overlapping_regions {
-                    // This region is affected - invalidate its cache
-                    self.injection_token_cache.remove(uri, &region.result_id);
-                    log::debug!(
-                        target: "kakehashi::injection_cache",
-                        "Invalidated injection cache for {} region (edit bytes {}..{})",
-                        region.language,
-                        edit_start,
-                        edit_end
-                    );
-                }
-            }
-        }
-    }
-
     /// Send didClose for invalidated virtual documents (Phase 3).
     ///
     /// When region IDs are invalidated (e.g., due to edits touching their START),
@@ -382,117 +329,14 @@ impl Kakehashi {
             return;
         }
 
-        // Clear injection token cache for invalidated ULIDs
-        for ulid in invalidated_ulids {
-            self.injection_token_cache
-                .remove(host_uri, &ulid.to_string());
-        }
+        // Clear injection token cache for invalidated ULIDs via cache coordinator
+        self.cache
+            .remove_injection_tokens_for_ulids(host_uri, invalidated_ulids);
 
         // Delegate to pool for tracking cleanup and didClose notifications
         self.language_server_pool
             .close_invalidated_docs(host_uri, invalidated_ulids)
             .await;
-    }
-
-    /// Populate InjectionMap with injection regions from the parsed tree.
-    ///
-    /// This enables targeted cache invalidation (PBI-083): when an edit occurs,
-    /// we can check which injection regions overlap and only invalidate those.
-    ///
-    /// AC6: Also clears stale InjectionTokenCache entries for removed regions.
-    /// Since result_ids are regenerated on each parse, we clear the entire
-    /// document's injection token cache and let it be repopulated on demand.
-    fn populate_injection_map(
-        &self,
-        uri: &Url,
-        text: &str,
-        tree: &tree_sitter::Tree,
-        language_name: &str,
-    ) {
-        // Get the injection query for this language
-        let injection_query = match self.language.get_injection_query(language_name) {
-            Some(q) => q,
-            None => {
-                // No injection query = no injections to track
-                // Clear any stale injection caches
-                self.injection_map.clear(uri);
-                self.injection_token_cache.clear_document(uri);
-                return;
-            }
-        };
-
-        // Collect all injection regions from the parsed tree
-        if let Some(regions) =
-            collect_all_injections(&tree.root_node(), text, Some(injection_query.as_ref()))
-        {
-            if regions.is_empty() {
-                // Clear any existing regions and caches for this document
-                self.injection_map.clear(uri);
-                self.injection_token_cache.clear_document(uri);
-                return;
-            }
-
-            // Build map of existing regions by (language, content_hash) for stable ID matching
-            // This enables cache reuse when document structure changes but injection content stays same
-            let existing_regions = self.injection_map.get(uri);
-            let existing_by_hash: std::collections::HashMap<
-                (&str, u64),
-                &CacheableInjectionRegion,
-            > = existing_regions
-                .as_ref()
-                .map(|regions| {
-                    regions
-                        .iter()
-                        .map(|r| ((r.language.as_str(), r.content_hash), r))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            // Convert to CacheableInjectionRegion, reusing result_ids for unchanged content
-            let cacheable_regions: Vec<CacheableInjectionRegion> = regions
-                .iter()
-                .map(|info| {
-                    // Compute hash for the new region's content
-                    let temp_region = CacheableInjectionRegion::from_region_info(info, "", text);
-                    let key = (info.language.as_str(), temp_region.content_hash);
-
-                    // Check if we have an existing region with same (language, content_hash)
-                    if let Some(existing) = existing_by_hash.get(&key) {
-                        // Reuse the existing result_id - this enables cache hit!
-                        CacheableInjectionRegion {
-                            language: temp_region.language,
-                            byte_range: temp_region.byte_range,
-                            line_range: temp_region.line_range,
-                            result_id: existing.result_id.clone(),
-                            content_hash: temp_region.content_hash,
-                        }
-                    } else {
-                        // New content - generate new result_id
-                        CacheableInjectionRegion {
-                            result_id: next_result_id(),
-                            ..temp_region
-                        }
-                    }
-                })
-                .collect();
-
-            // Find stale region IDs that are no longer present
-            if let Some(old_regions) = existing_regions {
-                let new_hashes: std::collections::HashSet<_> = cacheable_regions
-                    .iter()
-                    .map(|r| (r.language.as_str(), r.content_hash))
-                    .collect();
-                for old in old_regions.iter() {
-                    if !new_hashes.contains(&(old.language.as_str(), old.content_hash)) {
-                        // This region no longer exists - clear its cache
-                        self.injection_token_cache.remove(uri, &old.result_id);
-                    }
-                }
-            }
-
-            // Store in injection map
-            self.injection_map.insert(uri.clone(), cacheable_regions);
-        }
     }
 
     async fn parse_document(
@@ -615,7 +459,8 @@ impl Kakehashi {
             // Store the parsed document
             if let Some(tree) = parsed_tree {
                 // Populate InjectionMap with injection regions for targeted cache invalidation
-                self.populate_injection_map(&uri, &text, &tree, &language_name);
+                self.cache
+                    .populate_injections(&uri, &text, &tree, &language_name, &self.language);
 
                 if !edits.is_empty() {
                     self.documents
@@ -1234,11 +1079,8 @@ impl LanguageServer for Kakehashi {
         // This ensures that reopening the file will properly reinitialize everything
         self.documents.remove(&uri);
 
-        // Clean up semantic token cache for this document
-        self.semantic_cache.remove(&uri);
-
-        // Cancel any pending semantic token requests for this document
-        self.semantic_request_tracker.cancel_all_for_uri(&uri);
+        // Clean up all caches for this document (semantic tokens, injections, requests)
+        self.cache.remove_document(&uri);
 
         // Clean up region ID mappings for this document (ADR-0019)
         self.region_id_tracker.cleanup(&uri);
@@ -1307,7 +1149,7 @@ impl LanguageServer for Kakehashi {
 
         // Invalidate injection caches for regions overlapping with edits (AC4/AC5)
         // Must be called BEFORE parse_document which updates the injection_map
-        self.invalidate_overlapping_injection_caches(&uri, &edits);
+        self.cache.invalidate_for_edits(&uri, &edits);
 
         // Clone text before parse_document consumes it (needed for forward_didchange_to_bridges)
         let text_for_bridge = text.clone();
@@ -1317,7 +1159,7 @@ impl LanguageServer for Kakehashi {
             .await;
 
         // Invalidate semantic token cache to ensure fresh tokens for delta calculations
-        self.semantic_cache.remove(&uri);
+        self.cache.invalidate_semantic(&uri);
 
         // Forward didChange to opened virtual documents in bridge
         self.forward_didchange_to_bridges(&uri, &text_for_bridge)
