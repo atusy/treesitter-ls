@@ -123,16 +123,6 @@ impl ReaderTaskHandle {
         let _ = self.liveness_stop_tx.try_send(());
     }
 
-    /// Cancel the reader task entirely.
-    ///
-    /// This triggers the cancellation token, causing the reader loop to exit
-    /// cleanly on its next iteration. Used for full connection teardown
-    /// (e.g., when ReaderTaskHandle is dropped).
-    #[cfg(test)] // Currently only used in tests; production uses stop_liveness_timer
-    pub(crate) fn cancel(&self) {
-        self._cancel_token.cancel();
-    }
-
     /// Check if a liveness failure has been signaled.
     ///
     /// Returns true if the reader task signaled a liveness timeout failure.
