@@ -11,7 +11,7 @@
 
 mod manager;
 
-pub use manager::{AutoInstallManager, InstallEvent, InstallOutcome, InstallResult};
+pub(crate) use manager::{AutoInstallManager, InstallEvent};
 
 use crate::document::DocumentStore;
 use crate::error::LockResultExt;

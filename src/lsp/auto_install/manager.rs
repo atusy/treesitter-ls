@@ -29,7 +29,7 @@ use super::{InstallingLanguages, should_skip_unsupported_language};
 
 /// Result of an installation attempt with all events for Kakehashi to dispatch.
 #[derive(Debug)]
-pub struct InstallResult {
+pub(crate) struct InstallResult {
     /// What happened during the installation attempt
     pub outcome: InstallOutcome,
     /// Events to be dispatched to ClientNotifier by Kakehashi
@@ -38,7 +38,7 @@ pub struct InstallResult {
 
 /// Outcome of an installation attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InstallOutcome {
+pub(crate) enum InstallOutcome {
     /// Installation succeeded, parser is ready to use
     Success {
         /// Directory where parser and queries were installed
@@ -75,7 +75,7 @@ impl InstallOutcome {
     ///
     /// Returns `false` for outcomes where no installation happened or will happen:
     /// - `ParserFailed`, `Unsupported`, `Failed`, `NoDataDir`
-    pub fn should_skip_parse(&self) -> bool {
+    pub(crate) fn should_skip_parse(&self) -> bool {
         matches!(
             self,
             InstallOutcome::Success { .. }
@@ -86,7 +86,7 @@ impl InstallOutcome {
     }
 
     /// Get the data directory if installation was successful.
-    pub fn data_dir(&self) -> Option<&PathBuf> {
+    pub(crate) fn data_dir(&self) -> Option<&PathBuf> {
         match self {
             InstallOutcome::Success { data_dir }
             | InstallOutcome::SuccessWithWarnings { data_dir }
@@ -98,7 +98,7 @@ impl InstallOutcome {
 
 /// Events generated during installation for Kakehashi to dispatch.
 #[derive(Debug, Clone)]
-pub enum InstallEvent {
+pub(crate) enum InstallEvent {
     /// Log message to send to client
     Log { level: MessageType, message: String },
     /// Progress begin notification
@@ -122,7 +122,7 @@ pub enum InstallEvent {
 /// The struct is cheaply cloneable (all fields are `Arc`-based) for sharing
 /// across async tasks.
 #[derive(Clone)]
-pub struct AutoInstallManager {
+pub(crate) struct AutoInstallManager {
     /// Tracks languages currently being installed to prevent duplicates
     installing_languages: InstallingLanguages,
     /// Tracks parsers that have crashed to prevent repeated failures
