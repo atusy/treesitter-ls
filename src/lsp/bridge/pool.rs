@@ -1194,9 +1194,9 @@ mod tests {
 
         let (mut writer, _reader) = conn.split();
 
-        // Track if cleanup was called (SHOULD be called in error path)
-        let cleanup_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let cleanup_called_clone = cleanup_called.clone();
+        // Track cleanup calls with counter to verify called exactly once
+        let cleanup_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let cleanup_count_clone = cleanup_count.clone();
 
         // Call ensure_document_opened - should fail and call cleanup
         let result = pool
@@ -1206,7 +1206,7 @@ mod tests {
                 &virtual_uri,
                 virtual_content,
                 move || {
-                    cleanup_called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                    cleanup_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 },
             )
             .await;
@@ -1225,69 +1225,17 @@ mod tests {
             err
         );
 
-        // CRITICAL: Cleanup callback SHOULD have been called
-        assert!(
-            cleanup_called.load(std::sync::atomic::Ordering::SeqCst),
-            "Cleanup callback MUST be called when returning error for pending didOpen"
+        // CRITICAL: Cleanup callback MUST be called exactly once
+        assert_eq!(
+            cleanup_count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "Cleanup callback must be called exactly once for pending didOpen error"
         );
 
         // Document should still NOT be marked as opened
         assert!(
             !pool.is_document_opened(&virtual_uri),
             "Document should still NOT be marked as opened after error"
-        );
-    }
-
-    /// Test that cleanup callback receives correct context for resource cleanup.
-    ///
-    /// The cleanup callback is typically used to remove a registered request from
-    /// the router. This test verifies the callback is invoked correctly and can
-    /// perform cleanup operations.
-    #[tokio::test]
-    async fn ensure_document_opened_cleanup_callback_can_perform_cleanup() {
-        use super::super::protocol::VirtualDocumentUri;
-
-        let pool = LanguageServerPool::new();
-        let host_uri = Url::parse("file:///test/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-        let virtual_content = "print('hello')";
-
-        // Simulate pending didOpen state (inconsistent state)
-        pool.should_send_didopen(&host_uri, &virtual_uri).await;
-
-        // Create a mock writer
-        let mut conn = AsyncBridgeConnection::spawn(vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            "cat > /dev/null".to_string(),
-        ])
-        .await
-        .expect("should spawn cat process");
-
-        let (mut writer, _reader) = conn.split();
-
-        // Use a counter to verify cleanup is called exactly once
-        let cleanup_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let cleanup_count_clone = cleanup_count.clone();
-
-        // Call ensure_document_opened - should fail and call cleanup
-        let _result = pool
-            .ensure_document_opened(
-                &mut writer,
-                &host_uri,
-                &virtual_uri,
-                virtual_content,
-                move || {
-                    cleanup_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                },
-            )
-            .await;
-
-        // Cleanup should have been called exactly once
-        assert_eq!(
-            cleanup_count.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "Cleanup callback should be called exactly once"
         );
     }
 
