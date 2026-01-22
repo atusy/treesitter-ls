@@ -99,7 +99,7 @@ impl LanguageServerPool {
                 .collect()
         };
 
-        // Log after releasing lock (same pattern as force_kill_all)
+        // Log after releasing lock
         for language in failed_connections {
             log::debug!(
                 target: "kakehashi::bridge",
@@ -190,21 +190,17 @@ impl LanguageServerPool {
                 .collect()
         };
 
-        // Log after releasing lock
-        for (language, state, _) in &handles_with_info {
+        // Force-kill all connections in parallel with SIGTERM->SIGKILL escalation.
+        // Using JoinSet for parallel execution ensures O(1) force-kill time for N connections
+        // instead of O(N * 2s) when done sequentially (2s is SIGTERM->SIGKILL wait).
+        let mut join_set = tokio::task::JoinSet::new();
+        for (language, state, handle) in handles_with_info {
             log::debug!(
                 target: "kakehashi::bridge",
                 "Force-killing {} connection (state: {:?})",
                 language,
                 state
             );
-        }
-
-        // Force-kill all connections in parallel with SIGTERM->SIGKILL escalation.
-        // Using JoinSet for parallel execution ensures O(1) force-kill time for N connections
-        // instead of O(N * 2s) when done sequentially (2s is SIGTERM->SIGKILL wait).
-        let mut join_set = tokio::task::JoinSet::new();
-        for (_, _, handle) in handles_with_info {
             join_set.spawn(async move {
                 handle.force_kill().await;
                 handle.complete_shutdown();
