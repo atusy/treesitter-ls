@@ -2497,4 +2497,306 @@ mod tests {
             "Should have c from specific"
         );
     }
+
+    // ========================================================================
+    // Tests moved from lsp_impl.rs (Phase 6.1)
+    // These test wildcard config resolution functions
+    // ========================================================================
+
+    /// PBI-155 Subtask 2: Test wildcard language config inheritance
+    ///
+    /// This test verifies that languages._ (wildcard) settings are inherited
+    /// by specific languages when looking up language configs.
+    ///
+    /// The key behavior:
+    /// - languages._ defines default bridge settings (e.g., disable all by default)
+    /// - languages.markdown overrides only bridge for rust (enable it)
+    /// - When looking up "quarto" (not defined), it should inherit from languages._
+    #[test]
+    fn test_language_config_inherits_from_wildcard() {
+        use settings::BridgeLanguageConfig;
+
+        let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
+
+        // Wildcard language: disable bridging by default (empty bridge filter)
+        let wildcard_bridge = HashMap::new(); // Empty = disable all bridging
+        languages.insert(
+            "_".to_string(),
+            LanguageConfig {
+                library: None,
+                queries: None,
+                highlights: Some(vec!["/default/highlights.scm".to_string()]),
+                locals: None,
+                injections: None,
+                bridge: Some(wildcard_bridge),
+            },
+        );
+
+        // Markdown: enable only rust bridging
+        let mut markdown_bridge = HashMap::new();
+        markdown_bridge.insert("rust".to_string(), BridgeLanguageConfig { enabled: true });
+        languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                library: None,
+                queries: None,
+                highlights: None, // Should inherit from wildcard
+                locals: None,
+                injections: None,
+                bridge: Some(markdown_bridge),
+            },
+        );
+
+        // Test 1: "markdown" should have its own bridge filter (not wildcard's)
+        let markdown = resolve_language_with_wildcard(&languages, "markdown").unwrap();
+        assert!(
+            markdown.highlights.is_some(),
+            "markdown should inherit highlights from wildcard"
+        );
+        assert_eq!(
+            markdown.highlights.as_ref().unwrap(),
+            &vec!["/default/highlights.scm".to_string()],
+            "markdown should inherit highlights from wildcard"
+        );
+        // Bridge should be markdown-specific, not inherited from wildcard
+        let bridge = markdown.bridge.as_ref().unwrap();
+        assert!(
+            bridge.get("rust").is_some(),
+            "markdown bridge should have rust entry"
+        );
+
+        // Test 2: "quarto" (not defined) should get wildcard settings entirely
+        let quarto = resolve_language_with_wildcard(&languages, "quarto").unwrap();
+        assert!(
+            quarto.highlights.is_some(),
+            "quarto should inherit highlights from wildcard"
+        );
+        // Bridge should be wildcard's empty filter (disable all)
+        let quarto_bridge = quarto.bridge.as_ref().unwrap();
+        assert!(
+            quarto_bridge.is_empty(),
+            "quarto should inherit empty bridge filter from wildcard"
+        );
+    }
+
+    /// PBI-155 Subtask 2: Test that LanguageSettings lookup uses wildcard resolution
+    ///
+    /// This test verifies the wiring: when we look up host language settings
+    /// using WorkspaceSettings.languages (HashMap<String, LanguageSettings>),
+    /// we should use wildcard resolution so that undefined languages inherit
+    /// from languages._ settings.
+    #[test]
+    fn test_language_settings_wildcard_lookup_blocks_bridging_for_undefined_host() {
+        let mut languages: HashMap<String, LanguageSettings> = HashMap::new();
+
+        // Wildcard: block all bridging with empty filter
+        languages.insert(
+            "_".to_string(),
+            LanguageSettings::with_bridge(None, None, Some(HashMap::new())),
+        );
+
+        // Look up "quarto" which doesn't exist - should inherit from wildcard
+        let quarto = resolve_language_settings_with_wildcard(&languages, "quarto");
+        assert!(
+            quarto.is_some(),
+            "Looking up undefined 'quarto' should return wildcard settings"
+        );
+
+        let quarto_settings = quarto.unwrap();
+        // The wildcard has empty bridge filter, so is_language_bridgeable should return false
+        assert!(
+            !quarto_settings.is_language_bridgeable("rust"),
+            "quarto (inherited from wildcard) should block bridging for rust"
+        );
+        assert!(
+            !quarto_settings.is_language_bridgeable("python"),
+            "quarto (inherited from wildcard) should block bridging for python"
+        );
+    }
+
+    /// PBI-155 Subtask 3: Test that server lookup uses wildcard resolution
+    ///
+    /// This test verifies that when looking up a language server config by name,
+    /// the wildcard server settings (languageServers._) are merged with specific
+    /// server settings.
+    ///
+    /// Key behavior:
+    /// - languageServers._ defines default initialization options
+    /// - languageServers.rust-analyzer overrides only the cmd
+    /// - The resolved rust-analyzer should have both cmd (from specific) and
+    ///   initialization_options (inherited from wildcard)
+    #[test]
+    fn test_language_server_config_inherits_from_wildcard() {
+        use serde_json::json;
+        use settings::BridgeServerConfig;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        // Wildcard server: default initialization options and workspace_type
+        servers.insert(
+            "_".to_string(),
+            BridgeServerConfig {
+                cmd: vec![],
+                languages: vec![],
+                initialization_options: Some(json!({ "checkOnSave": true })),
+                workspace_type: Some(settings::WorkspaceType::Generic),
+            },
+        );
+
+        // rust-analyzer: only specifies cmd and languages
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec!["rust".to_string()],
+                initialization_options: None, // Should inherit from wildcard
+                workspace_type: None,         // Should inherit from wildcard
+            },
+        );
+
+        // Test: rust-analyzer should merge with wildcard
+        let ra = resolve_language_server_with_wildcard(&servers, "rust-analyzer").unwrap();
+
+        // cmd from specific
+        assert_eq!(ra.cmd, vec!["rust-analyzer".to_string()]);
+        // languages from specific
+        assert_eq!(ra.languages, vec!["rust".to_string()]);
+        // initialization_options inherited from wildcard
+        assert!(ra.initialization_options.is_some());
+        let opts = ra.initialization_options.as_ref().unwrap();
+        assert_eq!(opts.get("checkOnSave"), Some(&json!(true)));
+        // workspace_type inherited from wildcard
+        assert_eq!(ra.workspace_type, Some(settings::WorkspaceType::Generic));
+    }
+
+    /// Test that server lookup finds servers when languages list is inherited from wildcard.
+    ///
+    /// ADR-0011: When languageServers.rust-analyzer has empty languages but
+    /// languageServers._ specifies languages = ["rust"], the lookup should still
+    /// find rust-analyzer for Rust injections because the languages list is
+    /// inherited from the wildcard during resolution.
+    #[test]
+    fn test_language_server_lookup_uses_resolved_languages_from_wildcard() {
+        use settings::BridgeServerConfig;
+
+        let mut servers: HashMap<String, BridgeServerConfig> = HashMap::new();
+
+        // Wildcard server: specifies languages = ["rust", "python"]
+        servers.insert(
+            "_".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["default-lsp".to_string()],
+                languages: vec!["rust".to_string(), "python".to_string()],
+                initialization_options: None,
+                workspace_type: None,
+            },
+        );
+
+        // rust-analyzer: specifies only cmd, inherits languages from wildcard
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec![], // Empty - should inherit from wildcard
+                initialization_options: None,
+                workspace_type: None,
+            },
+        );
+
+        // Simulate the lookup logic from get_bridge_config_for_language:
+        // For each server (excluding "_"), resolve it and check if it handles "rust"
+        let injection_language = "rust";
+        let mut found_server: Option<BridgeServerConfig> = None;
+
+        for server_name in servers.keys() {
+            if server_name == "_" {
+                continue;
+            }
+
+            if let Some(resolved_config) =
+                resolve_language_server_with_wildcard(&servers, server_name)
+                && resolved_config
+                    .languages
+                    .iter()
+                    .any(|l| l == injection_language)
+            {
+                found_server = Some(resolved_config);
+                break;
+            }
+        }
+
+        // Should find rust-analyzer because after resolution it has languages = ["rust", "python"]
+        assert!(
+            found_server.is_some(),
+            "Should find a server for 'rust' when languages is inherited from wildcard"
+        );
+        let server = found_server.unwrap();
+        assert_eq!(
+            server.cmd,
+            vec!["rust-analyzer".to_string()],
+            "Should find rust-analyzer server"
+        );
+        assert!(
+            server.languages.contains(&"rust".to_string()),
+            "Resolved server should have 'rust' in languages (inherited from wildcard)"
+        );
+    }
+
+    #[test]
+    fn test_bridge_router_respects_host_filter() {
+        // PBI-108 AC4: Bridge filtering is applied at request time before routing to language servers
+        // This test verifies that is_language_bridgeable is correctly integrated into
+        // the bridge routing logic.
+        use settings::BridgeLanguageConfig;
+
+        // Host markdown with bridge filter: only python and r enabled
+        let mut bridge_filter = HashMap::new();
+        bridge_filter.insert("python".to_string(), BridgeLanguageConfig { enabled: true });
+        bridge_filter.insert("r".to_string(), BridgeLanguageConfig { enabled: true });
+        let markdown_settings = LanguageSettings::with_bridge(None, None, Some(bridge_filter));
+
+        // Router should allow python (enabled in filter)
+        assert!(
+            markdown_settings.is_language_bridgeable("python"),
+            "Bridge router should allow python for markdown"
+        );
+
+        // Router should allow r (enabled in filter)
+        assert!(
+            markdown_settings.is_language_bridgeable("r"),
+            "Bridge router should allow r for markdown"
+        );
+
+        // Router should block rust (not in filter)
+        assert!(
+            !markdown_settings.is_language_bridgeable("rust"),
+            "Bridge router should block rust for markdown"
+        );
+
+        // Host quarto with no bridge filter (default: all)
+        let quarto_settings = LanguageSettings::new(None, None);
+
+        // Router should allow all languages
+        assert!(
+            quarto_settings.is_language_bridgeable("python"),
+            "Bridge router should allow python for quarto (no filter)"
+        );
+        assert!(
+            quarto_settings.is_language_bridgeable("rust"),
+            "Bridge router should allow rust for quarto (no filter)"
+        );
+
+        // Host rmd with empty bridge filter (disable all)
+        let rmd_settings = LanguageSettings::with_bridge(None, None, Some(HashMap::new()));
+
+        // Router should block all languages
+        assert!(
+            !rmd_settings.is_language_bridgeable("r"),
+            "Bridge router should block r for rmd (empty filter)"
+        );
+        assert!(
+            !rmd_settings.is_language_bridgeable("python"),
+            "Bridge router should block python for rmd (empty filter)"
+        );
+    }
 }
