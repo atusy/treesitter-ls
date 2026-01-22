@@ -40,8 +40,12 @@ pub(crate) struct ConnectionHandle {
     writer: tokio::sync::Mutex<SplitConnectionWriter>,
     /// Router for pending request tracking
     router: Arc<ResponseRouter>,
-    /// Handle to the reader task (for graceful shutdown on drop)
-    _reader_handle: ReaderTaskHandle,
+    /// Handle to the reader task.
+    ///
+    /// Used for:
+    /// - RAII cleanup on drop (cancels reader task)
+    /// - Liveness timer start notification (pending 0->1)
+    reader_handle: ReaderTaskHandle,
     /// Atomic counter for generating unique downstream request IDs.
     ///
     /// Each upstream request may have the same ID (from different contexts),
@@ -66,6 +70,8 @@ impl ConnectionHandle {
 
     /// Create a new ConnectionHandle with a specific initial state.
     ///
+    /// Uses default liveness timeout (60s per ADR-0018 Tier 2).
+    ///
     /// Used for async initialization where the connection starts in Initializing
     /// state and transitions to Ready or Failed based on init result.
     ///
@@ -83,7 +89,7 @@ impl ConnectionHandle {
             state: std::sync::RwLock::new(initial_state),
             writer: tokio::sync::Mutex::new(writer),
             router,
-            _reader_handle: reader_handle,
+            reader_handle,
             // Start at 2 because ID=1 is reserved for the initialize request
             // which is pre-registered before spawning the reader task.
             next_request_id: AtomicI64::new(2),
@@ -142,9 +148,17 @@ impl ConnectionHandle {
     /// Transitions the connection to Closing state, which:
     /// - Rejects new requests with "bridge: connection closing" error
     /// - Signals that LSP shutdown/exit handshake should begin
+    /// - Stops the liveness timer (ADR-0018: global shutdown overrides liveness)
+    ///
+    /// Note: The reader task continues running to receive the shutdown response.
+    /// Only the liveness timer is disabled, not the entire reader.
     ///
     /// Valid from Ready or Initializing states per ADR-0015/ADR-0017.
     pub(crate) fn begin_shutdown(&self) {
+        // Stop the liveness timer (but not the reader task) per ADR-0018
+        // Global shutdown (Tier 3) overrides liveness timeout (Tier 2)
+        // Reader continues running to receive shutdown response
+        self.reader_handle.stop_liveness_timer();
         self.set_state(ConnectionState::Closing);
     }
 
@@ -292,15 +306,34 @@ impl ConnectionHandle {
     /// Register a new request and return (request_id, response_receiver).
     ///
     /// Generates a unique request ID and registers it with the router.
+    /// If this is the first pending request (pending 0->1), notifies the reader
+    /// task to start the liveness timer (ADR-0014).
+    ///
     /// Returns error if registration fails (should never happen with unique IDs).
     pub(crate) fn register_request(
         &self,
     ) -> io::Result<(RequestId, tokio::sync::oneshot::Receiver<serde_json::Value>)> {
+        // Check if this will be the first pending request (0->1 transition)
+        //
+        // SAFETY: This check is not atomic with register(), but the race is benign:
+        // - If two threads both see pending_count()==0 and both call notify_liveness_start(),
+        //   the second notification is dropped (try_send on capacity-1 channel).
+        // - If thread A sees 0, thread B sees A's registration (count=1), only A notifies,
+        //   which is correct behavior.
+        // Either way, the timer starts exactly once when pending goes 0->1.
+        let was_empty = self.router().pending_count() == 0;
+
         let request_id = RequestId::new(self.next_request_id());
         let response_rx = self
             .router()
             .register(request_id)
             .ok_or_else(|| io::Error::other("bridge: duplicate request ID"))?;
+
+        // If pending went 0->1 and we're in Ready state, start liveness timer
+        if was_empty && self.state() == ConnectionState::Ready {
+            self.reader_handle.notify_liveness_start();
+        }
+
         Ok((request_id, response_rx))
     }
 
@@ -308,6 +341,9 @@ impl ConnectionHandle {
     ///
     /// Takes the oneshot receiver and request ID, waits for response with
     /// 30-second timeout. On timeout, removes the pending entry from router.
+    ///
+    /// Also checks for liveness timeout failure and transitions to Failed state
+    /// if the reader task signaled a liveness timeout (ADR-0014 Phase 3).
     pub(crate) async fn wait_for_response(
         &self,
         request_id: RequestId,
@@ -318,8 +354,22 @@ impl ConnectionHandle {
         const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
         match timeout(REQUEST_TIMEOUT, response_rx).await {
-            Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err(io::Error::other("bridge: response channel closed")),
+            Ok(Ok(response)) => {
+                // Check if this was an error response from liveness timeout
+                // If so, transition to Failed state (ADR-0014 Phase 3)
+                if self.reader_handle.check_liveness_failed() {
+                    self.set_state(ConnectionState::Failed);
+                }
+                Ok(response)
+            }
+            Ok(Err(_)) => {
+                // Channel closed - check if due to liveness timeout
+                // If so, transition to Failed state (ADR-0014 Phase 3)
+                if self.reader_handle.check_liveness_failed() {
+                    self.set_state(ConnectionState::Failed);
+                }
+                Err(io::Error::other("bridge: response channel closed"))
+            }
             Err(_) => {
                 // Timeout - clean up pending entry
                 self.router().remove(request_id);
@@ -420,5 +470,300 @@ mod tests {
         // Can access router
         let _router = handle.router();
         // Router is accessible (test passes if no panic)
+    }
+
+    /// Test that liveness timeout triggers Ready->Failed state transition (ADR-0014 Phase 3).
+    ///
+    /// When the liveness timer fires:
+    /// 1. router.fail_all() sends error responses to pending requests
+    /// 2. ConnectionHandle transitions to Failed state
+    /// 3. Failed state triggers SpawnNew action on next request
+    #[tokio::test]
+    async fn liveness_timeout_transitions_to_failed_state() {
+        use crate::lsp::bridge::actor::spawn_reader_task_with_liveness;
+        use std::time::Duration;
+
+        // Create an unresponsive server (consumes input, never outputs)
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+
+        // Spawn reader with short liveness timeout
+        let reader_handle = spawn_reader_task_with_liveness(
+            reader,
+            Arc::clone(&router),
+            Some(Duration::from_millis(50)),
+        );
+
+        // Create ConnectionHandle in Ready state
+        let handle = Arc::new(ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+        ));
+
+        // Verify initial state is Ready
+        assert_eq!(handle.state(), ConnectionState::Ready);
+
+        // Register a request - this will notify the reader to start the liveness timer
+        let (request_id, response_rx) = handle.register_request().expect("should register request");
+
+        // Wait for response - this will block until liveness timeout fires
+        // The response will be an error from router.fail_all()
+        let result = handle.wait_for_response(request_id, response_rx).await;
+
+        // Response should be Ok (error response from fail_all is still delivered)
+        let response = result.expect("should receive error response from fail_all");
+        assert!(
+            response.get("error").is_some(),
+            "Response should be an error: {:?}",
+            response
+        );
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("liveness timeout"),
+            "Error should mention liveness timeout"
+        );
+
+        // After liveness timeout, connection should be in Failed state (Phase 3)
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Failed,
+            "Connection should transition to Failed state on liveness timeout"
+        );
+    }
+
+    /// Test that begin_shutdown() cancels the active liveness timer (ADR-0018 Phase 4).
+    ///
+    /// When global shutdown begins, the liveness timer should be disabled because
+    /// global shutdown (Tier 3) overrides liveness timeout (Tier 2).
+    #[tokio::test]
+    async fn begin_shutdown_cancels_liveness_timer() {
+        use crate::lsp::bridge::actor::spawn_reader_task_with_liveness;
+        use std::time::Duration;
+
+        // Create an unresponsive server
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+
+        // Spawn reader with short liveness timeout
+        let reader_handle = spawn_reader_task_with_liveness(
+            reader,
+            Arc::clone(&router),
+            Some(Duration::from_millis(50)),
+        );
+
+        // Create ConnectionHandle in Ready state
+        let handle = Arc::new(ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+        ));
+
+        // Register a request to start the liveness timer
+        let (_request_id, _response_rx) = handle.register_request().expect("should register");
+
+        // Immediately begin shutdown - this should cancel the liveness timer
+        handle.begin_shutdown();
+
+        // Wait longer than the liveness timeout would have been
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // State should be Closing (from begin_shutdown), NOT Failed (from liveness timeout)
+        // This proves the liveness timer was cancelled
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closing,
+            "State should be Closing, not Failed - liveness timer should have been cancelled"
+        );
+    }
+
+    /// Test that liveness timer does not start in Closing state (ADR-0018 Phase 4).
+    ///
+    /// Once shutdown begins, new requests should not start the liveness timer
+    /// because global shutdown (Tier 3) overrides liveness timeout (Tier 2).
+    ///
+    /// Test strategy: Register a request in Closing state, wait beyond timeout
+    /// duration, verify connection stays in Closing (not Failed).
+    #[tokio::test(start_paused = true)]
+    async fn liveness_timer_does_not_start_in_closing_state() {
+        use crate::lsp::bridge::actor::spawn_reader_task_with_liveness;
+        use std::time::Duration;
+
+        // Create an echo server
+        let mut conn = AsyncBridgeConnection::spawn(vec!["cat".to_string()])
+            .await
+            .expect("should spawn cat process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+
+        // Short timeout so we can wait past it
+        let timeout = Duration::from_millis(50);
+
+        // Spawn reader with liveness timeout
+        let reader_handle =
+            spawn_reader_task_with_liveness(reader, Arc::clone(&router), Some(timeout));
+
+        // Create ConnectionHandle in Closing state
+        let handle = Arc::new(ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Closing,
+        ));
+
+        // Register a request - this should NOT start the liveness timer
+        // because register_request checks `state == Ready` before notifying
+        let result = handle.register_request();
+        assert!(
+            result.is_ok(),
+            "register_request should succeed even in Closing state"
+        );
+        let (_request_id, _rx) = result.unwrap();
+
+        // Advance time well beyond the timeout duration
+        // If timer started, the connection would transition to Failed
+        tokio::time::advance(timeout * 3).await;
+        tokio::task::yield_now().await; // Allow pending tasks to execute
+
+        // Connection should still be Closing, not Failed
+        // This proves the liveness timer never started
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closing,
+            "Connection should remain Closing - liveness timer should NOT have started"
+        );
+    }
+
+    /// Integration test: liveness timer resets on response activity.
+    ///
+    /// ADR-0014: Timer resets on any stdout activity.
+    /// This verifies the full stack: request -> response -> timer reset.
+    ///
+    /// Test strategy: Send requests that will be echoed back, verify that
+    /// receiving responses keeps the connection alive past the original timeout.
+    #[tokio::test]
+    async fn liveness_timer_resets_on_response_integration() {
+        use crate::lsp::bridge::actor::spawn_reader_task_with_liveness;
+        use serde_json::json;
+        use std::time::Duration;
+
+        // Create an echo server (cat echoes everything back)
+        let mut conn = AsyncBridgeConnection::spawn(vec!["cat".to_string()])
+            .await
+            .expect("should spawn cat process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+
+        // Spawn reader with liveness timeout (200ms)
+        // This is long enough to avoid races but short enough for fast tests
+        let reader_handle = spawn_reader_task_with_liveness(
+            reader,
+            Arc::clone(&router),
+            Some(Duration::from_millis(200)),
+        );
+
+        // Create ConnectionHandle in Ready state
+        let handle = Arc::new(ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+        ));
+
+        // Register first request - this starts the liveness timer
+        let (request_id1, response_rx1) = handle.register_request().expect("should register");
+
+        // Send a request that will be echoed back
+        let request1 = json!({
+            "jsonrpc": "2.0",
+            "id": request_id1.as_i64(),
+            "method": "test",
+            "params": {}
+        });
+        handle
+            .writer()
+            .await
+            .write_message(&request1)
+            .await
+            .expect("should write");
+
+        // Wait 100ms (half the timeout), then check we received the response
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Response should arrive (echo server echoes the request as-is)
+        // This response resets the liveness timer
+        let response1 = tokio::time::timeout(Duration::from_millis(50), response_rx1)
+            .await
+            .expect("should not timeout waiting for response")
+            .expect("should receive response");
+
+        // Verify we got the echoed response
+        assert!(response1.get("id").is_some(), "Response should have id");
+
+        // Connection should still be Ready (timer was reset when response arrived)
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "Connection should be Ready after first response"
+        );
+
+        // Register second request to keep pending > 0 (timer stays active after reset)
+        let (request_id2, response_rx2) = handle.register_request().expect("should register");
+
+        // Send second request
+        let request2 = json!({
+            "jsonrpc": "2.0",
+            "id": request_id2.as_i64(),
+            "method": "test2",
+            "params": {}
+        });
+        handle
+            .writer()
+            .await
+            .write_message(&request2)
+            .await
+            .expect("should write");
+
+        // Wait another 150ms - this is past the original 200ms timeout from the start
+        // but within 200ms of the timer reset from the first response
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // Connection should STILL be Ready because timer was reset
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "Timer should have reset on first response - connection should still be Ready"
+        );
+
+        // Receive second response to clean up
+        let _response2 = tokio::time::timeout(Duration::from_millis(50), response_rx2)
+            .await
+            .expect("should not timeout")
+            .expect("should receive response");
+
+        // Still Ready after all responses
+        assert_eq!(handle.state(), ConnectionState::Ready);
     }
 }

@@ -87,8 +87,9 @@ impl ResponseRouter {
 
     /// Get the number of pending requests.
     ///
-    /// Primarily for testing and diagnostics.
-    #[cfg(test)]
+    /// Used for liveness timeout management (ADR-0014):
+    /// - Timer starts when pending transitions 0 -> 1
+    /// - Timer stops when pending transitions to 0
     pub(crate) fn pending_count(&self) -> usize {
         let pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         pending.len()

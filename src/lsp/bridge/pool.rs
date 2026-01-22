@@ -10,6 +10,7 @@ mod connection_handle;
 mod connection_state;
 mod document_tracker;
 mod handshake;
+mod liveness_timeout;
 mod shutdown;
 mod shutdown_timeout;
 #[cfg(test)]
@@ -42,7 +43,7 @@ use super::protocol::{VirtualDocumentUri, build_bridge_didopen_notification};
 /// within this duration, the connection attempt fails with a timeout error.
 const INIT_TIMEOUT_SECS: u64 = 30;
 
-use super::actor::{ResponseRouter, spawn_reader_task};
+use super::actor::{ResponseRouter, spawn_reader_task_with_liveness};
 use super::connection::AsyncBridgeConnection;
 
 /// Pool of connections to downstream language servers (ADR-0016).
@@ -307,8 +308,14 @@ impl LanguageServerPool {
             .register(init_request_id)
             .expect("fresh router cannot have duplicate IDs");
 
-        // Now spawn reader task - it can route the initialize response immediately
-        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+        // Now spawn reader task with liveness timeout - it can route the initialize response immediately
+        // Liveness timeout is configured via LivenessTimeout::default() (60s per ADR-0018 Tier 2)
+        let liveness_timeout = liveness_timeout::LivenessTimeout::default();
+        let reader_handle = spawn_reader_task_with_liveness(
+            reader,
+            Arc::clone(&router),
+            Some(liveness_timeout.as_duration()),
+        );
 
         // Create handle in Initializing state (fast-fail for concurrent requests)
         let handle = Arc::new(ConnectionHandle::with_state(
@@ -359,6 +366,7 @@ impl LanguageServerPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lsp::bridge::actor::spawn_reader_task;
     use std::time::Duration;
     use test_helpers::*;
 
