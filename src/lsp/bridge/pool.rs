@@ -43,7 +43,7 @@ use super::protocol::{VirtualDocumentUri, build_bridge_didopen_notification};
 /// within this duration, the connection attempt fails with a timeout error.
 const INIT_TIMEOUT_SECS: u64 = 30;
 
-use super::actor::{ResponseRouter, spawn_reader_task_with_liveness};
+use super::actor::{ResponseRouter, spawn_reader_task_for_language};
 use super::connection::AsyncBridgeConnection;
 
 /// Pool of connections to downstream language servers (ADR-0016).
@@ -328,11 +328,13 @@ impl LanguageServerPool {
 
         // Now spawn reader task with liveness timeout - it can route the initialize response immediately
         // Liveness timeout is configured via LivenessTimeout::default() (60s per ADR-0018 Tier 2)
+        // Language is passed for structured logging (observability improvement)
         let liveness_timeout = liveness_timeout::LivenessTimeout::default();
-        let reader_handle = spawn_reader_task_with_liveness(
+        let reader_handle = spawn_reader_task_for_language(
             reader,
             Arc::clone(&router),
             Some(liveness_timeout.as_duration()),
+            Some(language.to_string()),
         );
 
         // Create handle in Initializing state (fast-fail for concurrent requests)

@@ -182,7 +182,10 @@ pub(crate) fn spawn_reader_task(
     spawn_reader_task_with_liveness(reader, router, None)
 }
 
-/// Spawn a reader task with optional liveness timeout.
+/// Spawn a reader task with optional liveness timeout (no language context).
+///
+/// This is a convenience wrapper for tests that don't need structured logging
+/// with language identifiers. Production code should use `spawn_reader_task_for_language`.
 ///
 /// # Arguments
 /// * `reader` - The BridgeReader to read messages from
@@ -191,10 +194,30 @@ pub(crate) fn spawn_reader_task(
 ///
 /// # Returns
 /// A ReaderTaskHandle for managing the spawned task.
+#[cfg(test)]
 pub(crate) fn spawn_reader_task_with_liveness(
     reader: BridgeReader,
     router: Arc<ResponseRouter>,
     liveness_timeout: Option<Duration>,
+) -> ReaderTaskHandle {
+    spawn_reader_task_for_language(reader, router, liveness_timeout, None)
+}
+
+/// Spawn a reader task with liveness timeout and language identifier for logging.
+///
+/// # Arguments
+/// * `reader` - The BridgeReader to read messages from
+/// * `router` - The ResponseRouter to route responses to waiters
+/// * `liveness_timeout` - Optional timeout for hung server detection (ADR-0014)
+/// * `language` - Language identifier for structured logging (e.g., "lua", "python")
+///
+/// # Returns
+/// A ReaderTaskHandle for managing the spawned task.
+pub(crate) fn spawn_reader_task_for_language(
+    reader: BridgeReader,
+    router: Arc<ResponseRouter>,
+    liveness_timeout: Option<Duration>,
+    language: Option<String>,
 ) -> ReaderTaskHandle {
     let cancel_token = CancellationToken::new();
     let token_clone = cancel_token.clone();
@@ -216,6 +239,7 @@ pub(crate) fn spawn_reader_task_with_liveness(
         liveness_start_rx,
         liveness_stop_rx,
         liveness_failed_tx,
+        language,
     ));
 
     ReaderTaskHandle {
@@ -250,6 +274,7 @@ async fn reader_loop(
         start_rx,
         stop_rx,
         failed_tx,
+        None, // No language context for test helper
     )
     .await
 }
@@ -263,6 +288,12 @@ async fn reader_loop(
 /// - Timer resets on any message received (response or notification)
 /// - Timer stops when pending count returns to 0 OR when stop notification received
 /// - Timer firing triggers Ready->Failed transition via router.fail_all() and signals via liveness_failed_tx
+///
+/// # Observability
+///
+/// When `language` is provided, all log messages include the language identifier
+/// for easier filtering in production (e.g., `[lua]` prefix in log messages).
+#[allow(clippy::too_many_arguments)] // Internal async fn; grouping would add complexity
 async fn reader_loop_with_liveness(
     mut reader: BridgeReader,
     router: Arc<ResponseRouter>,
@@ -271,7 +302,14 @@ async fn reader_loop_with_liveness(
     mut liveness_start_rx: mpsc::Receiver<()>,
     mut liveness_stop_rx: mpsc::Receiver<()>,
     liveness_failed_tx: oneshot::Sender<()>,
+    language: Option<String>,
 ) {
+    // Language prefix for log messages (e.g., "[lua] " or "")
+    let lang_prefix = language
+        .as_ref()
+        .map(|l| format!("[{}] ", l))
+        .unwrap_or_default();
+
     // Liveness timer state: None when inactive, Some(Sleep) when active
     let mut liveness_timer: Option<LivenessTimer> = None;
 
@@ -283,7 +321,8 @@ async fn reader_loop_with_liveness(
             _ = cancel_token.cancelled() => {
                 debug!(
                     target: "kakehashi::bridge::reader",
-                    "Reader task cancelled, shutting down"
+                    "{}Reader task cancelled, shutting down",
+                    lang_prefix
                 );
                 break;
             }
@@ -298,12 +337,15 @@ async fn reader_loop_with_liveness(
                 }
             } => {
                 // Liveness timeout fired - server is unresponsive
-                // NOTE: This warn! is the primary observability signal for production debugging.
-                // Consider adding metrics (counter for timeout events) if more detailed
-                // monitoring is needed in the future.
+                // This warn! is the primary observability signal for production debugging.
+                // The pending_count is included for debugging stuck request scenarios.
+                let pending_count = router.pending_count();
                 warn!(
                     target: "kakehashi::bridge::reader",
-                    "Liveness timeout expired, server appears hung - failing pending requests"
+                    "{}Liveness timeout expired after {:?}, server appears hung - failing {} pending request(s)",
+                    lang_prefix,
+                    liveness_timeout.unwrap_or_default(),
+                    pending_count
                 );
                 router.fail_all("bridge: liveness timeout - server unresponsive");
                 // Signal liveness failure for state transition (ADR-0014 Phase 3)
@@ -316,7 +358,8 @@ async fn reader_loop_with_liveness(
                 if let Some(timeout) = liveness_timeout {
                     debug!(
                         target: "kakehashi::bridge::reader",
-                        "Liveness timer started: {:?}",
+                        "{}Liveness timer started: {:?}",
+                        lang_prefix,
                         timeout
                     );
                     liveness_timer = Some(new_liveness_timer(timeout));
@@ -328,7 +371,8 @@ async fn reader_loop_with_liveness(
                 if liveness_timer.is_some() {
                     debug!(
                         target: "kakehashi::bridge::reader",
-                        "Liveness timer stopped: shutdown began"
+                        "{}Liveness timer stopped: shutdown began",
+                        lang_prefix
                     );
                     liveness_timer = None;
                 }
@@ -342,18 +386,20 @@ async fn reader_loop_with_liveness(
                         if let Some(timeout) = liveness_timeout && liveness_timer.is_some() {
                             debug!(
                                 target: "kakehashi::bridge::reader",
-                                "Liveness timer reset on message activity"
+                                "{}Liveness timer reset on message activity",
+                                lang_prefix
                             );
                             liveness_timer = Some(new_liveness_timer(timeout));
                         }
 
-                        handle_message(message, &router);
+                        handle_message(message, &router, &lang_prefix);
 
                         // Check if pending count returned to 0 - stop timer
                         if liveness_timer.is_some() && router.pending_count() == 0 {
                             debug!(
                                 target: "kakehashi::bridge::reader",
-                                "Liveness timer stopped: pending count is 0"
+                                "{}Liveness timer stopped: pending count is 0",
+                                lang_prefix
                             );
                             liveness_timer = None;
                         }
@@ -362,7 +408,8 @@ async fn reader_loop_with_liveness(
                         // EOF or read error - mark all pending as failed and exit
                         warn!(
                             target: "kakehashi::bridge::reader",
-                            "Reader error: {}, failing pending requests",
+                            "{}Reader error: {}, failing pending requests",
+                            lang_prefix,
                             e
                         );
                         router.fail_all(&format!("bridge: reader error: {}", e));
@@ -375,7 +422,7 @@ async fn reader_loop_with_liveness(
 }
 
 /// Handle a single message from the downstream server.
-fn handle_message(message: serde_json::Value, router: &ResponseRouter) {
+fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_prefix: &str) {
     // Check if it's a response (has "id" field)
     if message.get("id").is_some() {
         // It's a response - route to waiter
@@ -383,7 +430,8 @@ fn handle_message(message: serde_json::Value, router: &ResponseRouter) {
         if !delivered {
             debug!(
                 target: "kakehashi::bridge::reader",
-                "Response for unknown request ID, dropping"
+                "{}Response for unknown request ID, dropping",
+                lang_prefix
             );
         }
     } else {
@@ -391,7 +439,8 @@ fn handle_message(message: serde_json::Value, router: &ResponseRouter) {
         if let Some(method) = message.get("method").and_then(|v| v.as_str()) {
             debug!(
                 target: "kakehashi::bridge::reader",
-                "Received notification: {}, skipping",
+                "{}Received notification: {}, skipping",
+                lang_prefix,
                 method
             );
         }
@@ -466,7 +515,7 @@ mod tests {
             "result": null
         });
 
-        handle_message(response, &router);
+        handle_message(response, &router, "");
 
         // Receiver should have the response
         // We can't block on rx.await here in a sync test, but we can check
@@ -487,7 +536,7 @@ mod tests {
             "params": {}
         });
 
-        handle_message(notification, &router);
+        handle_message(notification, &router, "");
 
         // Pending count should still be 1 (notification was ignored)
         assert_eq!(router.pending_count(), 1);
