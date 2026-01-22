@@ -40,16 +40,19 @@ use super::LanguageServerPool;
 ///
 /// Two access patterns coexist:
 ///
-/// 1. **Direct pool access** (preferred for handlers): Use `coordinator.pool().*` to call
+/// 1. **Direct pool access** (preferred for NEW code): Use `self.bridge.pool().*` to call
 ///    pool methods directly. This is the primary pattern for LSP request handlers.
+///    - Pros: No coordinator changes needed, smaller API surface
+///    - Use for: send_*_request(), forward_cancel(), new pool operations
 ///
-/// 2. **Delegating methods** (convenience wrappers): Methods like `close_host_document()`,
-///    `shutdown_all()`, etc. delegate to pool methods. These exist for common operations
-///    but are NOT mandatory - handlers may access pool directly.
+/// 2. **Delegating methods** (for common lifecycle operations): Methods like
+///    `close_host_document()`, `shutdown_all()`, etc. delegate to pool methods.
+///    - Pros: Semantic naming, hides pool implementation details
+///    - Use for: Document lifecycle (open/close), shutdown, region ID management
 ///
-/// The direct access pattern reduces API surface area (YAGNI principle) while delegating
-/// methods provide convenience for frequently-used operations. New features should default
-/// to direct pool access unless delegation provides clear value.
+/// **Decision Guide**: Use direct pool access by default. Only add a delegating method
+/// if the operation is (a) used in 3+ places, (b) involves coordinator-level logic
+/// (e.g., combining pool + region_id_tracker), or (c) needs semantic naming for clarity.
 pub(crate) struct BridgeCoordinator {
     pool: Arc<LanguageServerPool>,
     region_id_tracker: RegionIdTracker,
