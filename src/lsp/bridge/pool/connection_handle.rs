@@ -11,7 +11,6 @@ use std::time::Duration;
 use log::warn;
 
 use super::ConnectionState;
-use super::liveness_timeout::LivenessTimeout;
 use crate::lsp::bridge::actor::{ReaderTaskHandle, ResponseRouter};
 use crate::lsp::bridge::connection::SplitConnectionWriter;
 use crate::lsp::bridge::protocol::{RequestId, build_exit_notification, build_shutdown_request};
@@ -86,12 +85,6 @@ impl ConnectionHandle {
         reader_handle: ReaderTaskHandle,
         initial_state: ConnectionState,
     ) -> Self {
-        let liveness_timeout = LivenessTimeout::default();
-        log::debug!(
-            target: "kakehashi::bridge",
-            "Creating connection handle with liveness timeout: {:?}",
-            liveness_timeout.as_duration()
-        );
         Self {
             state: std::sync::RwLock::new(initial_state),
             writer: tokio::sync::Mutex::new(writer),
