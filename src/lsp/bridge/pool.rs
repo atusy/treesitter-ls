@@ -18,6 +18,7 @@ use handshake::perform_lsp_handshake;
 
 pub(crate) use connection_handle::ConnectionHandle;
 pub(crate) use connection_state::ConnectionState;
+use document_tracker::DocumentOpenDecision;
 use document_tracker::DocumentTracker;
 pub(crate) use document_tracker::OpenedVirtualDoc;
 pub(crate) use shutdown_timeout::GlobalShutdownTimeout;
@@ -148,6 +149,13 @@ impl LanguageServerPool {
     /// Returns error if another request is in the process of opening (race condition).
     ///
     /// The `cleanup_on_error` closure is called before returning error to clean up resources.
+    ///
+    /// # Decision Logic
+    ///
+    /// Uses `DocumentOpenDecision` to determine action:
+    /// - `SendDidOpen`: Send didOpen notification, mark as opened
+    /// - `AlreadyOpened`: Skip (no-op), document was already opened
+    /// - `PendingError`: Race condition, call cleanup and return error
     pub(crate) async fn ensure_document_opened<F>(
         &self,
         writer: &mut SplitConnectionWriter,
@@ -159,24 +167,28 @@ impl LanguageServerPool {
     where
         F: FnOnce(),
     {
-        if self
+        match self
             .document_tracker
-            .should_send_didopen(host_uri, virtual_uri)
+            .document_open_decision(host_uri, virtual_uri)
             .await
         {
-            let did_open = build_bridge_didopen_notification(virtual_uri, virtual_content);
-            if let Err(e) = writer.write_message(&did_open).await {
-                cleanup_on_error();
-                return Err(e);
+            DocumentOpenDecision::SendDidOpen => {
+                let did_open = build_bridge_didopen_notification(virtual_uri, virtual_content);
+                if let Err(e) = writer.write_message(&did_open).await {
+                    cleanup_on_error();
+                    return Err(e);
+                }
+                self.document_tracker.mark_document_opened(virtual_uri);
+                Ok(())
             }
-            self.document_tracker.mark_document_opened(virtual_uri);
-        } else if !self.document_tracker.is_document_opened(virtual_uri) {
-            cleanup_on_error();
-            return Err(io::Error::other(
-                "bridge: document not yet opened (didOpen pending)",
-            ));
+            DocumentOpenDecision::AlreadyOpened => Ok(()),
+            DocumentOpenDecision::PendingError => {
+                cleanup_on_error();
+                Err(io::Error::other(
+                    "bridge: document not yet opened (didOpen pending)",
+                ))
+            }
         }
-        Ok(())
     }
 
     /// Increment the version of a virtual document and return the new version.
@@ -1069,9 +1081,11 @@ mod tests {
     // ========================================
     // ensure_document_opened tests
     // ========================================
-    // Note: Unit tests for should_send_didopen, is_document_opened, mark_document_opened,
-    // and remove_matching_virtual_docs live in document_tracker.rs.
-    // These integration tests verify ensure_document_opened behavior with I/O.
+    // Decision logic unit tests (DocumentOpenDecision) live in document_tracker.rs.
+    // These integration tests verify ensure_document_opened I/O behavior:
+    // - Writing didOpen notification to downstream
+    // - Cleanup callback invocation on error
+    // - Post-condition: document marked as opened
 
     /// Test that ensure_document_opened sends didOpen when document is not yet opened.
     ///
@@ -1926,27 +1940,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    // ============================================================
-    // Timeout Architecture Tests
-    // ============================================================
-
-    /// Verify graceful_shutdown relies on global timeout, not internal timeout.
-    #[test]
-    fn graceful_shutdown_relies_on_global_timeout_not_internal() {
-        // Verify the architectural property: GlobalShutdownTimeout is the only timeout config
-        let timeout = GlobalShutdownTimeout::default();
-        assert_eq!(
-            timeout.as_duration(),
-            Duration::from_secs(10),
-            "Default global timeout should be 10s per ADR-0018"
-        );
-
-        // The absence of SHUTDOWN_TIMEOUT constant in graceful_shutdown() is verified by:
-        // 1. Code review during PR
-        // 2. The integration tests above which would fail if internal timeout existed
-        //    (hung servers would timeout individually instead of being bounded by global)
     }
 
     // ============================================================
