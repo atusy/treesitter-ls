@@ -10,6 +10,7 @@ mod connection_handle;
 mod connection_state;
 mod document_tracker;
 mod handshake;
+mod liveness_timeout;
 mod shutdown;
 mod shutdown_timeout;
 #[cfg(test)]

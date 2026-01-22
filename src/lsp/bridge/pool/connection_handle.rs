@@ -11,6 +11,7 @@ use std::time::Duration;
 use log::warn;
 
 use super::ConnectionState;
+use super::liveness_timeout::LivenessTimeout;
 use crate::lsp::bridge::actor::{ReaderTaskHandle, ResponseRouter};
 use crate::lsp::bridge::connection::SplitConnectionWriter;
 use crate::lsp::bridge::protocol::{RequestId, build_exit_notification, build_shutdown_request};
@@ -66,6 +67,8 @@ impl ConnectionHandle {
 
     /// Create a new ConnectionHandle with a specific initial state.
     ///
+    /// Uses default liveness timeout (60s per ADR-0018 Tier 2).
+    ///
     /// Used for async initialization where the connection starts in Initializing
     /// state and transitions to Ready or Failed based on init result.
     ///
@@ -79,6 +82,12 @@ impl ConnectionHandle {
         reader_handle: ReaderTaskHandle,
         initial_state: ConnectionState,
     ) -> Self {
+        let liveness_timeout = LivenessTimeout::default();
+        log::debug!(
+            target: "kakehashi::bridge",
+            "Creating connection handle with liveness timeout: {:?}",
+            liveness_timeout.as_duration()
+        );
         Self {
             state: std::sync::RwLock::new(initial_state),
             writer: tokio::sync::Mutex::new(writer),
