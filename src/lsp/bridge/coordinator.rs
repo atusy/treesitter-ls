@@ -1,8 +1,7 @@
 //! Bridge coordinator for consolidating bridge pool and region ID tracking.
 //!
 //! This module provides the `BridgeCoordinator` which unifies the language server
-//! pool and region ID tracker into a single coherent API. This is Phase 5 of the
-//! lsp_impl.rs refactoring plan.
+//! pool and region ID tracker into a single coherent API.
 //!
 //! # Responsibilities
 //!

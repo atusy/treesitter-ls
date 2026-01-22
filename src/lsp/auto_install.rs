@@ -6,7 +6,7 @@
 //! # Module Structure
 //!
 //! - `InstallingLanguages`: Tracks concurrent installs to prevent duplicates
-//! - `AutoInstallManager`: Isolated coordinator for installation (Phase 3 extraction)
+//! - `AutoInstallManager`: Isolated coordinator for installation
 //! - `InstallResult`, `InstallOutcome`, `InstallEvent`: Event-based return types
 
 mod manager;
