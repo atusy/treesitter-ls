@@ -244,33 +244,10 @@ impl CacheCoordinator {
         }
     }
 
-    /// Get all injection regions for a document.
-    #[allow(dead_code)] // Part of designed API, may be used in future
+    /// Get all injection regions for a document (test helper).
+    #[cfg(test)]
     pub(crate) fn get_injections(&self, uri: &Url) -> Option<Vec<CacheableInjectionRegion>> {
         self.injection_map.get(uri)
-    }
-
-    /// Find the injection region containing the given byte position.
-    #[allow(dead_code)] // Part of designed API, may be used in future
-    pub(crate) fn find_injection_at_position(
-        &self,
-        uri: &Url,
-        byte_position: usize,
-    ) -> Option<CacheableInjectionRegion> {
-        self.injection_map.find_at_position(uri, byte_position)
-    }
-
-    /// Find all injection regions that overlap with the given byte range.
-    ///
-    /// Uses O(log n) interval tree query (PBI-167).
-    #[allow(dead_code)] // Part of designed API, may be used in future
-    pub(crate) fn find_overlapping_injections(
-        &self,
-        uri: &Url,
-        start: usize,
-        end: usize,
-    ) -> Option<Vec<CacheableInjectionRegion>> {
-        self.injection_map.find_overlapping(uri, start, end)
     }
 
     // ========================================================================
@@ -319,10 +296,8 @@ impl CacheCoordinator {
         self.request_tracker.finish_request(uri, request_id);
     }
 
-    /// Cancel all requests for a given URI.
-    ///
-    /// Useful when a document is closed.
-    #[allow(dead_code)] // Part of designed API, may be used in future
+    /// Cancel all requests for a given URI (test helper).
+    #[cfg(test)]
     pub(crate) fn cancel_requests(&self, uri: &Url) {
         self.request_tracker.cancel_all_for_uri(uri);
     }
