@@ -29,6 +29,7 @@ pub(crate) use shutdown_timeout::GlobalShutdownTimeout;
 use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::sync::Mutex;
@@ -45,6 +46,66 @@ const INIT_TIMEOUT_SECS: u64 = 30;
 
 use super::actor::{ResponseRouter, spawn_reader_task_for_language};
 use super::connection::AsyncBridgeConnection;
+
+/// Metrics for cancel request forwarding.
+///
+/// Provides observability into the cancel forwarding mechanism for production
+/// debugging and monitoring. All counters use relaxed ordering since exact
+/// counts are not critical for correctness.
+#[derive(Default)]
+pub(crate) struct CancelForwardingMetrics {
+    /// Number of cancel notifications successfully forwarded to downstream servers.
+    successful: AtomicU64,
+    /// Number of cancel notifications that failed due to no connection for the language.
+    failed_no_connection: AtomicU64,
+    /// Number of cancel notifications that failed due to connection not ready.
+    failed_not_ready: AtomicU64,
+    /// Number of cancel notifications that failed due to unknown upstream request ID.
+    failed_unknown_id: AtomicU64,
+    /// Number of cancel notifications that failed due to upstream ID not in registry.
+    failed_not_in_registry: AtomicU64,
+}
+
+impl CancelForwardingMetrics {
+    /// Record a successful cancel forward.
+    fn record_success(&self) {
+        self.successful.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a failure due to no connection for the language.
+    fn record_no_connection(&self) {
+        self.failed_no_connection.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a failure due to connection not ready.
+    fn record_not_ready(&self) {
+        self.failed_not_ready.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a failure due to unknown upstream request ID.
+    fn record_unknown_id(&self) {
+        self.failed_unknown_id.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a failure due to upstream ID not in registry.
+    fn record_not_in_registry(&self) {
+        self.failed_not_in_registry.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Get the current metrics snapshot.
+    ///
+    /// Returns (successful, failed_no_connection, failed_not_ready, failed_unknown_id, failed_not_in_registry).
+    #[cfg(test)]
+    fn snapshot(&self) -> (u64, u64, u64, u64, u64) {
+        (
+            self.successful.load(Ordering::Relaxed),
+            self.failed_no_connection.load(Ordering::Relaxed),
+            self.failed_not_ready.load(Ordering::Relaxed),
+            self.failed_unknown_id.load(Ordering::Relaxed),
+            self.failed_not_in_registry.load(Ordering::Relaxed),
+        )
+    }
+}
 
 /// Pool of connections to downstream language servers (ADR-0016).
 ///
@@ -70,6 +131,8 @@ pub struct LanguageServerPool {
     /// when a $/cancelRequest notification arrives with the upstream ID, we can look up
     /// which language server to forward it to.
     upstream_request_registry: std::sync::Mutex<HashMap<i64, String>>,
+    /// Metrics for cancel forwarding observability.
+    cancel_metrics: CancelForwardingMetrics,
 }
 
 impl Default for LanguageServerPool {
@@ -85,7 +148,14 @@ impl LanguageServerPool {
             connections: Mutex::new(HashMap::new()),
             document_tracker: DocumentTracker::new(),
             upstream_request_registry: std::sync::Mutex::new(HashMap::new()),
+            cancel_metrics: CancelForwardingMetrics::default(),
         }
+    }
+
+    /// Get access to cancel forwarding metrics (for testing).
+    #[cfg(test)]
+    pub(crate) fn cancel_metrics(&self) -> &CancelForwardingMetrics {
+        &self.cancel_metrics
     }
 
     /// Get access to the connections map.
@@ -402,11 +472,23 @@ impl LanguageServerPool {
         let handle = {
             let connections = self.connections().await;
             let Some(handle) = connections.get(language) else {
+                self.cancel_metrics.record_no_connection();
+                log::debug!(
+                    target: "kakehashi::bridge::cancel",
+                    "Cancel forward failed: no connection for language '{}'",
+                    language
+                );
                 return Err(io::Error::other("bridge: no connection for language"));
             };
 
             // Only forward if connection is Ready
             if handle.state() != ConnectionState::Ready {
+                self.cancel_metrics.record_not_ready();
+                log::debug!(
+                    target: "kakehashi::bridge::cancel",
+                    "Cancel forward failed: connection not ready for language '{}'",
+                    language
+                );
                 return Err(io::Error::other("bridge: connection not ready"));
             }
 
@@ -414,10 +496,19 @@ impl LanguageServerPool {
         };
 
         // Look up the downstream ID
-        let downstream_id = handle
-            .router()
-            .lookup_downstream_id(upstream_id)
-            .ok_or_else(|| io::Error::other("bridge: upstream request ID not found"))?;
+        let downstream_id = match handle.router().lookup_downstream_id(upstream_id) {
+            Some(id) => id,
+            None => {
+                self.cancel_metrics.record_unknown_id();
+                log::debug!(
+                    target: "kakehashi::bridge::cancel",
+                    "Cancel forward failed: unknown upstream ID {} for language '{}'",
+                    upstream_id,
+                    language
+                );
+                return Err(io::Error::other("bridge: upstream request ID not found"));
+            }
+        };
 
         // Build and send the cancel notification
         // Per LSP spec: $/cancelRequest is a notification with { id: request_id }
@@ -430,7 +521,20 @@ impl LanguageServerPool {
         });
 
         let mut writer = handle.writer().await;
-        writer.write_message(&notification).await
+        let result = writer.write_message(&notification).await;
+
+        if result.is_ok() {
+            self.cancel_metrics.record_success();
+            log::debug!(
+                target: "kakehashi::bridge::cancel",
+                "Cancel forwarded: upstream {} -> downstream {} for language '{}'",
+                upstream_id,
+                downstream_id.as_i64(),
+                language
+            );
+        }
+
+        result
     }
 
     /// Forward a $/cancelRequest notification using only the upstream request ID.
@@ -457,8 +561,17 @@ impl LanguageServerPool {
             registry.get(&upstream_id).cloned()
         };
 
-        let language = language
-            .ok_or_else(|| io::Error::other("bridge: upstream request ID not found in registry"))?;
+        let Some(language) = language else {
+            self.cancel_metrics.record_not_in_registry();
+            log::debug!(
+                target: "kakehashi::bridge::cancel",
+                "Cancel forward failed: upstream ID {} not in registry",
+                upstream_id
+            );
+            return Err(io::Error::other(
+                "bridge: upstream request ID not found in registry",
+            ));
+        };
 
         self.forward_cancel(&language, upstream_id).await
     }
@@ -2211,5 +2324,80 @@ mod tests {
         assert_eq!(received["id"], downstream_id.as_i64());
         assert_eq!(received["error"]["code"], -32800);
         assert_eq!(received["error"]["message"], "Request cancelled");
+    }
+
+    // ============================================================
+    // Cancel Forwarding Metrics Tests
+    // ============================================================
+
+    /// Test that metrics are recorded for successful cancel forwarding.
+    #[tokio::test]
+    async fn cancel_metrics_records_success() {
+        use std::sync::Arc;
+
+        let pool = LanguageServerPool::new();
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+
+        // Register a request with upstream ID
+        let upstream_id = 42i64;
+        let (_downstream_id, _response_rx) = handle
+            .register_request_with_upstream(Some(upstream_id))
+            .expect("should register request");
+
+        pool.connections
+            .lock()
+            .await
+            .insert("lua".to_string(), Arc::clone(&handle));
+
+        // Forward cancel
+        let _ = pool.forward_cancel("lua", upstream_id).await;
+
+        // Check metrics
+        let (successful, no_conn, not_ready, unknown_id, not_in_reg) =
+            pool.cancel_metrics().snapshot();
+        assert_eq!(successful, 1, "Should record 1 successful cancel");
+        assert_eq!(no_conn, 0);
+        assert_eq!(not_ready, 0);
+        assert_eq!(unknown_id, 0);
+        assert_eq!(not_in_reg, 0);
+    }
+
+    /// Test that metrics are recorded for cancel failures.
+    #[tokio::test]
+    async fn cancel_metrics_records_failures() {
+        use std::sync::Arc;
+
+        let pool = LanguageServerPool::new();
+
+        // Test: no connection
+        let _ = pool.forward_cancel("nonexistent", 1).await;
+
+        // Test: not in registry
+        let _ = pool.forward_cancel_by_upstream_id(999).await;
+
+        // Test: connection not ready
+        let handle_init = create_handle_with_state(ConnectionState::Initializing).await;
+        pool.connections
+            .lock()
+            .await
+            .insert("init_lang".to_string(), Arc::clone(&handle_init));
+        let _ = pool.forward_cancel("init_lang", 2).await;
+
+        // Test: unknown upstream ID
+        let handle_ready = create_handle_with_state(ConnectionState::Ready).await;
+        pool.connections
+            .lock()
+            .await
+            .insert("ready_lang".to_string(), Arc::clone(&handle_ready));
+        let _ = pool.forward_cancel("ready_lang", 3).await;
+
+        // Check metrics
+        let (successful, no_conn, not_ready, unknown_id, not_in_reg) =
+            pool.cancel_metrics().snapshot();
+        assert_eq!(successful, 0, "No successful cancels");
+        assert_eq!(no_conn, 1, "1 no_connection failure");
+        assert_eq!(not_ready, 1, "1 not_ready failure");
+        assert_eq!(unknown_id, 1, "1 unknown_id failure");
+        assert_eq!(not_in_reg, 1, "1 not_in_registry failure");
     }
 }
