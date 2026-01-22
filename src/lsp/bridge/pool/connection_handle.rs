@@ -41,8 +41,12 @@ pub(crate) struct ConnectionHandle {
     writer: tokio::sync::Mutex<SplitConnectionWriter>,
     /// Router for pending request tracking
     router: Arc<ResponseRouter>,
-    /// Handle to the reader task (for graceful shutdown on drop)
-    _reader_handle: ReaderTaskHandle,
+    /// Handle to the reader task.
+    ///
+    /// Used for:
+    /// - RAII cleanup on drop (cancels reader task)
+    /// - Liveness timer start notification (pending 0->1)
+    reader_handle: ReaderTaskHandle,
     /// Atomic counter for generating unique downstream request IDs.
     ///
     /// Each upstream request may have the same ID (from different contexts),
@@ -92,7 +96,7 @@ impl ConnectionHandle {
             state: std::sync::RwLock::new(initial_state),
             writer: tokio::sync::Mutex::new(writer),
             router,
-            _reader_handle: reader_handle,
+            reader_handle,
             // Start at 2 because ID=1 is reserved for the initialize request
             // which is pre-registered before spawning the reader task.
             next_request_id: AtomicI64::new(2),
@@ -301,15 +305,27 @@ impl ConnectionHandle {
     /// Register a new request and return (request_id, response_receiver).
     ///
     /// Generates a unique request ID and registers it with the router.
+    /// If this is the first pending request (pending 0->1), notifies the reader
+    /// task to start the liveness timer (ADR-0014).
+    ///
     /// Returns error if registration fails (should never happen with unique IDs).
     pub(crate) fn register_request(
         &self,
     ) -> io::Result<(RequestId, tokio::sync::oneshot::Receiver<serde_json::Value>)> {
+        // Check if this will be the first pending request (0->1 transition)
+        let was_empty = self.router().pending_count() == 0;
+
         let request_id = RequestId::new(self.next_request_id());
         let response_rx = self
             .router()
             .register(request_id)
             .ok_or_else(|| io::Error::other("bridge: duplicate request ID"))?;
+
+        // If pending went 0->1 and we're in Ready state, start liveness timer
+        if was_empty && self.state() == ConnectionState::Ready {
+            self.reader_handle.notify_liveness_start();
+        }
+
         Ok((request_id, response_rx))
     }
 

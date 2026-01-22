@@ -11,5 +11,7 @@
 mod reader;
 mod response_router;
 
-pub(crate) use reader::{ReaderTaskHandle, spawn_reader_task};
+#[cfg(test)]
+pub(crate) use reader::spawn_reader_task;
+pub(crate) use reader::{ReaderTaskHandle, spawn_reader_task_with_liveness};
 pub(crate) use response_router::ResponseRouter;
