@@ -313,6 +313,23 @@ impl ConnectionHandle {
     pub(crate) fn register_request(
         &self,
     ) -> io::Result<(RequestId, tokio::sync::oneshot::Receiver<serde_json::Value>)> {
+        self.register_request_with_upstream(None)
+    }
+
+    /// Register a new request with upstream ID mapping for cancel forwarding.
+    ///
+    /// Like `register_request()`, but also stores a mapping from the upstream (client)
+    /// request ID to the downstream (language server) request ID in the router's cancel_map.
+    /// This enables $/cancelRequest forwarding by translating upstream IDs to downstream IDs.
+    ///
+    /// # Arguments
+    /// * `upstream_id` - The original request ID from the upstream client (None for internal requests)
+    ///
+    /// Returns error if registration fails (should never happen with unique IDs).
+    pub(crate) fn register_request_with_upstream(
+        &self,
+        upstream_id: Option<i64>,
+    ) -> io::Result<(RequestId, tokio::sync::oneshot::Receiver<serde_json::Value>)> {
         // Check if this will be the first pending request (0->1 transition)
         //
         // SAFETY: This check is not atomic with register(), but the race is benign:
@@ -326,7 +343,7 @@ impl ConnectionHandle {
         let request_id = RequestId::new(self.next_request_id());
         let response_rx = self
             .router()
-            .register(request_id)
+            .register_with_upstream(request_id, upstream_id)
             .ok_or_else(|| io::Error::other("bridge: duplicate request ID"))?;
 
         // If pending went 0->1 and we're in Ready state, start liveness timer
@@ -765,5 +782,69 @@ mod tests {
 
         // Still Ready after all responses
         assert_eq!(handle.state(), ConnectionState::Ready);
+    }
+
+    /// Test that register_request_with_upstream passes upstream ID to ResponseRouter.
+    ///
+    /// ADR-0015 Cancel Forwarding: When registering a request with an upstream ID,
+    /// the router should store the mapping so we can later look up the downstream ID.
+    #[tokio::test]
+    async fn register_request_with_upstream_stores_mapping() {
+        // Create a mock server process
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        // Create ConnectionHandle in Ready state
+        let handle = ConnectionHandle::with_state(writer, router, reader_handle, ConnectionState::Ready);
+
+        // Register a request with upstream ID
+        let upstream_id = 42i64;
+        let (downstream_id, _response_rx) = handle
+            .register_request_with_upstream(Some(upstream_id))
+            .expect("should register request");
+
+        // Verify the mapping was stored in the router
+        let looked_up = handle.router().lookup_downstream_id(upstream_id);
+        assert_eq!(
+            looked_up,
+            Some(downstream_id),
+            "Router should have upstream->downstream mapping"
+        );
+    }
+
+    /// Test that register_request_with_upstream with None works like register_request.
+    #[tokio::test]
+    async fn register_request_with_upstream_none_works() {
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        let handle = ConnectionHandle::with_state(writer, router, reader_handle, ConnectionState::Ready);
+
+        // Register without upstream ID
+        let (downstream_id, _response_rx) = handle
+            .register_request_with_upstream(None)
+            .expect("should register request");
+
+        // Should have registered normally
+        assert!(downstream_id.as_i64() >= 2, "Should have valid downstream ID");
+        assert_eq!(handle.router().pending_count(), 1);
     }
 }
