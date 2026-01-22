@@ -106,8 +106,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test: Ready to Failed transition on liveness timeout expiry with router.fail_all()",
         implementation: "On timeout: set ConnectionState::Failed via handle.set_state(); call router.fail_all()",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "b2721d65", message: "feat(bridge): implement Ready->Failed state transition on liveness timeout (ADR-0014)", phase: "green" }],
         notes: ["ADR-0014: Timeout fires while pending>0 triggers Ready->Failed", "Failed state triggers SpawnNew action on next request"],
       },
       // Phase 4: Shutdown Integration (global shutdown override)
