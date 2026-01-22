@@ -1696,39 +1696,6 @@ mod tests {
     // Force-kill Fallback Tests
     // ============================================================
 
-    /// Test that force_kill_all() terminates all remaining connections.
-    #[tokio::test]
-    #[cfg(unix)]
-    async fn force_kill_all_terminates_all_connections() {
-        let pool = LanguageServerPool::new();
-
-        // Insert multiple connections in Ready state
-        for i in 0..2 {
-            let handle = create_handle_with_state(ConnectionState::Ready).await;
-            pool.connections
-                .lock()
-                .await
-                .insert(format!("server_{}", i), handle);
-        }
-
-        // Call force_kill_all directly
-        pool.force_kill_all().await;
-
-        // All connections should be in Closed state
-        let connections = pool.connections.lock().await;
-        for i in 0..2 {
-            let key = format!("server_{}", i);
-            if let Some(handle) = connections.get(&key) {
-                assert_eq!(
-                    handle.state(),
-                    ConnectionState::Closed,
-                    "Connection {} should be Closed after force_kill_all()",
-                    key
-                );
-            }
-        }
-    }
-
     /// Test that shutdown_all_with_timeout ensures all connections reach Closed state.
     #[tokio::test]
     #[cfg(unix)]

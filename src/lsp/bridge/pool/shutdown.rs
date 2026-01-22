@@ -173,7 +173,7 @@ impl LanguageServerPool {
     /// **Windows**: Uses TerminateProcess directly (no grace period)
     ///
     /// The method executes kills in parallel to minimize total shutdown time.
-    pub(crate) async fn force_kill_all(&self) {
+    async fn force_kill_all(&self) {
         // Collect handles to force-kill (minimize lock duration - no logging inside lock)
         let handles_with_info: Vec<(String, ConnectionState, Arc<super::ConnectionHandle>)> = {
             let connections = self.connections.lock().await;
