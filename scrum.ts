@@ -72,8 +72,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test: LivenessTimeout type accepts 30-120s range, rejects out-of-range values",
         implementation: "Add LivenessTimeout newtype with validation in pool module (follow GlobalShutdownTimeout pattern)",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "eefa609a", message: "feat(bridge): add LivenessTimeout newtype with 30-120s validation", phase: "green" }],
         notes: ["ADR-0018: Liveness Timeout is Tier 2 (30-120s)", "Follow GlobalShutdownTimeout pattern: new(), default(), as_duration()"],
       },
       // Phase 2: Timer Infrastructure (start/stop/reset mechanics)
