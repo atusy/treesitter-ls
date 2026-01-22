@@ -10,7 +10,8 @@ use std::io;
 
 use super::ConnectionHandle;
 use crate::lsp::bridge::protocol::{
-    RequestId, build_initialize_request, build_initialized_notification, validate_initialize_response,
+    RequestId, build_initialize_request, build_initialized_notification,
+    validate_initialize_response,
 };
 
 /// Perform the LSP initialize/initialized handshake.
