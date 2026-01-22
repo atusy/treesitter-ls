@@ -75,7 +75,65 @@ const scrum: ScrumDashboard = {
       ],
     },
   ],
-  sprint: null,
+  sprint: {
+    number: 15,
+    pbi_id: "pbi-cancellation-forwarding",
+    goal: "Implement $/cancelRequest notification forwarding to downstream servers while preserving pending request entries",
+    status: "planning",
+    subtasks: [
+      // Phase 1: Foundation - Request ID Mapping
+      {
+        test: "Unit test that CancelMap stores upstream->downstream mapping on register, returns downstream ID on lookup, removes on route",
+        implementation: "Add cancel_map field to ResponseRouter, update register() to accept upstream_id, add lookup_downstream_id() method",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Phase 1: Foundation - Add CancelMap to ResponseRouter"],
+      },
+      {
+        test: "Unit test that register_request() passes upstream ID to ResponseRouter",
+        implementation: "Modify ConnectionHandle::register_request() to capture and pass upstream ID",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Phase 1: Foundation - Wire upstream ID through register_request()"],
+      },
+      // Phase 2: Core - Cancel Notification Forwarding
+      {
+        test: "Integration test that cancel notification reaches downstream server with correct downstream ID",
+        implementation: "Add forward_cancel() to LanguageServerPool, route through BridgeCoordinator",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Phase 2: Core - Forward $/cancelRequest to downstream server"],
+      },
+      {
+        test: "Integration test that Kakehashi receives cancel notification and forwards it",
+        implementation: "Add cancel_request handler in lsp_impl.rs",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Phase 2: Core - Handle $/cancelRequest in tower-lsp layer"],
+      },
+      // Phase 3: Response Handling
+      {
+        test: "Unit test that pending map still contains request after cancel forwarded",
+        implementation: "Ensure forward_cancel() does NOT call router.remove()",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Phase 3: Response Handling - Verify pending entry preserved after cancel"],
+      },
+      {
+        test: "Integration test that both normal response and REQUEST_CANCELLED (-32800) reach client",
+        implementation: "No changes needed - existing route() handles all response types",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Phase 3: Response Handling - Verify response forwarding works for cancelled requests"],
+      },
+    ],
+  },
   completed: [
     // Sprint 14: 4 phases, 6 acceptance criteria, key commits: eefa609a, 67b9db3d, b2721d65, cfe5cd33
     { number: 14, pbi_id: "pbi-liveness-timeout", goal: "Implement liveness timeout to detect and recover from hung downstream servers", status: "done", subtasks: [] },
