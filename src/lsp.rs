@@ -3,6 +3,7 @@ mod bridge;
 mod cache;
 mod client;
 mod settings_manager;
+mod text_sync;
 
 mod lsp_impl;
 mod progress;
