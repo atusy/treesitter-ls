@@ -63,135 +63,10 @@ const scrum: ScrumDashboard = {
   ],
   sprint: null,
   completed: [
-    {
-      number: 14,
-      pbi_id: "pbi-liveness-timeout",
-      goal: "Implement liveness timeout to detect and recover from hung downstream servers",
-      status: "done",
-      subtasks: [
-        // Phase 1: Foundation (LivenessTimeout newtype)
-        {
-          test: "Unit test: LivenessTimeout type accepts 30-120s range, rejects out-of-range values",
-          implementation: "Add LivenessTimeout newtype with validation in pool module (follow GlobalShutdownTimeout pattern)",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "eefa609a", message: "feat(bridge): add LivenessTimeout newtype with 30-120s validation", phase: "green" }],
-          notes: ["ADR-0018: Liveness Timeout is Tier 2 (30-120s)", "Follow GlobalShutdownTimeout pattern: new(), default(), as_duration()"],
-        },
-        // Phase 2: Timer Infrastructure (start/stop/reset mechanics)
-        {
-          test: "Unit test: Liveness timer starts when pending count transitions 0 to 1 in Ready state",
-          implementation: "Add liveness_timer field to reader task; start timer on first request registration",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "67b9db3d", message: "feat(bridge): implement liveness timer infrastructure (ADR-0014)", phase: "green" }],
-          notes: ["ADR-0014: Timer starts when pending=0 transitions to pending=1", "Timer not running when pending=0"],
-        },
-        {
-          test: "Unit test: Liveness timer resets on any stdout activity (response or notification)",
-          implementation: "Reader task handle_message() signals timer reset on ANY message (response OR notification)",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "67b9db3d", message: "feat(bridge): implement liveness timer infrastructure (ADR-0014)", phase: "green" }],
-          notes: ["ADR-0014: Reset on any stdout activity while active", "Use tokio::time::sleep with select! for cancellation/reset"],
-        },
-        {
-          test: "Unit test: Liveness timer stops when pending count returns to 0",
-          implementation: "Stop timer when last response received (pending 1->0) without state transition",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "67b9db3d", message: "feat(bridge): implement liveness timer infrastructure (ADR-0014)", phase: "green" }],
-          notes: ["ADR-0014: Timer stops when pending count returns to 0", "No state transition on timer stop"],
-        },
-        // Phase 3: State Transitions (Ready->Failed on timeout)
-        {
-          test: "Unit test: Ready to Failed transition on liveness timeout expiry with router.fail_all()",
-          implementation: "On timeout: set ConnectionState::Failed via handle.set_state(); call router.fail_all()",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "b2721d65", message: "feat(bridge): implement Ready->Failed state transition on liveness timeout (ADR-0014)", phase: "green" }],
-          notes: ["ADR-0014: Timeout fires while pending>0 triggers Ready->Failed", "Failed state triggers SpawnNew action on next request"],
-        },
-        // Phase 4: Shutdown Integration (global shutdown override)
-        {
-          test: "Unit test: begin_shutdown() cancels active liveness timer; timer does not start in Closing state",
-          implementation: "Liveness timer disabled during Closing state (global shutdown overrides per ADR-0018)",
-          type: "behavioral",
-          status: "completed",
-          commits: [{ hash: "cfe5cd33", message: "feat(bridge): integrate liveness timer with shutdown (ADR-0018 Phase 4)", phase: "green" }],
-          notes: ["ADR-0018: Global shutdown (Tier 3) overrides Liveness (Tier 2)", "Liveness STOPS when entering Closing state"],
-        },
-      ],
-    },
-    {
-      number: 13,
-      pbi_id: "pbi-global-shutdown-timeout",
-      goal: "Implement global shutdown timeout with configurable ceiling and force-kill fallback",
-      status: "done",
-      subtasks: [
-      // Phase 1: Foundation (configurable timeout type)
-      {
-        test: "Unit test: GlobalShutdownTimeout type accepts 5-15s range, rejects out-of-range values",
-        implementation: "Add GlobalShutdownTimeout newtype with validation in config module",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "b4f667bb", message: "feat(bridge): add GlobalShutdownTimeout newtype with 5-15s validation", phase: "green" }],
-        notes: ["ADR-0018: Global Shutdown 5-15s recommended range", "Consider Duration wrapper with From/Into traits"],
-      },
-      // Phase 2: Core Feature (global timeout wrapper)
-      {
-        test: "Unit test: shutdown_all completes within configured timeout even with hung servers",
-        implementation: "Wrap shutdown_all() parallel shutdowns in tokio::time::timeout(GLOBAL_TIMEOUT)",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "c0e58e62", message: "feat(bridge): add shutdown_all_with_timeout for global shutdown ceiling", phase: "green" }],
-        notes: ["ADR-0017: Global timeout overrides all other timeouts", "Use JoinSet with timeout wrapper"],
-      },
-      {
-        test: "Integration test: multiple servers shut down concurrently, total time bounded by global timeout",
-        implementation: "Pass GlobalShutdownTimeout to shutdown_all() and enforce single ceiling",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "7e88b266", message: "test(bridge): add integration test for concurrent parallel shutdown", phase: "green" }],
-        notes: ["Verify N servers complete in O(1) time, not O(N)", "Test with mock slow servers"],
-      },
-      // Phase 3: Force-kill fallback
-      {
-        test: "Unit test: force_kill_all() sends SIGTERM then SIGKILL to all remaining connections",
-        implementation: "Add force_kill_all() method to ConnectionPool that iterates connections",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "4155548f", message: "feat(bridge): add force_kill_all() for SIGTERM->SIGKILL escalation", phase: "green" }],
-        notes: ["Reuse existing force_kill_with_escalation() per connection", "Unix-only via cfg(unix)"],
-      },
-      {
-        test: "Integration test: all remaining connections receive SIGTERM then SIGKILL when global timeout expires",
-        implementation: "Wire force_kill_all() as fallback in shutdown_all() timeout handler",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "23131874", message: "refactor(bridge): use force_kill_all() in shutdown timeout handler", phase: "green" }],
-        notes: ["ADR-0017: force_kill_all(connections) on timeout expiry", "Verify process termination"],
-      },
-      // Phase 4: Cleanup (remove per-connection timeout)
-      {
-        test: "Unit test: graceful_shutdown() has no internal timeout (relies on global ceiling)",
-        implementation: "Remove 5s SHUTDOWN_TIMEOUT constant from graceful_shutdown()",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "aaa2954b", message: "refactor(bridge): remove per-connection SHUTDOWN_TIMEOUT from graceful_shutdown", phase: "green" }],
-        notes: ["ADR-0018: Global shutdown is the only ceiling", "Current hardcoded 5s in pool.rs:249"],
-      },
-      // Phase 5: Robustness (writer-idle budget verification)
-      {
-        test: "Unit test: writer idle wait (2s) counts against global budget, not additional time",
-        implementation: "Verify writer synchronization timeout is within graceful_shutdown() scope",
-        type: "behavioral",
-        status: "completed",
-        commits: [{ hash: "b76d5878", message: "test(bridge): verify writer synchronization is within graceful_shutdown scope", phase: "green" }],
-        notes: ["ADR-0017: 2s writer-idle counts against global budget", "Already implemented via Mutex-based sync"],
-      },
-    ],
-    },
+    // Sprint 14: 4 phases, 6 acceptance criteria, key commits: eefa609a, 67b9db3d, b2721d65, cfe5cd33
+    { number: 14, pbi_id: "pbi-liveness-timeout", goal: "Implement liveness timeout to detect and recover from hung downstream servers", status: "done", subtasks: [] },
+    // Sprint 13: 5 phases, 7 subtasks, key commits: b4f667bb, c0e58e62, 7e88b266, 4155548f, 23131874, aaa2954b, b76d5878
+    { number: 13, pbi_id: "pbi-global-shutdown-timeout", goal: "Implement global shutdown timeout with configurable ceiling and force-kill fallback", status: "done", subtasks: [] },
     { number: 12, pbi_id: "pbi-lsp-shutdown", goal: "Implement connection lifecycle with graceful LSP shutdown handshake", status: "done", subtasks: [] },
   ],
   definition_of_done: {
@@ -203,13 +78,19 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 14, improvements: [
+      { action: "Pattern validated: LivenessTimeout reused GlobalShutdownTimeout newtype pattern; BoundedDuration extraction viable for future", timing: "immediate", status: "completed", outcome: "Sprint 14 reused validation pattern from Sprint 13 without issues." },
+      { action: "Timer infrastructure in reader task scales well - select! multiplexing isolates liveness from connection lifecycle", timing: "immediate", status: "completed", outcome: "Clean separation of concerns validated." },
+      { action: "Test gap: No integration test for timer reset on stdout activity", timing: "product", status: "active", outcome: null },
+      { action: "Documentation: Add Sprint 14 as phased implementation case study to ADR-0013", timing: "product", status: "active", outcome: null },
+    ] },
     { sprint: 13, improvements: [
-      { action: "Add CLAUDE.md conventions: Document architecture patterns in ADRs BEFORE implementation, tests verify ADR compliance", timing: "sprint", status: "active", outcome: null },
-      { action: "Create project guidelines documentation capturing phased implementation pattern (Foundation -> Core -> Robustness)", timing: "product", status: "active", outcome: null },
-      { action: "Consider extraction: GlobalShutdownTimeout validation logic could be generalized as BoundedDuration(min, max) for reuse with init/liveness timeouts", timing: "product", status: "active", outcome: null },
+      { action: "ADR-first approach: Document patterns BEFORE implementation, tests verify ADR compliance", timing: "sprint", status: "completed", outcome: "Sprint 14 followed ADR-0014/ADR-0018 precisely." },
+      { action: "Document phased implementation pattern (Foundation -> Core -> Robustness)", timing: "product", status: "active", outcome: null },
+      { action: "Consider BoundedDuration(min, max) extraction for timeout newtypes", timing: "product", status: "active", outcome: null },
     ] },
     { sprint: 12, improvements: [
-      { action: "When adding enum variants, explicitly document whether call sites need updates or existing behavior is correct", timing: "sprint", status: "active", outcome: null },
+      { action: "Document enum variant call site update requirements when adding variants", timing: "sprint", status: "active", outcome: null },
     ] },
   ],
 };
