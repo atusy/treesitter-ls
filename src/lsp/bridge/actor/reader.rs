@@ -277,7 +277,7 @@ async fn reader_loop_with_liveness(
 
     loop {
         tokio::select! {
-            biased; // Process in order: cancellation, timer, liveness start, read
+            biased; // Process in order: cancellation, timer, liveness start, liveness stop, read
 
             // Check for cancellation first (highest priority)
             _ = cancel_token.cancelled() => {
