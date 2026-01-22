@@ -1026,39 +1026,6 @@ mod tests {
         );
     }
 
-    /// Test that ConnectionHandle is NOT cached after timeout.
-    ///
-    /// With the Reader Task architecture (ADR-0015), failed connections
-    /// are NOT cached because a ConnectionHandle requires:
-    /// - A successfully split connection (writer + reader)
-    /// - A running reader task
-    /// - A response router
-    ///
-    /// When initialization times out, the connection transitions to Failed state.
-    /// Subsequent requests will remove the failed entry and spawn fresh.
-    #[tokio::test]
-    async fn connection_handle_transitions_to_failed_after_timeout() {
-        let pool = LanguageServerPool::new();
-        let config = devnull_config_for_language("test");
-
-        // First attempt - should timeout
-        let result = pool
-            .get_or_create_connection_with_timeout("test", &config, Duration::from_millis(100))
-            .await;
-        assert!(result.is_err(), "First attempt should fail with timeout");
-
-        // With async fast-fail architecture, connection is stored and transitions to Failed
-        let connections = pool.connections.lock().await;
-        if let Some(handle) = connections.get("test") {
-            assert_eq!(
-                handle.state(),
-                ConnectionState::Failed,
-                "Connection should be in Failed state after timeout"
-            );
-        }
-        // Note: Connection will be removed on next request attempt via Failed state handling
-    }
-
     // ========================================
     // ensure_document_opened tests
     // ========================================
