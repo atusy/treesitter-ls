@@ -92,10 +92,10 @@ impl SettingsManager {
         let _ = self.client_capabilities.set(caps);
     }
 
-    /// Get a reference to the stored client capabilities.
+    /// Get a reference to the stored client capabilities (test helper).
     ///
     /// Returns `None` if `set_capabilities()` hasn't been called yet.
-    #[allow(dead_code)] // Part of API surface for future use
+    #[cfg(test)]
     pub(crate) fn client_capabilities(&self) -> Option<&ClientCapabilities> {
         self.client_capabilities.get()
     }
