@@ -65,7 +65,7 @@ const scrum: ScrumDashboard = {
     number: 14,
     pbi_id: "pbi-liveness-timeout",
     goal: "Implement liveness timeout to detect and recover from hung downstream servers",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       // Phase 1: Foundation (LivenessTimeout newtype)
       {
@@ -115,8 +115,8 @@ const scrum: ScrumDashboard = {
         test: "Unit test: begin_shutdown() cancels active liveness timer; timer does not start in Closing state",
         implementation: "Liveness timer disabled during Closing state (global shutdown overrides per ADR-0018)",
         type: "behavioral",
-        status: "pending",
-        commits: [],
+        status: "completed",
+        commits: [{ hash: "cfe5cd33", message: "feat(bridge): integrate liveness timer with shutdown (ADR-0018 Phase 4)", phase: "green" }],
         notes: ["ADR-0018: Global shutdown (Tier 3) overrides Liveness (Tier 2)", "Liveness STOPS when entering Closing state"],
       },
     ],
