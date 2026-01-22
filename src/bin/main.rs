@@ -520,7 +520,8 @@ fn run_install(
 #[tokio::main]
 async fn run_lsp_server() {
     use env_logger::Builder;
-    use kakehashi::lsp::{Kakehashi, RequestIdCapture};
+    use kakehashi::lsp::{CancelForwarder, Kakehashi, LanguageServerPool, RequestIdCapture};
+    use std::sync::Arc;
     use tokio::io::{stdin, stdout};
     use tower_lsp_server::{LspService, Server};
 
@@ -533,11 +534,20 @@ async fn run_lsp_server() {
     let stdin = stdin();
     let stdout = stdout();
 
-    let (service, socket) = LspService::new(Kakehashi::new);
+    // Create shared pool for cancel forwarding
+    // This pool is shared between Kakehashi and the RequestIdCapture middleware
+    let pool = Arc::new(LanguageServerPool::new());
+    let cancel_forwarder = CancelForwarder::new(Arc::clone(&pool));
 
-    // Wrap service with RequestIdCapture to capture upstream request IDs
-    // This enables downstream bridge requests to use the same ID per ADR-0016
-    let service = RequestIdCapture::new(service);
+    // Create Kakehashi with the shared pool
+    let pool_for_service = Arc::clone(&pool);
+    let (service, socket) =
+        LspService::new(move |client| Kakehashi::with_pool(client, Arc::clone(&pool_for_service)));
+
+    // Wrap service with RequestIdCapture to:
+    // 1. Capture upstream request IDs (for ADR-0016 bridge requests)
+    // 2. Forward $/cancelRequest notifications to downstream servers
+    let service = RequestIdCapture::with_cancel_forwarder(service, cancel_forwarder);
 
     Server::new(stdin, stdout, socket).serve(service).await;
 }

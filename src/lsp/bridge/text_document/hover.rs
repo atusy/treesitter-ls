@@ -24,22 +24,14 @@ impl LanguageServerPool {
     /// 4. Send the hover request (release writer lock after)
     /// 5. Wait for response via oneshot channel (no Mutex held)
     ///
-    /// # Note on `_upstream_request_id`
+    /// # Note on `upstream_request_id`
     ///
-    /// This parameter is intentionally unused. Originally, the upstream request ID was
-    /// passed directly to downstream servers (per ADR-0016's "Request ID Semantics").
-    /// However, using upstream IDs caused ID collisions when multiple downstream servers
-    /// were active, since each server expects unique request IDs within its connection.
+    /// This parameter is used for $/cancelRequest forwarding. When a cancel notification
+    /// arrives with this ID, we look up the language from the upstream request registry
+    /// and forward the cancel to the appropriate downstream server.
     ///
-    /// The current implementation generates unique downstream request IDs via
-    /// `register_request()` (using an atomic counter per connection). The parameter is
-    /// retained for:
-    /// - **API consistency**: All text_document handlers share a uniform signature
-    /// - **Future correlation logging**: May be used to correlate upstream/downstream
-    ///   request pairs in debug logs
-    ///
-    /// The underscore prefix signals "intentionally unused" to both the compiler and
-    /// code reviewers.
+    /// Downstream requests use unique generated IDs (via `register_request_with_upstream()`)
+    /// to avoid ID collisions when multiple downstream servers are active.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_hover_request(
         &self,
@@ -50,7 +42,7 @@ impl LanguageServerPool {
         region_id: &str,
         region_start_line: u32,
         virtual_content: &str,
-        _upstream_request_id: i64,
+        upstream_request_id: i64,
     ) -> io::Result<serde_json::Value> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
@@ -64,8 +56,12 @@ impl LanguageServerPool {
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
 
-        // Register request with router to get oneshot receiver
-        let (request_id, response_rx) = handle.register_request()?;
+        // Register request with upstream ID mapping for cancel forwarding
+        let (request_id, response_rx) =
+            handle.register_request_with_upstream(Some(upstream_request_id))?;
+
+        // Register in the upstream request registry for cancel lookup
+        self.register_upstream_request(upstream_request_id, injection_language);
 
         // Build hover request
         let hover_request = build_bridge_hover_request(
@@ -89,6 +85,7 @@ impl LanguageServerPool {
                 virtual_content,
                 || {
                     handle.router().remove(request_id);
+                    self.unregister_upstream_request(upstream_request_id);
                 },
             )
             .await?;
@@ -97,11 +94,14 @@ impl LanguageServerPool {
         } // writer lock released here
 
         // Wait for response via oneshot channel (no Mutex held) with timeout
-        let response = handle.wait_for_response(request_id, response_rx).await?;
+        let response = handle.wait_for_response(request_id, response_rx).await;
+
+        // Unregister from the upstream request registry regardless of result
+        self.unregister_upstream_request(upstream_request_id);
 
         // Transform response to host coordinates
         Ok(transform_hover_response_to_host(
-            response,
+            response?,
             region_start_line,
         ))
     }

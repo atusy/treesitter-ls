@@ -4,13 +4,23 @@
 //! from incoming LSP requests and makes it available via task-local storage.
 //! This enables downstream bridge requests to use the same ID as the upstream
 //! client per ADR-0016 (Server Pool Coordination).
+//!
+//! # Cancel Forwarding
+//!
+//! The middleware also intercepts `$/cancelRequest` notifications and forwards
+//! them to downstream language servers via the `CancelForwarder`. This ensures
+//! that when a client cancels a request, the cancel is propagated to the
+//! downstream server that is processing it.
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use tower::Service;
 use tower_lsp_server::jsonrpc::{Id, Request, Response};
+
+use super::bridge::LanguageServerPool;
 
 tokio::task_local! {
     /// Task-local storage for the current upstream request ID.
@@ -20,19 +30,68 @@ tokio::task_local! {
     pub static CURRENT_REQUEST_ID: Option<Id>;
 }
 
+/// Forwards cancel requests to downstream language servers.
+///
+/// This type wraps an `Arc<LanguageServerPool>` and provides a method to forward
+/// cancel notifications. It is shared between Kakehashi and the RequestIdCapture
+/// middleware.
+///
+/// Use `CancelForwarder::new()` within the crate, or `Kakehashi::cancel_forwarder()`
+/// to create an instance.
+#[derive(Clone)]
+pub struct CancelForwarder {
+    pool: Arc<LanguageServerPool>,
+}
+
+impl CancelForwarder {
+    /// Create a new cancel forwarder wrapping the given pool.
+    pub fn new(pool: Arc<LanguageServerPool>) -> Self {
+        Self { pool }
+    }
+
+    /// Forward a cancel request to the downstream server.
+    ///
+    /// Looks up the language from the upstream request registry and forwards
+    /// the cancel notification to the appropriate downstream server.
+    ///
+    /// Returns `Ok(())` if the cancel was forwarded, or an error if the
+    /// upstream ID is not found in the registry.
+    pub async fn forward_cancel(&self, upstream_id: i64) -> std::io::Result<()> {
+        self.pool.forward_cancel_by_upstream_id(upstream_id).await
+    }
+}
+
 /// Tower Service wrapper that captures request IDs from incoming LSP requests.
 ///
 /// This middleware extracts the request ID from each incoming request and stores
 /// it in task-local storage before delegating to the inner service. This allows
 /// bridge code to access the upstream request ID when making downstream requests.
+///
+/// Additionally, it intercepts `$/cancelRequest` notifications and forwards them
+/// to downstream language servers via the `CancelForwarder`.
 pub struct RequestIdCapture<S> {
     inner: S,
+    cancel_forwarder: Option<CancelForwarder>,
 }
 
 impl<S> RequestIdCapture<S> {
     /// Create a new RequestIdCapture wrapping the given service.
     pub fn new(inner: S) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            cancel_forwarder: None,
+        }
+    }
+
+    /// Create a new RequestIdCapture with a cancel forwarder.
+    ///
+    /// The cancel forwarder is used to forward `$/cancelRequest` notifications
+    /// to downstream language servers.
+    pub fn with_cancel_forwarder(inner: S, cancel_forwarder: CancelForwarder) -> Self {
+        Self {
+            inner,
+            cancel_forwarder: Some(cancel_forwarder),
+        }
     }
 }
 
@@ -53,6 +112,32 @@ where
     fn call(&mut self, req: Request) -> Self::Future {
         // Extract the request ID before delegating
         let request_id = req.id().cloned();
+
+        // Check if this is a $/cancelRequest notification and forward to downstream
+        let cancel_forwarder = self.cancel_forwarder.clone();
+        if req.method() == "$/cancelRequest"
+            && let Some(forwarder) = cancel_forwarder.as_ref()
+            && let Some(params) = req.params()
+            && let Some(id_to_cancel) = params.get("id").and_then(|v| v.as_i64())
+        {
+            let forwarder = forwarder.clone();
+            // Spawn a task to forward the cancel in the background.
+            // We don't await this because:
+            // 1. Cancel notifications don't expect a response
+            // 2. We don't want to block the main request flow
+            // 3. tower-lsp also handles its own cancel processing
+            tokio::spawn(async move {
+                if let Err(e) = forwarder.forward_cancel(id_to_cancel).await {
+                    // Log the error but don't fail - cancel forwarding is best-effort
+                    log::debug!(
+                        target: "kakehashi::cancel",
+                        "Failed to forward cancel for request {}: {}",
+                        id_to_cancel,
+                        e
+                    );
+                }
+            });
+        }
 
         // Call inner service and get the future
         let inner_fut = self.inner.call(req);

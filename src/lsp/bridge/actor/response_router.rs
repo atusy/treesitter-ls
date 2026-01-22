@@ -500,4 +500,92 @@ mod tests {
         );
         assert_eq!(router.lookup_downstream_id(200), None);
     }
+
+    /// Test that lookup_downstream_id does NOT remove the pending entry.
+    ///
+    /// This is critical for cancel forwarding: when we look up the downstream ID
+    /// to forward a cancel notification, we must NOT remove the pending entry
+    /// because we still need to receive the response (which may come before,
+    /// after, or instead of an error response from the downstream server).
+    ///
+    /// Per LSP spec, a cancelled request should still receive a response
+    /// (either the normal result or an error with code -32800 RequestCancelled).
+    #[tokio::test]
+    async fn lookup_downstream_id_preserves_pending_entry() {
+        let router = ResponseRouter::new();
+        let downstream_id = RequestId::new(42);
+        let upstream_id = 100i64;
+
+        let rx = router
+            .register_with_upstream(downstream_id, Some(upstream_id))
+            .expect("should register");
+
+        // Verify initial state
+        assert_eq!(router.pending_count(), 1);
+        assert_eq!(
+            router.lookup_downstream_id(upstream_id),
+            Some(downstream_id)
+        );
+
+        // Look up the downstream ID (as we would when forwarding a cancel)
+        let looked_up = router.lookup_downstream_id(upstream_id);
+        assert_eq!(looked_up, Some(downstream_id));
+
+        // Key assertion: pending entry should still exist after lookup
+        assert_eq!(
+            router.pending_count(),
+            1,
+            "lookup_downstream_id should NOT remove the pending entry"
+        );
+
+        // We should still be able to route a response
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": { "cancelled_but_still_responded": true }
+        });
+        let delivered = router.route(response);
+        assert!(
+            delivered,
+            "should still be able to route response after cancel lookup"
+        );
+
+        // Verify we receive the response
+        let received = rx.await.expect("receiver should still get response");
+        assert_eq!(received["id"], 42);
+        assert!(
+            received["result"]["cancelled_but_still_responded"]
+                .as_bool()
+                .unwrap()
+        );
+
+        // Now the pending entry should be removed (by route, not by lookup)
+        assert_eq!(router.pending_count(), 0);
+    }
+
+    /// Test that cancel map entry persists after lookup.
+    ///
+    /// The cancel map entry should only be removed when the request completes
+    /// (via route() or remove()), not when it's looked up for cancel forwarding.
+    /// This ensures we can still clean up properly when the response arrives.
+    #[test]
+    fn cancel_map_entry_persists_after_lookup() {
+        let router = ResponseRouter::new();
+        let downstream_id = RequestId::new(42);
+        let upstream_id = 100i64;
+
+        let _rx = router
+            .register_with_upstream(downstream_id, Some(upstream_id))
+            .expect("should register");
+
+        // Look up the downstream ID multiple times
+        for _ in 0..3 {
+            let result = router.lookup_downstream_id(upstream_id);
+            assert_eq!(
+                result,
+                Some(downstream_id),
+                "cancel map entry should persist after lookup"
+            );
+        }
+    }
 }

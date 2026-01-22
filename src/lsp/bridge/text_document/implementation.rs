@@ -24,8 +24,14 @@ impl LanguageServerPool {
     /// 3. Send the implementation request
     /// 4. Wait for and return the response
     ///
-    /// See [`send_hover_request`](Self::send_hover_request) for documentation on why
-    /// `_upstream_request_id` is intentionally unused.
+    /// # Note on `upstream_request_id`
+    ///
+    /// This parameter is used for $/cancelRequest forwarding. When a cancel notification
+    /// arrives with this ID, we look up the language from the upstream request registry
+    /// and forward the cancel to the appropriate downstream server.
+    ///
+    /// Downstream requests use unique generated IDs (via `register_request_with_upstream()`)
+    /// to avoid ID collisions when multiple downstream servers are active.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_implementation_request(
         &self,
@@ -36,7 +42,7 @@ impl LanguageServerPool {
         region_id: &str,
         region_start_line: u32,
         virtual_content: &str,
-        _upstream_request_id: i64,
+        upstream_request_id: i64,
     ) -> io::Result<serde_json::Value> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
@@ -51,8 +57,12 @@ impl LanguageServerPool {
         let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
         let virtual_uri_string = virtual_uri.to_uri_string();
 
-        // Register request with router to get oneshot receiver
-        let (request_id, response_rx) = handle.register_request()?;
+        // Register request with upstream ID mapping for cancel forwarding
+        let (request_id, response_rx) =
+            handle.register_request_with_upstream(Some(upstream_request_id))?;
+
+        // Register in the upstream request registry for cancel lookup
+        self.register_upstream_request(upstream_request_id, injection_language);
 
         // Build implementation request
         let implementation_request = build_bridge_implementation_request(
@@ -76,6 +86,7 @@ impl LanguageServerPool {
                 virtual_content,
                 || {
                     handle.router().remove(request_id);
+                    self.unregister_upstream_request(upstream_request_id);
                 },
             )
             .await?;
@@ -91,10 +102,13 @@ impl LanguageServerPool {
         };
 
         // Wait for response via oneshot channel (no Mutex held) with timeout
-        let response = handle.wait_for_response(request_id, response_rx).await?;
+        let response = handle.wait_for_response(request_id, response_rx).await;
+
+        // Unregister from the upstream request registry regardless of result
+        self.unregister_upstream_request(upstream_request_id);
 
         // Transform response to host coordinates and URI
         // Cross-region virtual URIs are filtered out
-        Ok(transform_definition_response_to_host(response, &context))
+        Ok(transform_definition_response_to_host(response?, &context))
     }
 }

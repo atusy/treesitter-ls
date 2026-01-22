@@ -9,6 +9,8 @@
 //! - Tracks stable ULID-based region IDs via `RegionIdTracker`
 //! - Provides bridge config lookup with wildcard resolution
 
+use std::sync::Arc;
+
 use ulid::Ulid;
 use url::Url;
 
@@ -31,8 +33,25 @@ use super::LanguageServerPool;
 /// for handlers that need direct access. This is a pragmatic trade-off for Phase 5:
 /// - Keeps handler changes minimal (just path changes, not signature changes)
 /// - Allows future phases to encapsulate these internals further
+///
+/// The pool is wrapped in `Arc` to enable sharing with the cancel forwarding middleware.
+///
+/// # API Design Pattern (Sprint 15 Retrospective)
+///
+/// Two access patterns coexist:
+///
+/// 1. **Direct pool access** (preferred for handlers): Use `coordinator.pool().*` to call
+///    pool methods directly. This is the primary pattern for LSP request handlers.
+///
+/// 2. **Delegating methods** (convenience wrappers): Methods like `close_host_document()`,
+///    `shutdown_all()`, etc. delegate to pool methods. These exist for common operations
+///    but are NOT mandatory - handlers may access pool directly.
+///
+/// The direct access pattern reduces API surface area (YAGNI principle) while delegating
+/// methods provide convenience for frequently-used operations. New features should default
+/// to direct pool access unless delegation provides clear value.
 pub(crate) struct BridgeCoordinator {
-    pool: LanguageServerPool,
+    pool: Arc<LanguageServerPool>,
     region_id_tracker: RegionIdTracker,
 }
 
@@ -40,7 +59,18 @@ impl BridgeCoordinator {
     /// Create a new bridge coordinator with fresh pool and tracker.
     pub(crate) fn new() -> Self {
         Self {
-            pool: LanguageServerPool::new(),
+            pool: Arc::new(LanguageServerPool::new()),
+            region_id_tracker: RegionIdTracker::new(),
+        }
+    }
+
+    /// Create a bridge coordinator with an existing pool.
+    ///
+    /// This is used when the pool needs to be shared with external components
+    /// like the cancel forwarding middleware.
+    pub(crate) fn with_pool(pool: Arc<LanguageServerPool>) -> Self {
+        Self {
+            pool,
             region_id_tracker: RegionIdTracker::new(),
         }
     }
@@ -194,18 +224,6 @@ impl BridgeCoordinator {
         self.pool
             .forward_didchange_to_opened_docs(uri, injections)
             .await;
-    }
-
-    /// Forward a $/cancelRequest notification to a downstream language server.
-    ///
-    /// Translates the upstream request ID to the downstream request ID and forwards
-    /// the cancel notification. Does NOT remove the pending request entry.
-    pub(crate) async fn forward_cancel(
-        &self,
-        language: &str,
-        upstream_id: i64,
-    ) -> std::io::Result<()> {
-        self.pool.forward_cancel(language, upstream_id).await
     }
 }
 

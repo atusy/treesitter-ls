@@ -54,19 +54,37 @@ use super::connection::AsyncBridgeConnection;
 /// (initialize/initialized) for each language server.
 ///
 /// Connection state is embedded in each ConnectionHandle (ADR-0015 per-connection state).
-pub(crate) struct LanguageServerPool {
+///
+/// # External Usage
+///
+/// This type is public to allow creating a shared pool for the cancel forwarding
+/// middleware. Normal usage should go through `BridgeCoordinator`.
+pub struct LanguageServerPool {
     /// Map of language -> connection handle (wraps connection with its state)
     connections: Mutex<HashMap<String, Arc<ConnectionHandle>>>,
     /// Document tracking for virtual documents (versions, host mappings, opened state)
     document_tracker: DocumentTracker,
+    /// Maps upstream request ID -> language for cancel forwarding (ADR-0015).
+    ///
+    /// When a request is sent to a downstream server, we record the mapping so that
+    /// when a $/cancelRequest notification arrives with the upstream ID, we can look up
+    /// which language server to forward it to.
+    upstream_request_registry: std::sync::Mutex<HashMap<i64, String>>,
+}
+
+impl Default for LanguageServerPool {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LanguageServerPool {
     /// Create a new language server pool.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             connections: Mutex::new(HashMap::new()),
             document_tracker: DocumentTracker::new(),
+            upstream_request_registry: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -411,6 +429,66 @@ impl LanguageServerPool {
 
         let mut writer = handle.writer().await;
         writer.write_message(&notification).await
+    }
+
+    /// Forward a $/cancelRequest notification using only the upstream request ID.
+    ///
+    /// This method looks up the language from the upstream request registry,
+    /// then delegates to `forward_cancel(language, upstream_id)`.
+    ///
+    /// Called by the RequestIdCapture middleware when it intercepts a $/cancelRequest
+    /// notification from the client.
+    ///
+    /// # Arguments
+    /// * `upstream_id` - The request ID from the client's cancel notification
+    ///
+    /// # Returns
+    /// * `Ok(())` if the cancel was forwarded
+    /// * `Err` if the upstream ID is not found in the registry
+    pub(crate) async fn forward_cancel_by_upstream_id(&self, upstream_id: i64) -> io::Result<()> {
+        // Look up the language from the registry
+        let language = {
+            let registry = self
+                .upstream_request_registry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            registry.get(&upstream_id).cloned()
+        };
+
+        let language = language
+            .ok_or_else(|| io::Error::other("bridge: upstream request ID not found in registry"))?;
+
+        self.forward_cancel(&language, upstream_id).await
+    }
+
+    /// Register an upstream request ID -> language mapping.
+    ///
+    /// Called when a request is sent to a downstream server to enable
+    /// cancel forwarding. The mapping is cleaned up when the response is received.
+    ///
+    /// # Arguments
+    /// * `upstream_id` - The request ID from the upstream client
+    /// * `language` - The language of the downstream server
+    pub(crate) fn register_upstream_request(&self, upstream_id: i64, language: &str) {
+        let mut registry = self
+            .upstream_request_registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        registry.insert(upstream_id, language.to_string());
+    }
+
+    /// Unregister an upstream request ID from the registry.
+    ///
+    /// Called when a response is received (or error occurs) to clean up the mapping.
+    ///
+    /// # Arguments
+    /// * `upstream_id` - The request ID to unregister
+    pub(crate) fn unregister_upstream_request(&self, upstream_id: i64) {
+        let mut registry = self
+            .upstream_request_registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        registry.remove(&upstream_id);
     }
 }
 
@@ -1874,7 +1952,11 @@ mod tests {
         );
 
         // Verify the pending entry is still there (cancel does NOT remove it)
-        assert_eq!(handle.router().pending_count(), 1, "Pending entry should still exist after cancel");
+        assert_eq!(
+            handle.router().pending_count(),
+            1,
+            "Pending entry should still exist after cancel"
+        );
 
         // Verify the cancel_map entry is still there (cancel does NOT remove it)
         // The mapping is only removed when the actual response arrives
@@ -1930,5 +2012,202 @@ mod tests {
             "Error should mention not found: {}",
             err
         );
+    }
+
+    // ============================================================
+    // Upstream Request Registry Tests
+    // ============================================================
+
+    /// Test that register_upstream_request stores the mapping.
+    #[test]
+    fn register_upstream_request_stores_mapping() {
+        let pool = LanguageServerPool::new();
+
+        pool.register_upstream_request(42, "lua");
+
+        let registry = pool.upstream_request_registry.lock().unwrap();
+        assert_eq!(registry.get(&42), Some(&"lua".to_string()));
+    }
+
+    /// Test that unregister_upstream_request removes the mapping.
+    #[test]
+    fn unregister_upstream_request_removes_mapping() {
+        let pool = LanguageServerPool::new();
+
+        pool.register_upstream_request(42, "lua");
+        pool.unregister_upstream_request(42);
+
+        let registry = pool.upstream_request_registry.lock().unwrap();
+        assert_eq!(registry.get(&42), None);
+    }
+
+    /// Test that forward_cancel_by_upstream_id uses the registry to find the language.
+    #[tokio::test]
+    async fn forward_cancel_by_upstream_id_uses_registry() {
+        use std::sync::Arc;
+
+        let pool = LanguageServerPool::new();
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+
+        // Register a request with upstream ID mapping in ResponseRouter
+        let upstream_id = 42i64;
+        let (_downstream_id, _response_rx) = handle
+            .register_request_with_upstream(Some(upstream_id))
+            .expect("should register request");
+
+        // Insert the handle into the pool
+        pool.connections
+            .lock()
+            .await
+            .insert("lua".to_string(), Arc::clone(&handle));
+
+        // Register the upstream request in the registry
+        pool.register_upstream_request(upstream_id, "lua");
+
+        // Forward cancel by upstream ID only (no language parameter)
+        let result = pool.forward_cancel_by_upstream_id(upstream_id).await;
+
+        // Should succeed because the registry has the mapping
+        assert!(
+            result.is_ok(),
+            "forward_cancel_by_upstream_id should succeed: {:?}",
+            result.err()
+        );
+    }
+
+    /// Test that forward_cancel_by_upstream_id returns error when not in registry.
+    #[tokio::test]
+    async fn forward_cancel_by_upstream_id_returns_error_when_not_in_registry() {
+        let pool = LanguageServerPool::new();
+
+        // Don't register anything in the registry
+        let result = pool.forward_cancel_by_upstream_id(999).await;
+
+        assert!(
+            result.is_err(),
+            "forward_cancel_by_upstream_id should return error for unknown ID"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("not found"),
+            "Error should mention not found: {}",
+            err
+        );
+    }
+
+    /// Test that response forwarding still works after cancel notification is sent.
+    ///
+    /// This is the key test for Subtask 6: Per LSP spec, a cancelled request should
+    /// still receive a response (either the normal result or an error with code -32800).
+    /// The cancel forwarding mechanism must preserve the pending entry so that when
+    /// the downstream server eventually responds, we can still deliver it.
+    #[tokio::test]
+    async fn response_forwarding_works_after_cancel() {
+        use std::sync::Arc;
+
+        let pool = LanguageServerPool::new();
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+
+        // Register a request with upstream ID
+        let upstream_id = 42i64;
+        let (downstream_id, response_rx) = handle
+            .register_request_with_upstream(Some(upstream_id))
+            .expect("should register request");
+
+        // Insert the handle into the pool
+        pool.connections
+            .lock()
+            .await
+            .insert("lua".to_string(), Arc::clone(&handle));
+
+        // Forward cancel request (simulating client cancelling the request)
+        let cancel_result = pool.forward_cancel("lua", upstream_id).await;
+        assert!(cancel_result.is_ok(), "cancel should succeed");
+
+        // Now simulate the downstream server responding (with a normal result)
+        // This could also be a -32800 RequestCancelled error, but a normal result
+        // is also valid if the server finished before processing the cancel
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": downstream_id.as_i64(),
+            "result": {
+                "contents": "Hover content even though request was cancelled"
+            }
+        });
+
+        // Route the response through the router
+        let delivered = handle.router().route(response.clone());
+        assert!(delivered, "response should be delivered even after cancel");
+
+        // The original requester should receive the response
+        let received = response_rx
+            .await
+            .expect("should receive response after cancel");
+        assert_eq!(received["id"], downstream_id.as_i64());
+        assert_eq!(
+            received["result"]["contents"],
+            "Hover content even though request was cancelled"
+        );
+
+        // After routing, the pending entry should be cleaned up
+        assert_eq!(
+            handle.router().pending_count(),
+            0,
+            "pending entry should be removed after response"
+        );
+        assert_eq!(
+            handle.router().lookup_downstream_id(upstream_id),
+            None,
+            "cancel map entry should be removed after response"
+        );
+    }
+
+    /// Test that error response (-32800 RequestCancelled) works after cancel.
+    ///
+    /// Per LSP spec, when a server receives a cancel notification and chooses
+    /// to honour it, it should respond with error code -32800 (RequestCancelled).
+    /// This test verifies that such error responses are properly forwarded.
+    #[tokio::test]
+    async fn cancelled_error_response_forwarding_works() {
+        use std::sync::Arc;
+
+        let pool = LanguageServerPool::new();
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+
+        // Register a request with upstream ID
+        let upstream_id = 42i64;
+        let (downstream_id, response_rx) = handle
+            .register_request_with_upstream(Some(upstream_id))
+            .expect("should register request");
+
+        // Insert the handle into the pool
+        pool.connections
+            .lock()
+            .await
+            .insert("lua".to_string(), Arc::clone(&handle));
+
+        // Forward cancel request
+        let cancel_result = pool.forward_cancel("lua", upstream_id).await;
+        assert!(cancel_result.is_ok(), "cancel should succeed");
+
+        // Simulate the downstream server responding with RequestCancelled error
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": downstream_id.as_i64(),
+            "error": {
+                "code": -32800,
+                "message": "Request cancelled"
+            }
+        });
+
+        // Route the response through the router
+        let delivered = handle.router().route(response.clone());
+        assert!(delivered, "error response should be delivered after cancel");
+
+        // The original requester should receive the error response
+        let received = response_rx.await.expect("should receive error response");
+        assert_eq!(received["id"], downstream_id.as_i64());
+        assert_eq!(received["error"]["code"], -32800);
+        assert_eq!(received["error"]["message"], "Request cancelled");
     }
 }

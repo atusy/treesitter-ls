@@ -20,7 +20,7 @@ mod text_document;
 
 // Re-export public types
 pub(crate) use coordinator::BridgeCoordinator;
-pub(crate) use pool::LanguageServerPool;
+pub use pool::LanguageServerPool;
 
 /// Integration tests for the bridge module.
 ///

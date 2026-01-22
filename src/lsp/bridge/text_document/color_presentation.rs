@@ -32,8 +32,14 @@ impl LanguageServerPool {
     /// host to virtual coordinates in the request, and textEdits in the response need
     /// transformation back to host coordinates.
     ///
-    /// See [`send_hover_request`](Self::send_hover_request) for documentation on why
-    /// `_upstream_request_id` is intentionally unused.
+    /// # Note on `upstream_request_id`
+    ///
+    /// This parameter is used for $/cancelRequest forwarding. When a cancel notification
+    /// arrives with this ID, we look up the language from the upstream request registry
+    /// and forward the cancel to the appropriate downstream server.
+    ///
+    /// Downstream requests use unique generated IDs (via `register_request_with_upstream()`)
+    /// to avoid ID collisions when multiple downstream servers are active.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_color_presentation_request(
         &self,
@@ -45,7 +51,7 @@ impl LanguageServerPool {
         region_id: &str,
         region_start_line: u32,
         virtual_content: &str,
-        _upstream_request_id: i64,
+        upstream_request_id: i64,
     ) -> io::Result<serde_json::Value> {
         // Convert url::Url to ls_types::Uri for protocol functions
         let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri)
@@ -59,8 +65,12 @@ impl LanguageServerPool {
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
 
-        // Register request with router to get oneshot receiver
-        let (request_id, response_rx) = handle.register_request()?;
+        // Register request with upstream ID mapping for cancel forwarding
+        let (request_id, response_rx) =
+            handle.register_request_with_upstream(Some(upstream_request_id))?;
+
+        // Register in the upstream request registry for cancel lookup
+        self.register_upstream_request(upstream_request_id, injection_language);
 
         // Build color presentation request
         // Note: request builder transforms host_range to virtual coordinates
@@ -86,6 +96,7 @@ impl LanguageServerPool {
                 virtual_content,
                 || {
                     handle.router().remove(request_id);
+                    self.unregister_upstream_request(upstream_request_id);
                 },
             )
             .await?;
@@ -94,11 +105,14 @@ impl LanguageServerPool {
         } // writer lock released here
 
         // Wait for response via oneshot channel (no Mutex held) with timeout
-        let response = handle.wait_for_response(request_id, response_rx).await?;
+        let response = handle.wait_for_response(request_id, response_rx).await;
+
+        // Unregister from the upstream request registry regardless of result
+        self.unregister_upstream_request(upstream_request_id);
 
         // Transform response textEdits and additionalTextEdits to host coordinates
         Ok(transform_color_presentation_response_to_host(
-            response,
+            response?,
             region_start_line,
         ))
     }

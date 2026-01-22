@@ -804,7 +804,8 @@ mod tests {
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
         // Create ConnectionHandle in Ready state
-        let handle = ConnectionHandle::with_state(writer, router, reader_handle, ConnectionState::Ready);
+        let handle =
+            ConnectionHandle::with_state(writer, router, reader_handle, ConnectionState::Ready);
 
         // Register a request with upstream ID
         let upstream_id = 42i64;
@@ -836,7 +837,8 @@ mod tests {
         let router = Arc::new(ResponseRouter::new());
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
-        let handle = ConnectionHandle::with_state(writer, router, reader_handle, ConnectionState::Ready);
+        let handle =
+            ConnectionHandle::with_state(writer, router, reader_handle, ConnectionState::Ready);
 
         // Register without upstream ID
         let (downstream_id, _response_rx) = handle
@@ -844,7 +846,10 @@ mod tests {
             .expect("should register request");
 
         // Should have registered normally
-        assert!(downstream_id.as_i64() >= 2, "Should have valid downstream ID");
+        assert!(
+            downstream_id.as_i64() >= 2,
+            "Should have valid downstream ID"
+        );
         assert_eq!(handle.router().pending_count(), 1);
     }
 }
