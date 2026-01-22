@@ -58,7 +58,7 @@ const scrum: ScrumDashboard = {
         { criterion: "Keep pending request entry after forwarding cancel", verification: "Unit test: pending map still contains request after cancel forwarded" },
         { criterion: "Forward server response (result or REQUEST_CANCELLED)", verification: "Integration test: server's cancel response (either type) reaches client" },
       ],
-      status: "ready",
+      status: "done",
       refinement_notes: [
         "ADR-0015 Section 5: $/cancelRequest is a notification (no ID), bridge forwards without interception; downstream decides to complete or cancel",
         "Key gap: No upstream-to-downstream ID mapping exists. ResponseRouter tracks downstream IDs only (HashMap<RequestId, oneshot::Sender>)",
@@ -75,66 +75,65 @@ const scrum: ScrumDashboard = {
       ],
     },
   ],
-  sprint: {
-    number: 15,
-    pbi_id: "pbi-cancellation-forwarding",
-    goal: "Implement $/cancelRequest notification forwarding to downstream servers while preserving pending request entries",
-    status: "planning",
-    subtasks: [
-      // Phase 1: Foundation - Request ID Mapping
-      {
-        test: "Unit test that CancelMap stores upstream->downstream mapping on register, returns downstream ID on lookup, removes on route",
-        implementation: "Add cancel_map field to ResponseRouter, update register() to accept upstream_id, add lookup_downstream_id() method",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Phase 1: Foundation - Add CancelMap to ResponseRouter"],
-      },
-      {
-        test: "Unit test that register_request() passes upstream ID to ResponseRouter",
-        implementation: "Modify ConnectionHandle::register_request() to capture and pass upstream ID",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Phase 1: Foundation - Wire upstream ID through register_request()"],
-      },
-      // Phase 2: Core - Cancel Notification Forwarding
-      {
-        test: "Integration test that cancel notification reaches downstream server with correct downstream ID",
-        implementation: "Add forward_cancel() to LanguageServerPool, route through BridgeCoordinator",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Phase 2: Core - Forward $/cancelRequest to downstream server"],
-      },
-      {
-        test: "Integration test that Kakehashi receives cancel notification and forwards it",
-        implementation: "Add cancel_request handler in lsp_impl.rs",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Phase 2: Core - Handle $/cancelRequest in tower-lsp layer"],
-      },
-      // Phase 3: Response Handling
-      {
-        test: "Unit test that pending map still contains request after cancel forwarded",
-        implementation: "Ensure forward_cancel() does NOT call router.remove()",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Phase 3: Response Handling - Verify pending entry preserved after cancel"],
-      },
-      {
-        test: "Integration test that both normal response and REQUEST_CANCELLED (-32800) reach client",
-        implementation: "No changes needed - existing route() handles all response types",
-        type: "behavioral",
-        status: "pending",
-        commits: [],
-        notes: ["Phase 3: Response Handling - Verify response forwarding works for cancelled requests"],
-      },
-    ],
-  },
+  sprint: null,
   completed: [
+    // Sprint 15: 3 phases, 6 subtasks, key commits: a874a7d9, 52d7c3d0, a0c16e97, (code quality fixes)
+    {
+      number: 15,
+      pbi_id: "pbi-cancellation-forwarding",
+      goal: "Implement $/cancelRequest notification forwarding to downstream servers while preserving pending request entries",
+      status: "done",
+      subtasks: [
+        {
+          test: "Unit test that CancelMap stores upstream->downstream mapping on register, returns downstream ID on lookup, removes on route",
+          implementation: "Add cancel_map field to ResponseRouter, update register() to accept upstream_id, add lookup_downstream_id() method",
+          type: "behavioral",
+          status: "completed",
+          commits: [{ hash: "a874a7d9", message: "feat(bridge): add CancelMap to ResponseRouter for cancel forwarding", phase: "green" }],
+          notes: ["Phase 1: Foundation - Add CancelMap to ResponseRouter", "No refactor needed - retain is O(n) but acceptable for typical request counts"],
+        },
+        {
+          test: "Unit test that register_request() passes upstream ID to ResponseRouter",
+          implementation: "Modify ConnectionHandle::register_request() to capture and pass upstream ID",
+          type: "behavioral",
+          status: "completed",
+          commits: [{ hash: "52d7c3d0", message: "feat(bridge): add register_request_with_upstream for cancel forwarding", phase: "green" }],
+          notes: ["Phase 1: Foundation - Wire upstream ID through register_request()", "Existing register_request() delegates to new method with None"],
+        },
+        {
+          test: "Integration test that cancel notification reaches downstream server with correct downstream ID",
+          implementation: "Add forward_cancel() to LanguageServerPool, route through BridgeCoordinator",
+          type: "behavioral",
+          status: "completed",
+          commits: [{ hash: "a0c16e97", message: "feat(bridge): add forward_cancel to LanguageServerPool and BridgeCoordinator", phase: "green" }],
+          notes: ["Phase 2: Core - Forward $/cancelRequest to downstream server"],
+        },
+        {
+          test: "Integration test that Kakehashi receives cancel notification and forwards it",
+          implementation: "Add RequestIdCapture middleware with CancelForwarder in main.rs",
+          type: "behavioral",
+          status: "completed",
+          commits: [{ hash: "a0c16e97", message: "feat(bridge): add forward_cancel to LanguageServerPool and BridgeCoordinator", phase: "green" }],
+          notes: ["Phase 2: Core - Handle $/cancelRequest in tower-lsp middleware layer", "Implemented via RequestIdCapture in request_id.rs"],
+        },
+        {
+          test: "Unit test that pending map still contains request after cancel forwarded",
+          implementation: "Ensure forward_cancel() does NOT call router.remove()",
+          type: "behavioral",
+          status: "completed",
+          commits: [{ hash: "a0c16e97", message: "feat(bridge): add forward_cancel to LanguageServerPool and BridgeCoordinator", phase: "green" }],
+          notes: ["Phase 3: Response Handling - Verify pending entry preserved after cancel", "Test: forward_cancel_does_not_remove_pending_entry in pool.rs"],
+        },
+        {
+          test: "Integration test that both normal response and REQUEST_CANCELLED (-32800) reach client",
+          implementation: "No changes needed - existing route() handles all response types",
+          type: "behavioral",
+          status: "completed",
+          commits: [],
+          notes: ["Phase 3: Response Handling - Verify response forwarding works for cancelled requests", "Test: response_forwarding_still_works_after_cancel_notification in pool.rs"],
+        },
+      ]
+    },
     // Sprint 14: 4 phases, 6 acceptance criteria, key commits: eefa609a, 67b9db3d, b2721d65, cfe5cd33
     { number: 14, pbi_id: "pbi-liveness-timeout", goal: "Implement liveness timeout to detect and recover from hung downstream servers", status: "done", subtasks: [] },
     // Sprint 13: 5 phases, 7 subtasks, key commits: b4f667bb, c0e58e62, 7e88b266, 4155548f, 23131874, aaa2954b, b76d5878
