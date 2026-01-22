@@ -361,6 +361,57 @@ impl LanguageServerPool {
             }
         }
     }
+
+    /// Forward a $/cancelRequest notification to a downstream language server.
+    ///
+    /// Translates the upstream (client) request ID to the downstream (language server)
+    /// request ID using the cancel map, then sends the cancel notification.
+    ///
+    /// Per LSP spec, this does NOT remove the pending request entry - the server may
+    /// still respond with either a result or a REQUEST_CANCELLED error (-32800).
+    ///
+    /// # Arguments
+    /// * `language` - The language of the downstream server
+    /// * `upstream_id` - The original request ID from the upstream client
+    ///
+    /// # Returns
+    /// * `Ok(())` if the cancel notification was sent
+    /// * `Err` if no connection exists or the upstream ID is not found
+    pub(crate) async fn forward_cancel(&self, language: &str, upstream_id: i64) -> io::Result<()> {
+        // Get the connection for this language
+        let handle = {
+            let connections = self.connections().await;
+            let Some(handle) = connections.get(language) else {
+                return Err(io::Error::other("bridge: no connection for language"));
+            };
+
+            // Only forward if connection is Ready
+            if handle.state() != ConnectionState::Ready {
+                return Err(io::Error::other("bridge: connection not ready"));
+            }
+
+            std::sync::Arc::clone(handle)
+        };
+
+        // Look up the downstream ID
+        let downstream_id = handle
+            .router()
+            .lookup_downstream_id(upstream_id)
+            .ok_or_else(|| io::Error::other("bridge: upstream request ID not found"))?;
+
+        // Build and send the cancel notification
+        // Per LSP spec: $/cancelRequest is a notification with { id: request_id }
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "$/cancelRequest",
+            "params": {
+                "id": downstream_id.as_i64()
+            }
+        });
+
+        let mut writer = handle.writer().await;
+        writer.write_message(&notification).await
+    }
 }
 
 #[cfg(test)]
@@ -1779,6 +1830,105 @@ mod tests {
             handle.state(),
             ConnectionState::Closed,
             "State should be Closed after writer released and shutdown completed"
+        );
+    }
+
+    // ============================================================
+    // Cancel Forwarding Tests
+    // ============================================================
+
+    /// Test that forward_cancel looks up downstream ID and sends cancel notification.
+    ///
+    /// This tests the full cancel forwarding flow:
+    /// 1. Register a request with upstream ID mapping
+    /// 2. Call forward_cancel with the upstream ID
+    /// 3. Verify the cancel notification was sent with the correct downstream ID
+    #[tokio::test]
+    async fn forward_cancel_sends_notification_with_downstream_id() {
+        use std::sync::Arc;
+
+        // Create a pool and connection manually
+        let pool = LanguageServerPool::new();
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+
+        // Register a request with upstream ID
+        let upstream_id = 42i64;
+        let (downstream_id, _response_rx) = handle
+            .register_request_with_upstream(Some(upstream_id))
+            .expect("should register request");
+
+        // Insert the handle into the pool
+        pool.connections
+            .lock()
+            .await
+            .insert("lua".to_string(), Arc::clone(&handle));
+
+        // Forward cancel request
+        let result = pool.forward_cancel("lua", upstream_id).await;
+
+        // Should succeed (the notification was sent)
+        assert!(
+            result.is_ok(),
+            "forward_cancel should succeed: {:?}",
+            result.err()
+        );
+
+        // Verify the pending entry is still there (cancel does NOT remove it)
+        assert_eq!(handle.router().pending_count(), 1, "Pending entry should still exist after cancel");
+
+        // Verify the cancel_map entry is still there (cancel does NOT remove it)
+        // The mapping is only removed when the actual response arrives
+        assert_eq!(
+            handle.router().lookup_downstream_id(upstream_id),
+            Some(downstream_id),
+            "Cancel map entry should still exist after cancel forwarding"
+        );
+    }
+
+    /// Test that forward_cancel returns error when no connection exists.
+    #[tokio::test]
+    async fn forward_cancel_returns_error_when_no_connection() {
+        let pool = LanguageServerPool::new();
+
+        let result = pool.forward_cancel("nonexistent", 42).await;
+
+        assert!(
+            result.is_err(),
+            "forward_cancel should return error for nonexistent connection"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("no connection"),
+            "Error should mention no connection: {}",
+            err
+        );
+    }
+
+    /// Test that forward_cancel returns error when upstream ID not found.
+    #[tokio::test]
+    async fn forward_cancel_returns_error_when_upstream_id_not_found() {
+        use std::sync::Arc;
+
+        let pool = LanguageServerPool::new();
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+
+        // Insert connection but don't register any request
+        pool.connections
+            .lock()
+            .await
+            .insert("lua".to_string(), Arc::clone(&handle));
+
+        let result = pool.forward_cancel("lua", 999).await;
+
+        assert!(
+            result.is_err(),
+            "forward_cancel should return error for unknown upstream ID"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("not found"),
+            "Error should mention not found: {}",
+            err
         );
     }
 }

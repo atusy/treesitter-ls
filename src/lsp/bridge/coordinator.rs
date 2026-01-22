@@ -195,6 +195,18 @@ impl BridgeCoordinator {
             .forward_didchange_to_opened_docs(uri, injections)
             .await;
     }
+
+    /// Forward a $/cancelRequest notification to a downstream language server.
+    ///
+    /// Translates the upstream request ID to the downstream request ID and forwards
+    /// the cancel notification. Does NOT remove the pending request entry.
+    pub(crate) async fn forward_cancel(
+        &self,
+        language: &str,
+        upstream_id: i64,
+    ) -> std::io::Result<()> {
+        self.pool.forward_cancel(language, upstream_id).await
+    }
 }
 
 impl Default for BridgeCoordinator {
