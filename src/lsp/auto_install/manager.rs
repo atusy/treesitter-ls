@@ -26,7 +26,7 @@ use tower_lsp_server::ls_types::MessageType;
 use crate::install::support_check::should_skip_unsupported_language;
 use crate::language::FailedParserRegistry;
 
-use super::InstallingLanguages;
+use super::{InstallingLanguages, InstallingLanguagesExt};
 
 /// Result of an installation attempt with all events for Kakehashi to dispatch.
 #[derive(Debug)]

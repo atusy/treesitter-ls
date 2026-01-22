@@ -2,6 +2,7 @@ pub mod auto_install;
 mod bridge;
 mod cache;
 mod client;
+pub(crate) mod in_progress_set;
 mod settings_manager;
 mod text_sync;
 

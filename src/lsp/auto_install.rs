@@ -5,7 +5,7 @@
 //!
 //! # Module Structure
 //!
-//! - `InstallingLanguages`: Tracks concurrent installs to prevent duplicates
+//! - `InstallingLanguages`: Type alias for tracking concurrent installs
 //! - `AutoInstallManager`: Isolated coordinator for installation
 //! - `InstallResult`, `InstallOutcome`, `InstallEvent`: Event-based return types
 
@@ -14,51 +14,35 @@ mod manager;
 pub(crate) use manager::{AutoInstallManager, InstallEvent};
 
 use crate::document::{DocumentStore, get_language_for_document};
-use crate::error::LockResultExt;
 use crate::language::LanguageCoordinator;
 use crate::language::injection::collect_all_injections;
+use crate::lsp::in_progress_set::InProgressSet;
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
 use url::Url;
 
 /// Tracks languages currently being installed to prevent duplicate installs.
 ///
-/// This type is cheaply cloneable via `Arc` for sharing across async tasks.
-#[derive(Clone)]
-pub struct InstallingLanguages {
-    languages: Arc<Mutex<HashSet<String>>>,
-}
+/// This is a type alias for `InProgressSet<String>`, providing domain-specific
+/// semantics while reusing the generic concurrent set implementation.
+pub type InstallingLanguages = InProgressSet<String>;
 
-impl InstallingLanguages {
-    pub fn new() -> Self {
-        Self {
-            languages: Arc::new(Mutex::new(HashSet::new())),
-        }
-    }
-
+/// Extension trait providing domain-specific method names for `InstallingLanguages`.
+pub trait InstallingLanguagesExt {
     /// Try to start installing a language. Returns true if this call started the install,
     /// false if it was already being installed.
-    pub fn try_start_install(&self, language: &str) -> bool {
-        self.languages
-            .lock()
-            .recover_poison("InstallingLanguages::try_start_install")
-            .unwrap()
-            .insert(language.to_string())
-    }
+    fn try_start_install(&self, language: &str) -> bool;
 
     /// Mark a language installation as complete.
-    pub fn finish_install(&self, language: &str) {
-        self.languages
-            .lock()
-            .recover_poison("InstallingLanguages::finish_install")
-            .unwrap()
-            .remove(language);
-    }
+    fn finish_install(&self, language: &str);
 }
 
-impl Default for InstallingLanguages {
-    fn default() -> Self {
-        Self::new()
+impl InstallingLanguagesExt for InstallingLanguages {
+    fn try_start_install(&self, language: &str) -> bool {
+        self.try_start(&language.to_string())
+    }
+
+    fn finish_install(&self, language: &str) {
+        self.finish(&language.to_string());
     }
 }
 
@@ -117,41 +101,6 @@ pub fn get_injected_languages(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    impl InstallingLanguages {
-        /// Check if a language is currently being installed (test helper).
-        fn is_installing(&self, language: &str) -> bool {
-            self.languages
-                .lock()
-                .recover_poison("InstallingLanguages::is_installing")
-                .unwrap()
-                .contains(language)
-        }
-    }
-
-    #[test]
-    fn should_track_installing_languages() {
-        // Test the InstallingLanguages helper struct
-        let tracker = InstallingLanguages::new();
-
-        // Initially not installing
-        assert!(!tracker.is_installing("lua"));
-
-        // Try to start installation - should succeed
-        assert!(tracker.try_start_install("lua"));
-
-        // Now it's installing
-        assert!(tracker.is_installing("lua"));
-
-        // Second try should fail (already installing)
-        assert!(!tracker.try_start_install("lua"));
-
-        // Mark as complete
-        tracker.finish_install("lua");
-
-        // No longer installing
-        assert!(!tracker.is_installing("lua"));
-    }
 
     #[test]
     fn test_get_injected_languages_extracts_unique_languages() {

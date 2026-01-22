@@ -1193,6 +1193,7 @@ impl LanguageServer for Kakehashi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lsp::auto_install::InstallingLanguagesExt;
 
     // Note: Wildcard config resolution tests are in src/config.rs
     // Note: apply_content_changes_with_edits tests are in src/lsp/text_sync.rs
