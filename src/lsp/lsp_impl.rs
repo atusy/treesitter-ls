@@ -407,7 +407,7 @@ impl Kakehashi {
     }
 
     fn get_language_for_document(&self, uri: &Url) -> Option<String> {
-        super::auto_install::get_language_for_document(uri, &self.language, &self.documents)
+        crate::document::get_language_for_document(uri, &self.language, &self.documents)
     }
 
     /// Get bridge server config for a given injection language from settings.
