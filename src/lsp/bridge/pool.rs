@@ -614,13 +614,23 @@ mod tests {
             .get_or_create_connection_with_timeout("test", &config, Duration::from_millis(100))
             .await;
 
-        // Should return timeout error
-        assert!(result.is_err(), "Should fail with timeout");
-        assert_eq!(
-            result.err().unwrap().kind(),
-            io::ErrorKind::TimedOut,
-            "Error should be TimedOut"
-        );
+        // Should return timeout error with correct kind and descriptive message
+        match result {
+            Ok(_) => panic!("Should fail with timeout"),
+            Err(err) => {
+                assert_eq!(
+                    err.kind(),
+                    io::ErrorKind::TimedOut,
+                    "Error should be TimedOut"
+                );
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("timeout"),
+                    "Error message should mention timeout: {}",
+                    msg
+                );
+            }
+        }
 
         // With async fast-fail architecture, failed connections are in Failed state
         // (will be removed on next request attempt via Failed state handling)
@@ -660,38 +670,6 @@ mod tests {
 
         // Should return an error
         assert!(result.is_err(), "Connection should fail with timeout error");
-    }
-
-    /// Test that timeout returns io::ErrorKind::TimedOut.
-    #[tokio::test]
-    async fn init_timeout_returns_timed_out_error_kind() {
-        let pool = LanguageServerPool::new();
-        let config = devnull_config_for_language("test");
-
-        let result = pool
-            .get_or_create_connection_with_timeout("test", &config, Duration::from_millis(100))
-            .await;
-
-        match result {
-            Ok(_) => panic!("Should return an error"),
-            Err(err) => {
-                // Verify error kind is TimedOut
-                assert_eq!(
-                    err.kind(),
-                    io::ErrorKind::TimedOut,
-                    "Error kind should be TimedOut, got: {:?}",
-                    err.kind()
-                );
-
-                // Verify error message is descriptive
-                let msg = err.to_string();
-                assert!(
-                    msg.contains("timeout") || msg.contains("unresponsive"),
-                    "Error message should mention timeout: {}",
-                    msg
-                );
-            }
-        }
     }
 
     /// Test that failed connection is removed from cache and new server is spawned on retry.
