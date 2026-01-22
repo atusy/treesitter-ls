@@ -5,9 +5,10 @@
 //!
 //! # Module Structure
 //!
-//! - `InstallingLanguages`: Type alias for tracking concurrent installs
+//! - `InstallingLanguages`: Type alias for `InProgressSet<String>` tracking concurrent installs
+//! - `InstallingLanguagesExt`: Extension trait providing domain-specific method names
 //! - `AutoInstallManager`: Isolated coordinator for installation
-//! - `InstallResult`, `InstallOutcome`, `InstallEvent`: Event-based return types
+//! - `get_injected_languages`: Extracts unique injected languages from a document
 
 mod manager;
 
