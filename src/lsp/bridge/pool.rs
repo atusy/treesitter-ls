@@ -45,7 +45,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
+use tower_lsp_server::Client;
 use url::Url;
 
 use super::connection::SplitConnectionWriter;
@@ -57,7 +58,16 @@ use super::protocol::{VirtualDocumentUri, build_bridge_didopen_notification};
 /// within this duration, the connection attempt fails with a timeout error.
 const INIT_TIMEOUT_SECS: u64 = 30;
 
-use super::actor::{ResponseRouter, spawn_reader_task_for_language};
+/// Bounded channel capacity for downstream notification forwarding (ADR-0015 backpressure).
+///
+/// When the channel is full, new notifications are dropped with a warning log.
+/// 256 provides sufficient buffer for burst scenarios while preventing unbounded growth.
+const DOWNSTREAM_CHANNEL_CAPACITY: usize = 256;
+
+use super::actor::{
+    DownstreamHandlerHandle, DownstreamMessage, ResponseRouter, spawn_downstream_handler,
+    spawn_reader_task_for_language,
+};
 use super::connection::AsyncBridgeConnection;
 
 /// Upstream request ID type supporting both numeric and string IDs per LSP spec.
@@ -174,6 +184,16 @@ impl CancelForwardingMetrics {
     }
 }
 
+/// Downstream handler state for notification forwarding.
+///
+/// Contains the channel sender and handler handle. Initialized via `init_downstream_handler()`.
+struct DownstreamHandlerState {
+    /// Sender for downstream notification forwarding.
+    tx: mpsc::Sender<DownstreamMessage>,
+    /// Handle to the handler task (kept alive via RAII).
+    _handle: DownstreamHandlerHandle,
+}
+
 /// Pool of connections to downstream language servers (ADR-0016).
 ///
 /// Each server_name maps to exactly one downstream server connection.
@@ -215,6 +235,11 @@ pub struct LanguageServerPool {
     upstream_request_registry: std::sync::Mutex<HashMap<UpstreamId, String>>,
     /// Metrics for cancel forwarding observability.
     cancel_metrics: CancelForwardingMetrics,
+    /// Downstream notification handler state (channel + handler).
+    ///
+    /// Initialized via `init_downstream_handler()`. Uses `OnceLock` for one-time
+    /// initialization with the LSP client.
+    downstream_handler: std::sync::OnceLock<DownstreamHandlerState>,
 }
 
 impl Default for LanguageServerPool {
@@ -230,10 +255,14 @@ impl LanguageServerPool {
     /// `Arc<LanguageServerPool>` and pass it to both `Kakehashi::with_pool()`
     /// and `CancelForwarder::new()`.
     ///
+    /// After creating the pool, call `init_downstream_handler()` with the LSP client
+    /// to enable notification forwarding from downstream language servers.
+    ///
     /// # Example
     ///
     /// ```ignore
     /// let pool = Arc::new(LanguageServerPool::new());
+    /// pool.init_downstream_handler(client.clone());
     /// let cancel_forwarder = CancelForwarder::new(Arc::clone(&pool));
     /// let kakehashi = Kakehashi::with_pool(pool);
     /// let service = RequestIdCapture::with_cancel_forwarder(kakehashi, cancel_forwarder);
@@ -244,13 +273,51 @@ impl LanguageServerPool {
             document_tracker: DocumentTracker::new(),
             upstream_request_registry: std::sync::Mutex::new(HashMap::new()),
             cancel_metrics: CancelForwardingMetrics::default(),
+            downstream_handler: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Initialize the downstream notification handler.
+    ///
+    /// This spawns the handler task that receives notifications from downstream
+    /// language servers and forwards them to the client with appropriate transformations.
+    ///
+    /// Must be called after the pool is created and before any connections are established.
+    /// Called automatically by `BridgeCoordinator` when the client is available.
+    ///
+    /// # Arguments
+    /// * `client` - The LSP client for sending notifications
+    ///
+    /// # Panics
+    /// Panics if called more than once (handler already initialized).
+    pub fn init_downstream_handler(&self, client: Client) {
+        let (tx, rx) = mpsc::channel(DOWNSTREAM_CHANNEL_CAPACITY);
+        let handle = spawn_downstream_handler(rx, client);
+
+        let state = DownstreamHandlerState { tx, _handle: handle };
+
+        if self.downstream_handler.set(state).is_err() {
+            panic!("init_downstream_handler() called more than once");
+        }
+
+        log::debug!(
+            target: "kakehashi::bridge::pool",
+            "Downstream handler initialized"
+        );
     }
 
     /// Get access to cancel forwarding metrics (for testing).
     #[cfg(test)]
     pub(crate) fn cancel_metrics(&self) -> &CancelForwardingMetrics {
         &self.cancel_metrics
+    }
+
+    /// Get the downstream notification sender.
+    ///
+    /// Returns the channel sender for forwarding notifications from Reader Tasks.
+    /// Returns `None` if `init_downstream_handler()` has not been called.
+    pub(crate) fn downstream_tx(&self) -> Option<mpsc::Sender<DownstreamMessage>> {
+        self.downstream_handler.get().map(|state| state.tx.clone())
     }
 
     /// Get access to the connections map.
@@ -541,11 +608,25 @@ impl LanguageServerPool {
         // Liveness timeout is configured via LivenessTimeout::default() (60s per ADR-0018 Tier 2)
         // Server name is passed for structured logging (observability improvement)
         let liveness_timeout = liveness_timeout::LivenessTimeout::default();
+
+        // Get downstream channel for notification forwarding (Phase 0)
+        // If handler not initialized, notifications will be dropped in reader task
+        let downstream_tx = self.downstream_tx();
+
+        // Use the command name for notification prefixing in logs
+        // e.g., "lua-language-server" from ["lua-language-server", "--stdio"]
+        let command_name = server_config
+            .cmd
+            .first()
+            .map(|s| s.to_string());
+
         let reader_handle = spawn_reader_task_for_language(
             reader,
             Arc::clone(&router),
             Some(liveness_timeout.as_duration()),
-            Some(server_name.to_string()),
+            command_name.clone(),
+            downstream_tx,
+            command_name,
         );
 
         // Create handle in Initializing state (fast-fail for concurrent requests)

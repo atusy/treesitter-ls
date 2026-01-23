@@ -9,7 +9,7 @@
 //! - Runs in a spawned tokio task
 //! - Reads messages from stdout using BridgeReader
 //! - Routes responses via ResponseRouter to oneshot waiters
-//! - Logs notifications (they don't have waiters)
+//! - Forwards notifications to DownstreamMessageHandler via channel
 //! - Manages liveness timer for hung server detection (ADR-0014)
 //! - Gracefully shuts down on EOF, error, or cancellation signal
 
@@ -22,7 +22,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::super::connection::BridgeReader;
-use super::ResponseRouter;
+use super::{DownstreamMessage, DownstreamNotification, ResponseRouter};
 
 /// Type alias for the pinned liveness timer future.
 type LivenessTimer = std::pin::Pin<Box<tokio::time::Sleep>>;
@@ -293,7 +293,8 @@ pub(crate) fn spawn_reader_task(
 /// Spawn a reader task with optional liveness timeout (no language context).
 ///
 /// This is a convenience wrapper for tests that don't need structured logging
-/// with language identifiers. Production code should use `spawn_reader_task_for_language`.
+/// with language identifiers or downstream notification forwarding.
+/// Production code should use `spawn_reader_task_for_language`.
 ///
 /// # Arguments
 /// * `reader` - The BridgeReader to read messages from
@@ -308,7 +309,7 @@ pub(crate) fn spawn_reader_task_with_liveness(
     router: Arc<ResponseRouter>,
     liveness_timeout: Option<Duration>,
 ) -> ReaderTaskHandle {
-    spawn_reader_task_for_language(reader, router, liveness_timeout, None)
+    spawn_reader_task_for_language(reader, router, liveness_timeout, None, None, None)
 }
 
 /// Spawn a reader task with liveness timeout and language identifier for logging.
@@ -318,6 +319,8 @@ pub(crate) fn spawn_reader_task_with_liveness(
 /// * `router` - The ResponseRouter to route responses to waiters
 /// * `liveness_timeout` - Optional timeout for hung server detection (ADR-0014)
 /// * `language` - Language identifier for structured logging (e.g., "lua", "python")
+/// * `downstream_tx` - Optional channel sender for forwarding notifications to handler
+/// * `server_name` - Optional server name for notification prefixing (e.g., "lua-language-server")
 ///
 /// # Returns
 /// A ReaderTaskHandle for managing the spawned task.
@@ -326,6 +329,8 @@ pub(crate) fn spawn_reader_task_for_language(
     router: Arc<ResponseRouter>,
     liveness_timeout: Option<Duration>,
     language: Option<String>,
+    downstream_tx: Option<mpsc::Sender<DownstreamMessage>>,
+    server_name: Option<String>,
 ) -> ReaderTaskHandle {
     let cancel_token = CancellationToken::new();
     let token_clone = cancel_token.clone();
@@ -348,6 +353,8 @@ pub(crate) fn spawn_reader_task_for_language(
         liveness_stop_rx,
         liveness_failed_tx,
         language,
+        downstream_tx,
+        server_name,
     ));
 
     ReaderTaskHandle {
@@ -383,6 +390,8 @@ async fn reader_loop(
         stop_rx,
         failed_tx,
         None, // No language context for test helper
+        None, // No downstream channel for test helper
+        None, // No server name for test helper
     )
     .await
 }
@@ -396,6 +405,12 @@ async fn reader_loop(
 /// - Timer resets on any message received (response or notification)
 /// - Timer stops when pending count returns to 0 OR when stop notification received
 /// - Timer firing triggers Ready->Failed transition via router.fail_all() and signals via liveness_failed_tx
+///
+/// # Downstream Notification Forwarding (Phase 0)
+///
+/// When `downstream_tx` and `server_name` are provided:
+/// - Notifications are wrapped in `DownstreamMessage::Notification` and sent to the channel
+/// - On channel full: message is dropped and a warning is logged (per ADR-0015 backpressure)
 ///
 /// # Observability
 ///
@@ -411,6 +426,8 @@ async fn reader_loop_with_liveness(
     mut liveness_stop_rx: mpsc::Receiver<()>,
     liveness_failed_tx: oneshot::Sender<()>,
     language: Option<String>,
+    downstream_tx: Option<mpsc::Sender<DownstreamMessage>>,
+    server_name: Option<String>,
 ) {
     // Language prefix for log messages (e.g., "[lua] " or "")
     let lang_prefix = language
@@ -471,7 +488,13 @@ async fn reader_loop_with_liveness(
                         // Reset liveness timer on any message activity (ADR-0014)
                         liveness.reset(&lang_prefix);
 
-                        handle_message(message, &router, &lang_prefix);
+                        handle_message(
+                            message,
+                            &router,
+                            &lang_prefix,
+                            downstream_tx.as_ref(),
+                            server_name.as_deref(),
+                        );
 
                         // Check if pending count returned to 0 - stop timer
                         if liveness.is_active() && router.pending_count() == 0 {
@@ -496,7 +519,16 @@ async fn reader_loop_with_liveness(
 }
 
 /// Handle a single message from the downstream server.
-fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_prefix: &str) {
+///
+/// Routes responses to waiting oneshot receivers via the ResponseRouter.
+/// Forwards notifications to the DownstreamMessageHandler via the provided channel.
+fn handle_message(
+    message: serde_json::Value,
+    router: &ResponseRouter,
+    lang_prefix: &str,
+    downstream_tx: Option<&mpsc::Sender<DownstreamMessage>>,
+    server_name: Option<&str>,
+) {
     // Check if it's a response (has "id" field)
     if message.get("id").is_some() {
         // It's a response - route to waiter
@@ -509,13 +541,42 @@ fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_pref
             );
         }
     } else {
-        // It's a notification - log and skip
-        if let Some(method) = message.get("method").and_then(|v| v.as_str()) {
+        // It's a notification - forward to handler if channel is available
+        let method = message
+            .get("method")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        if let (Some(tx), Some(name)) = (downstream_tx, server_name) {
+            let notification = DownstreamNotification {
+                server_name: name.to_string(),
+                notification: message,
+            };
+            let downstream_msg = DownstreamMessage::Notification(notification);
+
+            // Use try_send to avoid blocking. On channel full, drop and warn (ADR-0015 backpressure).
+            if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(downstream_msg) {
+                warn!(
+                    target: "kakehashi::bridge::reader",
+                    "{}Downstream channel full, dropping notification: {}",
+                    lang_prefix,
+                    method.as_deref().unwrap_or("unknown")
+                );
+            } else {
+                debug!(
+                    target: "kakehashi::bridge::reader",
+                    "{}Forwarded notification to handler: {}",
+                    lang_prefix,
+                    method.as_deref().unwrap_or("unknown")
+                );
+            }
+        } else {
+            // No channel configured - log and skip (legacy behavior for tests)
             debug!(
                 target: "kakehashi::bridge::reader",
-                "{}Received notification: {}, skipping",
+                "{}Received notification: {}, skipping (no downstream channel)",
                 lang_prefix,
-                method
+                method.as_deref().unwrap_or("unknown")
             );
         }
     }
@@ -589,7 +650,7 @@ mod tests {
             "result": null
         });
 
-        handle_message(response, &router, "");
+        handle_message(response, &router, "", None, None);
 
         // Receiver should have the response
         // We can't block on rx.await here in a sync test, but we can check
@@ -598,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn handle_message_ignores_notification() {
+    fn handle_message_skips_notification_without_channel() {
         let router = ResponseRouter::new();
         let _rx = router
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
@@ -610,10 +671,74 @@ mod tests {
             "params": {}
         });
 
-        handle_message(notification, &router, "");
+        // No downstream channel - notification should be skipped (legacy behavior)
+        handle_message(notification, &router, "", None, None);
 
-        // Pending count should still be 1 (notification was ignored)
+        // Pending count should still be 1 (notification was skipped)
         assert_eq!(router.pending_count(), 1);
+    }
+
+    #[test]
+    fn handle_message_forwards_notification_to_channel() {
+        let router = ResponseRouter::new();
+        let _rx = router
+            .register(crate::lsp::bridge::protocol::RequestId::new(1))
+            .unwrap();
+
+        let (tx, mut rx) = mpsc::channel(1);
+
+        let notification = json!({
+            "jsonrpc": "2.0",
+            "method": "$/progress",
+            "params": { "token": "test-token" }
+        });
+
+        handle_message(
+            notification.clone(),
+            &router,
+            "",
+            Some(&tx),
+            Some("test-server"),
+        );
+
+        // Notification should have been forwarded to channel
+        let received = rx.try_recv().expect("should receive notification");
+        match received {
+            DownstreamMessage::Notification(n) => {
+                assert_eq!(n.server_name, "test-server");
+                assert_eq!(n.notification["method"], "$/progress");
+                assert_eq!(n.notification["params"]["token"], "test-token");
+            }
+        }
+
+        // Pending count should still be 1 (notification doesn't affect pending)
+        assert_eq!(router.pending_count(), 1);
+    }
+
+    #[test]
+    fn handle_message_drops_notification_on_channel_full() {
+        let router = ResponseRouter::new();
+        let (tx, _rx) = mpsc::channel(1); // Capacity 1
+
+        // Fill the channel
+        let first_notification = json!({
+            "jsonrpc": "2.0",
+            "method": "$/progress",
+            "params": { "token": "first" }
+        });
+        handle_message(first_notification, &router, "", Some(&tx), Some("server"));
+
+        // Try to send another notification - should be dropped (channel full)
+        let second_notification = json!({
+            "jsonrpc": "2.0",
+            "method": "$/progress",
+            "params": { "token": "second" }
+        });
+        handle_message(second_notification, &router, "", Some(&tx), Some("server"));
+
+        // Only one notification should be in the channel (the first one)
+        // The second was dropped due to channel being full
+        // This test verifies no panic occurs and the function handles backpressure gracefully
     }
 
     #[tokio::test]

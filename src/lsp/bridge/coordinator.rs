@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 
+use tower_lsp_server::Client;
 use ulid::Ulid;
 use url::Url;
 
@@ -79,6 +80,9 @@ pub(crate) struct BridgeCoordinator {
 
 impl BridgeCoordinator {
     /// Create a new bridge coordinator with fresh pool and tracker.
+    ///
+    /// Note: This creates an uninitialized pool. Use `with_client()` for production
+    /// code that needs downstream notification forwarding.
     pub(crate) fn new() -> Self {
         Self {
             pool: Arc::new(LanguageServerPool::new()),
@@ -86,11 +90,25 @@ impl BridgeCoordinator {
         }
     }
 
-    /// Create a bridge coordinator with an existing pool.
+    /// Create a bridge coordinator with client for downstream notification forwarding.
+    ///
+    /// This initializes the downstream handler that forwards notifications from
+    /// downstream language servers to the client (e.g., `$/progress`).
+    pub(crate) fn with_client(client: Client) -> Self {
+        let pool = Arc::new(LanguageServerPool::new());
+        pool.init_downstream_handler(client);
+        Self {
+            pool,
+            region_id_tracker: RegionIdTracker::new(),
+        }
+    }
+
+    /// Create a bridge coordinator with an existing pool and initialize handler.
     ///
     /// This is used when the pool needs to be shared with external components
     /// like the cancel forwarding middleware.
-    pub(crate) fn with_pool(pool: Arc<LanguageServerPool>) -> Self {
+    pub(crate) fn with_pool(pool: Arc<LanguageServerPool>, client: Client) -> Self {
+        pool.init_downstream_handler(client);
         Self {
             pool,
             region_id_tracker: RegionIdTracker::new(),
