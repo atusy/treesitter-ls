@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use log::warn;
 
-use super::ConnectionState;
+use super::{ConnectionState, UpstreamId};
 use crate::lsp::bridge::actor::{ReaderTaskHandle, ResponseRouter};
 use crate::lsp::bridge::connection::SplitConnectionWriter;
 use crate::lsp::bridge::protocol::{RequestId, build_exit_notification, build_shutdown_request};
@@ -328,7 +328,7 @@ impl ConnectionHandle {
     /// Returns error if registration fails (should never happen with unique IDs).
     pub(crate) fn register_request_with_upstream(
         &self,
-        upstream_id: Option<i64>,
+        upstream_id: Option<UpstreamId>,
     ) -> io::Result<(RequestId, tokio::sync::oneshot::Receiver<serde_json::Value>)> {
         // Check if this will be the first pending request (0->1 transition)
         //
@@ -808,13 +808,13 @@ mod tests {
             ConnectionHandle::with_state(writer, router, reader_handle, ConnectionState::Ready);
 
         // Register a request with upstream ID
-        let upstream_id = 42i64;
+        let upstream_id = UpstreamId::Number(42);
         let (downstream_id, _response_rx) = handle
-            .register_request_with_upstream(Some(upstream_id))
+            .register_request_with_upstream(Some(upstream_id.clone()))
             .expect("should register request");
 
         // Verify the mapping was stored in the router
-        let looked_up = handle.router().lookup_downstream_id(upstream_id);
+        let looked_up = handle.router().lookup_downstream_id(&upstream_id);
         assert_eq!(
             looked_up,
             Some(downstream_id),

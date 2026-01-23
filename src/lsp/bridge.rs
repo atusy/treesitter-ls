@@ -21,6 +21,7 @@ mod text_document;
 // Re-export public types
 pub(crate) use coordinator::BridgeCoordinator;
 pub use pool::LanguageServerPool;
+pub use pool::UpstreamId;
 
 /// Integration tests for the bridge module.
 ///
@@ -31,7 +32,7 @@ pub use pool::LanguageServerPool;
 /// - `pool.rs` - LanguageServerPool lifecycle and state tests
 #[cfg(test)]
 mod tests {
-    use super::pool::LanguageServerPool;
+    use super::pool::{LanguageServerPool, UpstreamId};
     use crate::config::settings::BridgeServerConfig;
     use tower_lsp_server::ls_types::Position;
     use url::Url;
@@ -73,7 +74,7 @@ mod tests {
                 "region-0",
                 3, // region_start_line
                 virtual_content,
-                1, // upstream_request_id
+                UpstreamId::Number(1), // upstream_request_id
             )
             .await;
 
@@ -125,7 +126,7 @@ mod tests {
                 "region-0",
                 3, // region_start_line
                 virtual_content,
-                1, // upstream_request_id
+                UpstreamId::Number(1), // upstream_request_id
             )
             .await;
 
@@ -186,7 +187,7 @@ mod tests {
                 "region-0",
                 3, // region_start_line
                 virtual_content,
-                42, // upstream_request_id (unused)
+                UpstreamId::Number(42), // upstream_request_id (unused)
             )
             .await;
 
@@ -257,7 +258,7 @@ mod tests {
                 "region-0",
                 3, // region_start_line
                 virtual_content,
-                123, // upstream_request_id (unused)
+                UpstreamId::Number(123), // upstream_request_id (unused)
             )
             .await;
 
@@ -318,7 +319,7 @@ mod tests {
                 "region-0",
                 3, // region_start_line
                 virtual_content,
-                1, // upstream_request_id
+                UpstreamId::Number(1), // upstream_request_id
             )
             .await;
 

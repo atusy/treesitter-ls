@@ -4,6 +4,7 @@ use tower_lsp_server::jsonrpc::{Id, Result};
 use tower_lsp_server::ls_types::{DocumentLink, DocumentLinkParams, MessageType};
 
 use crate::language::InjectionResolver;
+use crate::lsp::bridge::UpstreamId;
 use crate::lsp::get_current_request_id;
 
 use super::super::{Kakehashi, uri_to_url};
@@ -69,9 +70,10 @@ impl Kakehashi {
 
         // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
         let upstream_request_id = match get_current_request_id() {
-            Some(Id::Number(n)) => n,
-            // For string IDs or no ID, use 0 as fallback
-            _ => 0,
+            Some(Id::Number(n)) => UpstreamId::Number(n),
+            Some(Id::String(s)) => UpstreamId::String(s),
+            // For notifications without ID or null ID, use 0 as fallback
+            None | Some(Id::Null) => UpstreamId::Number(0),
         };
 
         // Collect document links from all injection regions
@@ -97,7 +99,7 @@ impl Kakehashi {
                     &resolved.region.result_id,
                     resolved.region.line_range.start,
                     &resolved.virtual_content,
-                    upstream_request_id,
+                    upstream_request_id.clone(),
                 )
                 .await;
 

@@ -47,6 +47,51 @@ const INIT_TIMEOUT_SECS: u64 = 30;
 use super::actor::{ResponseRouter, spawn_reader_task_for_language};
 use super::connection::AsyncBridgeConnection;
 
+/// Upstream request ID type supporting both numeric and string IDs per LSP spec.
+///
+/// The LSP specification allows request IDs to be either integers or strings:
+/// `id: integer | string`. This type provides a unified way to handle both types
+/// in the cancel forwarding infrastructure.
+///
+/// # LSP Spec Compliance
+///
+/// Per LSP 3.17: "interface CancelParams { id: integer | string; }"
+/// This type ensures we can forward cancel requests for clients using either ID type.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum UpstreamId {
+    /// Numeric request ID (most common)
+    Number(i64),
+    /// String request ID (less common but valid per LSP spec)
+    String(String),
+}
+
+impl std::fmt::Display for UpstreamId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UpstreamId::Number(n) => write!(f, "{}", n),
+            UpstreamId::String(s) => write!(f, "\"{}\"", s),
+        }
+    }
+}
+
+impl From<i64> for UpstreamId {
+    fn from(n: i64) -> Self {
+        UpstreamId::Number(n)
+    }
+}
+
+impl From<String> for UpstreamId {
+    fn from(s: String) -> Self {
+        UpstreamId::String(s)
+    }
+}
+
+impl From<&str> for UpstreamId {
+    fn from(s: &str) -> Self {
+        UpstreamId::String(s.to_string())
+    }
+}
+
 /// Metrics for cancel request forwarding.
 ///
 /// Provides observability into the cancel forwarding mechanism for production
@@ -144,7 +189,7 @@ pub struct LanguageServerPool {
     ///   connection state and fails gracefully for stale entries)
     /// - Entries are cleaned up when new requests reuse the same upstream IDs
     /// - This keeps the architecture simpler by avoiding circular dependencies
-    upstream_request_registry: std::sync::Mutex<HashMap<i64, String>>,
+    upstream_request_registry: std::sync::Mutex<HashMap<UpstreamId, String>>,
     /// Metrics for cancel forwarding observability.
     cancel_metrics: CancelForwardingMetrics,
 }
@@ -494,7 +539,11 @@ impl LanguageServerPool {
     /// # Returns
     /// * `Ok(())` if the cancel notification was sent
     /// * `Err` if no connection exists or the upstream ID is not found
-    pub(crate) async fn forward_cancel(&self, language: &str, upstream_id: i64) -> io::Result<()> {
+    pub(crate) async fn forward_cancel(
+        &self,
+        language: &str,
+        upstream_id: &UpstreamId,
+    ) -> io::Result<()> {
         // Get the connection for this language
         let handle = {
             let connections = self.connections().await;
@@ -578,7 +627,10 @@ impl LanguageServerPool {
     /// # Returns
     /// * `Ok(())` if the cancel was forwarded
     /// * `Err` if the upstream ID is not found in the registry
-    pub(crate) async fn forward_cancel_by_upstream_id(&self, upstream_id: i64) -> io::Result<()> {
+    pub(crate) async fn forward_cancel_by_upstream_id(
+        &self,
+        upstream_id: UpstreamId,
+    ) -> io::Result<()> {
         // Look up the language from the registry
         let language = {
             let registry = self
@@ -600,7 +652,7 @@ impl LanguageServerPool {
             ));
         };
 
-        self.forward_cancel(&language, upstream_id).await
+        self.forward_cancel(&language, &upstream_id).await
     }
 
     /// Register an upstream request ID -> language mapping for cancel forwarding.
@@ -628,7 +680,7 @@ impl LanguageServerPool {
     /// # Arguments
     /// * `upstream_id` - The original request ID from the upstream client
     /// * `language` - The language of the downstream server handling this request
-    pub(crate) fn register_upstream_request(&self, upstream_id: i64, language: &str) {
+    pub(crate) fn register_upstream_request(&self, upstream_id: UpstreamId, language: &str) {
         let mut registry = self
             .upstream_request_registry
             .lock()
@@ -642,12 +694,12 @@ impl LanguageServerPool {
     ///
     /// # Arguments
     /// * `upstream_id` - The request ID to unregister
-    pub(crate) fn unregister_upstream_request(&self, upstream_id: i64) {
+    pub(crate) fn unregister_upstream_request(&self, upstream_id: &UpstreamId) {
         let mut registry = self
             .upstream_request_registry
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        registry.remove(&upstream_id);
+        registry.remove(upstream_id);
     }
 }
 
@@ -718,7 +770,7 @@ mod tests {
                 "region-0",
                 3,
                 "print('hello')",
-                1, // upstream_request_id
+                UpstreamId::Number(1), // upstream_request_id
             )
             .await;
         assert!(
@@ -740,7 +792,7 @@ mod tests {
                 "region-0",
                 3,
                 "print('hello')",
-                1, // upstream_request_id
+                UpstreamId::Number(1), // upstream_request_id
             )
             .await;
         assert_eq!(
@@ -787,7 +839,7 @@ mod tests {
                 "region-0",
                 3,
                 "print('hello')",
-                1, // upstream_request_id
+                UpstreamId::Number(1), // upstream_request_id
             )
             .await;
         assert!(
@@ -817,7 +869,7 @@ mod tests {
                 "region-0",
                 3,
                 "print('hello')",
-                2, // upstream_request_id
+                UpstreamId::Number(2), // upstream_request_id
             )
             .await;
         assert!(
@@ -857,7 +909,7 @@ mod tests {
                 "region-0",
                 3,
                 "print('hello')",
-                1, // upstream_request_id
+                UpstreamId::Number(1), // upstream_request_id
             )
             .await;
 
@@ -889,7 +941,7 @@ mod tests {
                 "region-0",
                 3,
                 "print('world')",
-                2, // upstream_request_id
+                UpstreamId::Number(2), // upstream_request_id
             )
             .await;
 
@@ -1152,7 +1204,7 @@ mod tests {
                 TEST_ULID_LUA_0,
                 3,
                 "print('hello')",
-                1,
+                UpstreamId::Number(1),
             )
             .await;
         assert!(result.is_ok(), "Hover request should succeed");
@@ -1209,7 +1261,7 @@ mod tests {
                 TEST_ULID_LUA_0,
                 3, // region starts at line 3, position is at line 4, so virtual line = 1
                 "print('hello')",
-                1,
+                UpstreamId::Number(1),
             )
             .await;
         assert!(result.is_ok(), "First hover request should succeed");
@@ -1226,7 +1278,7 @@ mod tests {
                 TEST_ULID_LUA_1,
                 7, // region starts at line 7, position is at line 8, so virtual line = 1
                 "print('world')",
-                2,
+                UpstreamId::Number(2),
             )
             .await;
         assert!(result.is_ok(), "Second hover request should succeed");
@@ -1581,7 +1633,7 @@ mod tests {
                 "region-0",
                 3,
                 "print('hello')",
-                1, // upstream_request_id
+                UpstreamId::Number(1), // upstream_request_id
             )
             .await;
         assert!(
@@ -1603,7 +1655,7 @@ mod tests {
                 "region-0",
                 3,
                 "print('hello')",
-                1, // upstream_request_id
+                UpstreamId::Number(1), // upstream_request_id
             )
             .await;
         assert_eq!(
@@ -2089,9 +2141,9 @@ mod tests {
         let handle = create_handle_with_state(ConnectionState::Ready).await;
 
         // Register a request with upstream ID
-        let upstream_id = 42i64;
+        let upstream_id = UpstreamId::Number(42);
         let (downstream_id, _response_rx) = handle
-            .register_request_with_upstream(Some(upstream_id))
+            .register_request_with_upstream(Some(upstream_id.clone()))
             .expect("should register request");
 
         // Insert the handle into the pool
@@ -2101,7 +2153,7 @@ mod tests {
             .insert("lua".to_string(), Arc::clone(&handle));
 
         // Forward cancel request
-        let result = pool.forward_cancel("lua", upstream_id).await;
+        let result = pool.forward_cancel("lua", &upstream_id).await;
 
         // Should succeed (the notification was sent)
         assert!(
@@ -2120,7 +2172,7 @@ mod tests {
         // Verify the cancel_map entry is still there (cancel does NOT remove it)
         // The mapping is only removed when the actual response arrives
         assert_eq!(
-            handle.router().lookup_downstream_id(upstream_id),
+            handle.router().lookup_downstream_id(&upstream_id),
             Some(downstream_id),
             "Cancel map entry should still exist after cancel forwarding"
         );
@@ -2131,7 +2183,7 @@ mod tests {
     async fn forward_cancel_returns_error_when_no_connection() {
         let pool = LanguageServerPool::new();
 
-        let result = pool.forward_cancel("nonexistent", 42).await;
+        let result = pool.forward_cancel("nonexistent", &UpstreamId::Number(42)).await;
 
         assert!(
             result.is_err(),
@@ -2159,7 +2211,7 @@ mod tests {
             .await
             .insert("lua".to_string(), Arc::clone(&handle));
 
-        let result = pool.forward_cancel("lua", 999).await;
+        let result = pool.forward_cancel("lua", &UpstreamId::Number(999)).await;
 
         assert!(
             result.is_err(),
@@ -2182,10 +2234,10 @@ mod tests {
     fn register_upstream_request_stores_mapping() {
         let pool = LanguageServerPool::new();
 
-        pool.register_upstream_request(42, "lua");
+        pool.register_upstream_request(UpstreamId::Number(42), "lua");
 
         let registry = pool.upstream_request_registry.lock().unwrap();
-        assert_eq!(registry.get(&42), Some(&"lua".to_string()));
+        assert_eq!(registry.get(&UpstreamId::Number(42)), Some(&"lua".to_string()));
     }
 
     /// Test that unregister_upstream_request removes the mapping.
@@ -2193,11 +2245,11 @@ mod tests {
     fn unregister_upstream_request_removes_mapping() {
         let pool = LanguageServerPool::new();
 
-        pool.register_upstream_request(42, "lua");
-        pool.unregister_upstream_request(42);
+        pool.register_upstream_request(UpstreamId::Number(42), "lua");
+        pool.unregister_upstream_request(&UpstreamId::Number(42));
 
         let registry = pool.upstream_request_registry.lock().unwrap();
-        assert_eq!(registry.get(&42), None);
+        assert_eq!(registry.get(&UpstreamId::Number(42)), None);
     }
 
     /// Test that forward_cancel_by_upstream_id uses the registry to find the language.
@@ -2209,9 +2261,9 @@ mod tests {
         let handle = create_handle_with_state(ConnectionState::Ready).await;
 
         // Register a request with upstream ID mapping in ResponseRouter
-        let upstream_id = 42i64;
+        let upstream_id = UpstreamId::Number(42);
         let (_downstream_id, _response_rx) = handle
-            .register_request_with_upstream(Some(upstream_id))
+            .register_request_with_upstream(Some(upstream_id.clone()))
             .expect("should register request");
 
         // Insert the handle into the pool
@@ -2221,10 +2273,10 @@ mod tests {
             .insert("lua".to_string(), Arc::clone(&handle));
 
         // Register the upstream request in the registry
-        pool.register_upstream_request(upstream_id, "lua");
+        pool.register_upstream_request(upstream_id.clone(), "lua");
 
         // Forward cancel by upstream ID only (no language parameter)
-        let result = pool.forward_cancel_by_upstream_id(upstream_id).await;
+        let result = pool.forward_cancel_by_upstream_id(upstream_id.clone()).await;
 
         // Should succeed because the registry has the mapping
         assert!(
@@ -2240,7 +2292,7 @@ mod tests {
         let pool = LanguageServerPool::new();
 
         // Don't register anything in the registry
-        let result = pool.forward_cancel_by_upstream_id(999).await;
+        let result = pool.forward_cancel_by_upstream_id(UpstreamId::Number(999)).await;
 
         assert!(
             result.is_err(),
@@ -2268,9 +2320,9 @@ mod tests {
         let handle = create_handle_with_state(ConnectionState::Ready).await;
 
         // Register a request with upstream ID
-        let upstream_id = 42i64;
+        let upstream_id = UpstreamId::Number(42);
         let (downstream_id, response_rx) = handle
-            .register_request_with_upstream(Some(upstream_id))
+            .register_request_with_upstream(Some(upstream_id.clone()))
             .expect("should register request");
 
         // Insert the handle into the pool
@@ -2280,7 +2332,7 @@ mod tests {
             .insert("lua".to_string(), Arc::clone(&handle));
 
         // Forward cancel request (simulating client cancelling the request)
-        let cancel_result = pool.forward_cancel("lua", upstream_id).await;
+        let cancel_result = pool.forward_cancel("lua", &upstream_id).await;
         assert!(cancel_result.is_ok(), "cancel should succeed");
 
         // Now simulate the downstream server responding (with a normal result)
@@ -2315,7 +2367,7 @@ mod tests {
             "pending entry should be removed after response"
         );
         assert_eq!(
-            handle.router().lookup_downstream_id(upstream_id),
+            handle.router().lookup_downstream_id(&upstream_id),
             None,
             "cancel map entry should be removed after response"
         );
@@ -2334,9 +2386,9 @@ mod tests {
         let handle = create_handle_with_state(ConnectionState::Ready).await;
 
         // Register a request with upstream ID
-        let upstream_id = 42i64;
+        let upstream_id = UpstreamId::Number(42);
         let (downstream_id, response_rx) = handle
-            .register_request_with_upstream(Some(upstream_id))
+            .register_request_with_upstream(Some(upstream_id.clone()))
             .expect("should register request");
 
         // Insert the handle into the pool
@@ -2346,7 +2398,7 @@ mod tests {
             .insert("lua".to_string(), Arc::clone(&handle));
 
         // Forward cancel request
-        let cancel_result = pool.forward_cancel("lua", upstream_id).await;
+        let cancel_result = pool.forward_cancel("lua", &upstream_id).await;
         assert!(cancel_result.is_ok(), "cancel should succeed");
 
         // Simulate the downstream server responding with RequestCancelled error
@@ -2383,9 +2435,9 @@ mod tests {
         let handle = create_handle_with_state(ConnectionState::Ready).await;
 
         // Register a request with upstream ID
-        let upstream_id = 42i64;
+        let upstream_id = UpstreamId::Number(42);
         let (_downstream_id, _response_rx) = handle
-            .register_request_with_upstream(Some(upstream_id))
+            .register_request_with_upstream(Some(upstream_id.clone()))
             .expect("should register request");
 
         pool.connections
@@ -2394,7 +2446,7 @@ mod tests {
             .insert("lua".to_string(), Arc::clone(&handle));
 
         // Forward cancel
-        let _ = pool.forward_cancel("lua", upstream_id).await;
+        let _ = pool.forward_cancel("lua", &upstream_id).await;
 
         // Check metrics
         let (successful, no_conn, not_ready, unknown_id, not_in_reg) =
@@ -2414,10 +2466,10 @@ mod tests {
         let pool = LanguageServerPool::new();
 
         // Test: no connection
-        let _ = pool.forward_cancel("nonexistent", 1).await;
+        let _ = pool.forward_cancel("nonexistent", &UpstreamId::Number(1)).await;
 
         // Test: not in registry
-        let _ = pool.forward_cancel_by_upstream_id(999).await;
+        let _ = pool.forward_cancel_by_upstream_id(UpstreamId::Number(999)).await;
 
         // Test: connection not ready
         let handle_init = create_handle_with_state(ConnectionState::Initializing).await;
@@ -2425,7 +2477,7 @@ mod tests {
             .lock()
             .await
             .insert("init_lang".to_string(), Arc::clone(&handle_init));
-        let _ = pool.forward_cancel("init_lang", 2).await;
+        let _ = pool.forward_cancel("init_lang", &UpstreamId::Number(2)).await;
 
         // Test: unknown upstream ID
         let handle_ready = create_handle_with_state(ConnectionState::Ready).await;
@@ -2433,7 +2485,7 @@ mod tests {
             .lock()
             .await
             .insert("ready_lang".to_string(), Arc::clone(&handle_ready));
-        let _ = pool.forward_cancel("ready_lang", 3).await;
+        let _ = pool.forward_cancel("ready_lang", &UpstreamId::Number(3)).await;
 
         // Check metrics
         let (successful, no_conn, not_ready, unknown_id, not_in_reg) =

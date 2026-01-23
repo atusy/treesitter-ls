@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 use tokio::sync::oneshot;
 
+use super::super::pool::UpstreamId;
 use super::super::protocol::RequestId;
 
 /// Routes responses to pending requests via oneshot channels.
@@ -53,11 +54,13 @@ struct ResponseRouterState {
     ///
     /// Used for $/cancelRequest forwarding: when the client cancels request 42,
     /// we look up that 42 maps to downstream ID 7, and forward the cancel to LS.
-    upstream_to_downstream: HashMap<i64, RequestId>,
+    ///
+    /// Supports both numeric and string IDs per LSP spec.
+    upstream_to_downstream: HashMap<UpstreamId, RequestId>,
     /// Reverse mapping: downstream request ID -> upstream request ID.
     ///
     /// Enables O(1) cleanup when a response is routed or a request is removed.
-    downstream_to_upstream: HashMap<RequestId, i64>,
+    downstream_to_upstream: HashMap<RequestId, UpstreamId>,
 }
 
 impl ResponseRouter {
@@ -96,7 +99,7 @@ impl ResponseRouter {
     pub(crate) fn register_with_upstream(
         &self,
         downstream_id: RequestId,
-        upstream_id: Option<i64>,
+        upstream_id: Option<UpstreamId>,
     ) -> Option<oneshot::Receiver<serde_json::Value>> {
         let (tx, rx) = oneshot::channel();
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -110,7 +113,9 @@ impl ResponseRouter {
 
         // Store bidirectional mapping if upstream_id is provided
         if let Some(upstream) = upstream_id {
-            state.upstream_to_downstream.insert(upstream, downstream_id);
+            state
+                .upstream_to_downstream
+                .insert(upstream.clone(), downstream_id);
             state.downstream_to_upstream.insert(downstream_id, upstream);
         }
 
@@ -123,9 +128,9 @@ impl ResponseRouter {
     /// to the language server's request ID. O(1) lookup.
     ///
     /// Returns `None` if no mapping exists (request not found or already completed).
-    pub(crate) fn lookup_downstream_id(&self, upstream_id: i64) -> Option<RequestId> {
+    pub(crate) fn lookup_downstream_id(&self, upstream_id: &UpstreamId) -> Option<RequestId> {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.upstream_to_downstream.get(&upstream_id).copied()
+        state.upstream_to_downstream.get(upstream_id).copied()
     }
 
     /// Route a response to its pending request.
@@ -404,14 +409,14 @@ mod tests {
     fn register_with_upstream_stores_mapping() {
         let router = ResponseRouter::new();
         let downstream_id = RequestId::new(42);
-        let upstream_id = 100i64;
+        let upstream_id = UpstreamId::Number(100);
 
-        let rx = router.register_with_upstream(downstream_id, Some(upstream_id));
+        let rx = router.register_with_upstream(downstream_id, Some(upstream_id.clone()));
         assert!(rx.is_some(), "register_with_upstream should succeed");
         assert_eq!(router.pending_count(), 1);
 
         // Should be able to look up downstream ID by upstream ID
-        let looked_up = router.lookup_downstream_id(upstream_id);
+        let looked_up = router.lookup_downstream_id(&upstream_id);
         assert_eq!(
             looked_up,
             Some(downstream_id),
@@ -435,7 +440,7 @@ mod tests {
     fn lookup_downstream_id_returns_none_for_unknown() {
         let router = ResponseRouter::new();
 
-        let result = router.lookup_downstream_id(999);
+        let result = router.lookup_downstream_id(&UpstreamId::Number(999));
         assert_eq!(
             result, None,
             "lookup should return None for unknown upstream ID"
@@ -450,15 +455,15 @@ mod tests {
     async fn route_removes_cancel_map_entry() {
         let router = ResponseRouter::new();
         let downstream_id = RequestId::new(42);
-        let upstream_id = 100i64;
+        let upstream_id = UpstreamId::Number(100);
 
         let rx = router
-            .register_with_upstream(downstream_id, Some(upstream_id))
+            .register_with_upstream(downstream_id, Some(upstream_id.clone()))
             .expect("should register");
 
         // Verify mapping exists before route
         assert_eq!(
-            router.lookup_downstream_id(upstream_id),
+            router.lookup_downstream_id(&upstream_id),
             Some(downstream_id)
         );
 
@@ -473,7 +478,7 @@ mod tests {
 
         // Verify mapping is removed after route
         assert_eq!(
-            router.lookup_downstream_id(upstream_id),
+            router.lookup_downstream_id(&upstream_id),
             None,
             "cancel map entry should be removed after route"
         );
@@ -487,15 +492,15 @@ mod tests {
     fn remove_also_removes_cancel_map_entry() {
         let router = ResponseRouter::new();
         let downstream_id = RequestId::new(42);
-        let upstream_id = 100i64;
+        let upstream_id = UpstreamId::Number(100);
 
         let _rx = router
-            .register_with_upstream(downstream_id, Some(upstream_id))
+            .register_with_upstream(downstream_id, Some(upstream_id.clone()))
             .expect("should register");
 
         // Verify mapping exists before remove
         assert_eq!(
-            router.lookup_downstream_id(upstream_id),
+            router.lookup_downstream_id(&upstream_id),
             Some(downstream_id)
         );
 
@@ -505,7 +510,7 @@ mod tests {
 
         // Verify mapping is removed
         assert_eq!(
-            router.lookup_downstream_id(upstream_id),
+            router.lookup_downstream_id(&upstream_id),
             None,
             "cancel map entry should be removed after remove"
         );
@@ -517,25 +522,25 @@ mod tests {
         let router = ResponseRouter::new();
 
         let _rx1 = router
-            .register_with_upstream(RequestId::new(1), Some(100))
+            .register_with_upstream(RequestId::new(1), Some(UpstreamId::Number(100)))
             .unwrap();
         let _rx2 = router
-            .register_with_upstream(RequestId::new(2), Some(200))
+            .register_with_upstream(RequestId::new(2), Some(UpstreamId::Number(200)))
             .unwrap();
 
         // Verify mappings exist
-        assert!(router.lookup_downstream_id(100).is_some());
-        assert!(router.lookup_downstream_id(200).is_some());
+        assert!(router.lookup_downstream_id(&UpstreamId::Number(100)).is_some());
+        assert!(router.lookup_downstream_id(&UpstreamId::Number(200)).is_some());
 
         router.fail_all("connection lost");
 
         // Verify mappings are cleared
         assert_eq!(
-            router.lookup_downstream_id(100),
+            router.lookup_downstream_id(&UpstreamId::Number(100)),
             None,
             "cancel map should be cleared by fail_all"
         );
-        assert_eq!(router.lookup_downstream_id(200), None);
+        assert_eq!(router.lookup_downstream_id(&UpstreamId::Number(200)), None);
     }
 
     /// Test that lookup_downstream_id does NOT remove the pending entry.
@@ -551,21 +556,21 @@ mod tests {
     async fn lookup_downstream_id_preserves_pending_entry() {
         let router = ResponseRouter::new();
         let downstream_id = RequestId::new(42);
-        let upstream_id = 100i64;
+        let upstream_id = UpstreamId::Number(100);
 
         let rx = router
-            .register_with_upstream(downstream_id, Some(upstream_id))
+            .register_with_upstream(downstream_id, Some(upstream_id.clone()))
             .expect("should register");
 
         // Verify initial state
         assert_eq!(router.pending_count(), 1);
         assert_eq!(
-            router.lookup_downstream_id(upstream_id),
+            router.lookup_downstream_id(&upstream_id),
             Some(downstream_id)
         );
 
         // Look up the downstream ID (as we would when forwarding a cancel)
-        let looked_up = router.lookup_downstream_id(upstream_id);
+        let looked_up = router.lookup_downstream_id(&upstream_id);
         assert_eq!(looked_up, Some(downstream_id));
 
         // Key assertion: pending entry should still exist after lookup
@@ -609,15 +614,15 @@ mod tests {
     fn cancel_map_entry_persists_after_lookup() {
         let router = ResponseRouter::new();
         let downstream_id = RequestId::new(42);
-        let upstream_id = 100i64;
+        let upstream_id = UpstreamId::Number(100);
 
         let _rx = router
-            .register_with_upstream(downstream_id, Some(upstream_id))
+            .register_with_upstream(downstream_id, Some(upstream_id.clone()))
             .expect("should register");
 
         // Look up the downstream ID multiple times
         for _ in 0..3 {
-            let result = router.lookup_downstream_id(upstream_id);
+            let result = router.lookup_downstream_id(&upstream_id);
             assert_eq!(
                 result,
                 Some(downstream_id),

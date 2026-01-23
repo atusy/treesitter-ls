@@ -9,7 +9,7 @@ use crate::config::settings::BridgeServerConfig;
 use tower_lsp_server::ls_types::Position;
 use url::Url;
 
-use super::super::pool::LanguageServerPool;
+use super::super::pool::{LanguageServerPool, UpstreamId};
 use super::super::protocol::{
     ResponseTransformContext, VirtualDocumentUri, build_bridge_references_request,
     transform_definition_response_to_host,
@@ -37,7 +37,7 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
         include_declaration: bool,
-        upstream_request_id: i64,
+        upstream_request_id: UpstreamId,
     ) -> io::Result<serde_json::Value> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
@@ -54,10 +54,10 @@ impl LanguageServerPool {
 
         // Register request with upstream ID mapping for cancel forwarding
         let (request_id, response_rx) =
-            handle.register_request_with_upstream(Some(upstream_request_id))?;
+            handle.register_request_with_upstream(Some(upstream_request_id.clone()))?;
 
         // Register in the upstream request registry for cancel lookup
-        self.register_upstream_request(upstream_request_id, injection_language);
+        self.register_upstream_request(upstream_request_id.clone(), injection_language);
 
         // Build references request
         let references_request = build_bridge_references_request(
@@ -82,7 +82,7 @@ impl LanguageServerPool {
                 virtual_content,
                 || {
                     handle.router().remove(request_id);
-                    self.unregister_upstream_request(upstream_request_id);
+                    self.unregister_upstream_request(&upstream_request_id);
                 },
             )
             .await?;
@@ -101,7 +101,7 @@ impl LanguageServerPool {
         let response = handle.wait_for_response(request_id, response_rx).await;
 
         // Unregister from the upstream request registry regardless of result
-        self.unregister_upstream_request(upstream_request_id);
+        self.unregister_upstream_request(&upstream_request_id);
 
         // Transform response to host coordinates and URI
         // Reuse transform_definition_response_to_host (same Location[] format per LSP spec)

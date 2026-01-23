@@ -20,6 +20,7 @@ use std::task::{Context, Poll};
 use tower::Service;
 use tower_lsp_server::jsonrpc::{Id, Request, Response};
 
+use super::bridge::UpstreamId;
 use super::bridge::LanguageServerPool;
 
 tokio::task_local! {
@@ -54,9 +55,11 @@ impl CancelForwarder {
     /// Looks up the language from the upstream request registry and forwards
     /// the cancel notification to the appropriate downstream server.
     ///
+    /// Supports both numeric and string request IDs per LSP spec.
+    ///
     /// Returns `Ok(())` if the cancel was forwarded, or an error if the
     /// upstream ID is not found in the registry.
-    pub async fn forward_cancel(&self, upstream_id: i64) -> std::io::Result<()> {
+    pub async fn forward_cancel(&self, upstream_id: UpstreamId) -> std::io::Result<()> {
         self.pool.forward_cancel_by_upstream_id(upstream_id).await
     }
 }
@@ -114,32 +117,43 @@ where
         let request_id = req.id().cloned();
 
         // Check if this is a $/cancelRequest notification and forward to downstream
+        // Per LSP spec, cancel params.id can be either integer or string
         let cancel_forwarder = self.cancel_forwarder.clone();
         if req.method() == "$/cancelRequest"
             && let Some(forwarder) = cancel_forwarder.as_ref()
             && let Some(params) = req.params()
-            && let Some(id_to_cancel) = params.get("id").and_then(|v| v.as_i64())
         {
-            let forwarder = forwarder.clone();
-            // Fire-and-forget: spawn without tracking JoinHandle.
-            //
-            // This is intentional for $/cancelRequest because:
-            // 1. LSP notifications don't expect responses (fire-and-forget by spec)
-            // 2. Cancel is "best effort" - failures are logged but non-fatal
-            // 3. We must not block the main request flow
-            // 4. Graceful shutdown doesn't need to wait for cancels - the downstream
-            //    server will clean up its own state when it shuts down
-            tokio::spawn(async move {
-                if let Err(e) = forwarder.forward_cancel(id_to_cancel).await {
-                    // Log the error but don't fail - cancel forwarding is best-effort
-                    log::debug!(
-                        target: "kakehashi::cancel",
-                        "Failed to forward cancel for request {}: {}",
-                        id_to_cancel,
-                        e
-                    );
-                }
-            });
+            // Extract the ID as either numeric or string (per LSP spec: integer | string)
+            let id_to_cancel = if let Some(n) = params.get("id").and_then(|v| v.as_i64()) {
+                Some(UpstreamId::Number(n))
+            } else if let Some(s) = params.get("id").and_then(|v| v.as_str()) {
+                Some(UpstreamId::String(s.to_string()))
+            } else {
+                None
+            };
+
+            if let Some(upstream_id) = id_to_cancel {
+                let forwarder = forwarder.clone();
+                // Fire-and-forget: spawn without tracking JoinHandle.
+                //
+                // This is intentional for $/cancelRequest because:
+                // 1. LSP notifications don't expect responses (fire-and-forget by spec)
+                // 2. Cancel is "best effort" - failures are logged but non-fatal
+                // 3. We must not block the main request flow
+                // 4. Graceful shutdown doesn't need to wait for cancels - the downstream
+                //    server will clean up its own state when it shuts down
+                tokio::spawn(async move {
+                    if let Err(e) = forwarder.forward_cancel(upstream_id.clone()).await {
+                        // Log the error but don't fail - cancel forwarding is best-effort
+                        log::debug!(
+                            target: "kakehashi::cancel",
+                            "Failed to forward cancel for request {}: {}",
+                            upstream_id,
+                            e
+                        );
+                    }
+                });
+            }
         }
 
         // Call inner service and get the future
