@@ -32,14 +32,8 @@ impl LanguageServerPool {
     /// host to virtual coordinates in the request, and textEdits in the response need
     /// transformation back to host coordinates.
     ///
-    /// # Note on `upstream_request_id`
-    ///
-    /// This parameter is used for $/cancelRequest forwarding. When a cancel notification
-    /// arrives with this ID, we look up the language from the upstream request registry
-    /// and forward the cancel to the appropriate downstream server.
-    ///
-    /// Downstream requests use unique generated IDs (via `register_request_with_upstream()`)
-    /// to avoid ID collisions when multiple downstream servers are active.
+    /// The `upstream_request_id` enables $/cancelRequest forwarding.
+    /// See [`LanguageServerPool::register_upstream_request()`] for the full flow.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_color_presentation_request(
         &self,

@@ -590,14 +590,31 @@ impl LanguageServerPool {
         self.forward_cancel(&language, upstream_id).await
     }
 
-    /// Register an upstream request ID -> language mapping.
+    /// Register an upstream request ID -> language mapping for cancel forwarding.
     ///
-    /// Called when a request is sent to a downstream server to enable
-    /// cancel forwarding. The mapping is cleaned up when the response is received.
+    /// Called when a request is sent to a downstream server to enable $/cancelRequest
+    /// forwarding. When a cancel notification arrives from the client with the upstream ID,
+    /// we use this mapping to route the cancel to the correct downstream language server.
+    ///
+    /// # Cancel Forwarding Flow
+    ///
+    /// 1. Client sends request with ID 42
+    /// 2. Bridge creates downstream request with ID 7 and calls this method
+    /// 3. Client sends `$/cancelRequest { id: 42 }`
+    /// 4. Bridge looks up 42 in registry → finds "lua"
+    /// 5. Bridge looks up 42 in ResponseRouter → finds downstream ID 7
+    /// 6. Bridge sends `$/cancelRequest { id: 7 }` to lua-language-server
+    ///
+    /// # Cleanup
+    ///
+    /// Callers MUST call `unregister_upstream_request()` when the request completes
+    /// (whether success, error, or timeout). This is typically done:
+    /// - After `wait_for_response()` returns
+    /// - In error cleanup callbacks passed to `ensure_document_opened()`
     ///
     /// # Arguments
-    /// * `upstream_id` - The request ID from the upstream client
-    /// * `language` - The language of the downstream server
+    /// * `upstream_id` - The original request ID from the upstream client
+    /// * `language` - The language of the downstream server handling this request
     pub(crate) fn register_upstream_request(&self, upstream_id: i64, language: &str) {
         let mut registry = self
             .upstream_request_registry
