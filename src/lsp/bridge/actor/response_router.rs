@@ -205,10 +205,24 @@ impl ResponseRouter {
 
     /// Fail all pending requests with an internal error response.
     ///
-    /// Called when the connection fails (e.g., reader task panic) to ensure
-    /// all waiters receive a response per LSP guarantee.
+    /// Called when the connection fails (e.g., reader task panic, liveness timeout)
+    /// to ensure all waiters receive a response per LSP guarantee.
     ///
-    /// Also clears both cancel map directions since all requests are being completed.
+    /// # Cancel Map Cleanup
+    ///
+    /// This method clears both cancel map directions (upstream_to_downstream and
+    /// downstream_to_upstream) since all requests are being completed.
+    ///
+    /// Note: The `LanguageServerPool.upstream_request_registry` (which maps upstream
+    /// ID -> language) is NOT cleared by this method because:
+    /// 1. The ResponseRouter doesn't have access to the pool
+    /// 2. Stale entries are harmless - `forward_cancel_by_upstream_id()` checks
+    ///    connection state before forwarding, so stale entries fail gracefully
+    /// 3. Entries are cleaned up when new requests reuse the same upstream IDs
+    ///
+    /// This is an intentional design tradeoff: keeping the registry separate from
+    /// the per-connection router simplifies the architecture at the cost of
+    /// temporarily stale entries that have no runtime impact.
     pub(crate) fn fail_all(&self, error_message: &str) {
         let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         let entries: Vec<_> = pending.drain().collect();

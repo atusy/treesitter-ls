@@ -130,6 +130,20 @@ pub struct LanguageServerPool {
     /// When a request is sent to a downstream server, we record the mapping so that
     /// when a $/cancelRequest notification arrives with the upstream ID, we can look up
     /// which language server to forward it to.
+    ///
+    /// # Cleanup Behavior
+    ///
+    /// Entries are cleaned up via `unregister_upstream_request()` when:
+    /// - A response is received (normal completion)
+    /// - A request fails before being sent
+    ///
+    /// Note: When a connection fails (via `ResponseRouter::fail_all()`), entries in
+    /// this registry are NOT automatically cleaned up because the ResponseRouter
+    /// doesn't have access to the pool. This is intentional:
+    /// - Stale entries are harmless (`forward_cancel_by_upstream_id()` checks
+    ///   connection state and fails gracefully for stale entries)
+    /// - Entries are cleaned up when new requests reuse the same upstream IDs
+    /// - This keeps the architecture simpler by avoiding circular dependencies
     upstream_request_registry: std::sync::Mutex<HashMap<i64, String>>,
     /// Metrics for cancel forwarding observability.
     cancel_metrics: CancelForwardingMetrics,
