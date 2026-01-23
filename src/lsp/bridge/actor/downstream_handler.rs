@@ -36,9 +36,12 @@ use super::{DownstreamMessage, DownstreamNotification};
 /// The handle wraps a supervisor task that monitors the handler for panics.
 /// If the handler panics, the supervisor logs the error at ERROR level.
 ///
-/// Dropping this handle will cause the channel sender to be orphaned,
-/// which will eventually terminate the handler loop when the last
-/// sender is dropped.
+/// The lifetime of the handler task is tied to the downstream channel:
+/// it runs until the `mpsc::Receiver<DownstreamMessage>` is closed, which
+/// typically happens when all corresponding senders are dropped.
+/// Dropping this handle does not affect the channel or stop the handler; it
+/// only drops (and thus detaches) the supervisor `JoinHandle`, so the
+/// supervisor's completion is no longer observed.
 ///
 /// # Note on Supervisor Panics
 ///
