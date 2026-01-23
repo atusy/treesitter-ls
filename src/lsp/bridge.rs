@@ -20,6 +20,7 @@ mod text_document;
 
 // Re-export public types
 pub(crate) use coordinator::BridgeCoordinator;
+pub(crate) use coordinator::ResolvedServerConfig;
 pub use pool::LanguageServerPool;
 pub use pool::UpstreamId;
 

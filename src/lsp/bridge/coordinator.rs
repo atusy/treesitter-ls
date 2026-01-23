@@ -22,6 +22,25 @@ use crate::language::region_id_tracker::{EditInfo, RegionIdTracker};
 
 use super::LanguageServerPool;
 
+/// Resolved server configuration with server name.
+///
+/// Wraps `BridgeServerConfig` with the server name from the config key.
+/// This enables server-name-based pooling where multiple languages can
+/// share the same language server process (e.g., ts and tsx using tsgo).
+///
+/// # Design Rationale
+///
+/// Created during the language-to-server-name pooling migration to carry
+/// both the server name (for connection lookup) and the config (for server
+/// spawning) through the system.
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedServerConfig {
+    /// The server name from the languageServers config key (e.g., "tsgo", "rust-analyzer")
+    pub(crate) server_name: String,
+    /// The server configuration (cmd, languages, initialization_options, etc.)
+    pub(crate) config: BridgeServerConfig,
+}
+
 /// Coordinator for bridge connections and region ID tracking.
 ///
 /// Consolidates the `LanguageServerPool` and `RegionIdTracker` into a single
@@ -103,7 +122,10 @@ impl BridgeCoordinator {
     /// Get bridge server config for a given injection language from settings.
     ///
     /// Looks up the bridge.servers configuration and finds a server that handles
-    /// the specified language. Returns None if:
+    /// the specified language. Returns `ResolvedServerConfig` which includes both
+    /// the server name (for connection pooling) and the config (for spawning).
+    ///
+    /// Returns None if:
     /// - No server is configured for this injection language, OR
     /// - The host language has a bridge filter that excludes this injection language
     ///
@@ -120,7 +142,7 @@ impl BridgeCoordinator {
         settings: &WorkspaceSettings,
         host_language: &str,
         injection_language: &str,
-    ) -> Option<BridgeServerConfig> {
+    ) -> Option<ResolvedServerConfig> {
         // Use wildcard resolution for host language lookup (ADR-0011)
         // This allows languages._ to define default bridge filters
         if let Some(host_settings) =
@@ -151,7 +173,10 @@ impl BridgeCoordinator {
                     resolve_language_server_with_wildcard(servers, server_name)
                         .filter(|c| c.languages.iter().any(|l| l == injection_language))
                 {
-                    return Some(resolved_config);
+                    return Some(ResolvedServerConfig {
+                        server_name: server_name.clone(),
+                        config: resolved_config,
+                    });
                 }
             }
         }
@@ -326,7 +351,9 @@ mod tests {
             result.is_some(),
             "rust should be allowed when no filter is set"
         );
-        assert_eq!(result.unwrap().cmd, vec!["rust-analyzer".to_string()]);
+        let resolved = result.unwrap();
+        assert_eq!(resolved.server_name, "rust-analyzer");
+        assert_eq!(resolved.config.cmd, vec!["rust-analyzer".to_string()]);
     }
 
     #[test]

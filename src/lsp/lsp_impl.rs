@@ -446,6 +446,9 @@ impl Kakehashi {
     /// Get bridge server config for a given injection language from settings.
     ///
     /// Convenience wrapper that loads settings and delegates to the bridge coordinator.
+    /// Returns `ResolvedServerConfig` which includes both the server name (for connection
+    /// pooling) and the config (for spawning).
+    ///
     /// This method stays in Kakehashi for backward compatibility with handlers.
     ///
     /// # Arguments
@@ -455,7 +458,7 @@ impl Kakehashi {
         &self,
         host_language: &str,
         injection_language: &str,
-    ) -> Option<crate::config::settings::BridgeServerConfig> {
+    ) -> Option<crate::lsp::bridge::ResolvedServerConfig> {
         let settings = self.settings_manager.load_settings();
         self.bridge
             .get_config_for_language(&settings, host_language, injection_language)

@@ -82,7 +82,7 @@ impl Kakehashi {
         for resolved in all_regions {
             // Get bridge server config for this language
             // The bridge filter is checked inside get_bridge_config_for_language
-            let Some(server_config) =
+            let Some(resolved_config) =
                 self.get_bridge_config_for_language(&language_name, &resolved.injection_language)
             else {
                 continue; // No bridge configured for this language
@@ -93,7 +93,7 @@ impl Kakehashi {
                 .bridge
                 .pool()
                 .send_document_color_request(
-                    &server_config,
+                    &resolved_config.config,
                     &uri,
                     &resolved.injection_language,
                     &resolved.region.region_id,
