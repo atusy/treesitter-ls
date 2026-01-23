@@ -225,15 +225,14 @@ impl CacheCoordinator {
                     // complexity for negligible performance gain.
                     //
                     // Skip this check entirely if no existing regions (first document open)
-                    if let Some(ref map) = existing_by_id {
-                        if let Some(old) = map.get(region_id.as_str()) {
+                    if let Some(ref map) = existing_by_id
+                        && let Some(old) = map.get(region_id.as_str()) {
                             let content_changed = old.content_hash != new_region.content_hash;
                             let language_changed = old.language != new_region.language;
                             if content_changed || language_changed {
                                 self.injection_token_cache.remove(uri, &region_id);
                             }
                         }
-                    }
 
                     new_region
                 })
