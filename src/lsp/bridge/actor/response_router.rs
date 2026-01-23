@@ -40,25 +40,35 @@ use super::super::protocol::RequestId;
 /// let response = rx.await?;  // Wait without holding Mutex
 /// ```
 pub(crate) struct ResponseRouter {
-    pending: std::sync::Mutex<HashMap<RequestId, oneshot::Sender<serde_json::Value>>>,
+    /// All router state protected by a single mutex to avoid lock contention
+    /// and simplify reasoning about thread safety.
+    state: std::sync::Mutex<ResponseRouterState>,
+}
+
+/// Internal state for ResponseRouter, protected by a single mutex.
+struct ResponseRouterState {
+    /// Pending requests waiting for responses.
+    pending: HashMap<RequestId, oneshot::Sender<serde_json::Value>>,
     /// Maps upstream request ID (from client) to downstream request ID (to LS).
     ///
     /// Used for $/cancelRequest forwarding: when the client cancels request 42,
     /// we look up that 42 maps to downstream ID 7, and forward the cancel to LS.
-    upstream_to_downstream: std::sync::Mutex<HashMap<i64, RequestId>>,
+    upstream_to_downstream: HashMap<i64, RequestId>,
     /// Reverse mapping: downstream request ID -> upstream request ID.
     ///
     /// Enables O(1) cleanup when a response is routed or a request is removed.
-    downstream_to_upstream: std::sync::Mutex<HashMap<RequestId, i64>>,
+    downstream_to_upstream: HashMap<RequestId, i64>,
 }
 
 impl ResponseRouter {
     /// Create a new empty ResponseRouter.
     pub(crate) fn new() -> Self {
         Self {
-            pending: std::sync::Mutex::new(HashMap::new()),
-            upstream_to_downstream: std::sync::Mutex::new(HashMap::new()),
-            downstream_to_upstream: std::sync::Mutex::new(HashMap::new()),
+            state: std::sync::Mutex::new(ResponseRouterState {
+                pending: HashMap::new(),
+                upstream_to_downstream: HashMap::new(),
+                downstream_to_upstream: HashMap::new(),
+            }),
         }
     }
 
@@ -89,27 +99,19 @@ impl ResponseRouter {
         upstream_id: Option<i64>,
     ) -> Option<oneshot::Receiver<serde_json::Value>> {
         let (tx, rx) = oneshot::channel();
-        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
         // Prevent duplicate registration
-        if pending.contains_key(&downstream_id) {
+        if state.pending.contains_key(&downstream_id) {
             return None;
         }
 
-        pending.insert(downstream_id, tx);
+        state.pending.insert(downstream_id, tx);
 
         // Store bidirectional mapping if upstream_id is provided
         if let Some(upstream) = upstream_id {
-            let mut up_to_down = self
-                .upstream_to_downstream
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            let mut down_to_up = self
-                .downstream_to_upstream
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            up_to_down.insert(upstream, downstream_id);
-            down_to_up.insert(downstream_id, upstream);
+            state.upstream_to_downstream.insert(upstream, downstream_id);
+            state.downstream_to_upstream.insert(downstream_id, upstream);
         }
 
         Some(rx)
@@ -122,11 +124,8 @@ impl ResponseRouter {
     ///
     /// Returns `None` if no mapping exists (request not found or already completed).
     pub(crate) fn lookup_downstream_id(&self, upstream_id: i64) -> Option<RequestId> {
-        let up_to_down = self
-            .upstream_to_downstream
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        up_to_down.get(&upstream_id).copied()
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.upstream_to_downstream.get(&upstream_id).copied()
     }
 
     /// Route a response to its pending request.
@@ -144,13 +143,12 @@ impl ResponseRouter {
             None => return false, // Not a response (notification), skip
         };
 
-        let tx = {
-            let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-            pending.remove(&id)
-        };
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+
+        let tx = state.pending.remove(&id);
 
         // Clean up bidirectional cancel map entries in O(1)
-        self.remove_cancel_mapping(id);
+        Self::remove_cancel_mapping_inner(&mut state, id);
 
         match tx {
             Some(sender) => sender.send(response).is_ok(),
@@ -162,17 +160,11 @@ impl ResponseRouter {
     ///
     /// O(1) cleanup: looks up upstream ID via downstream_to_upstream, then removes
     /// both directions.
-    fn remove_cancel_mapping(&self, downstream_id: RequestId) {
-        let mut down_to_up = self
-            .downstream_to_upstream
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some(upstream_id) = down_to_up.remove(&downstream_id) {
-            let mut up_to_down = self
-                .upstream_to_downstream
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            up_to_down.remove(&upstream_id);
+    ///
+    /// Note: This is an internal helper that requires the caller to hold the lock.
+    fn remove_cancel_mapping_inner(state: &mut ResponseRouterState, downstream_id: RequestId) {
+        if let Some(upstream_id) = state.downstream_to_upstream.remove(&downstream_id) {
+            state.upstream_to_downstream.remove(&upstream_id);
         }
     }
 
@@ -182,8 +174,8 @@ impl ResponseRouter {
     /// - Timer starts when pending transitions 0 -> 1
     /// - Timer stops when pending transitions to 0
     pub(crate) fn pending_count(&self) -> usize {
-        let pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-        pending.len()
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.pending.len()
     }
 
     /// Remove a pending request without sending a response.
@@ -193,11 +185,11 @@ impl ResponseRouter {
     ///
     /// Returns `true` if the request was removed, `false` if it wasn't pending.
     pub(crate) fn remove(&self, id: RequestId) -> bool {
-        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-        let removed = pending.remove(&id).is_some();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let removed = state.pending.remove(&id).is_some();
 
         if removed {
-            self.remove_cancel_mapping(id);
+            Self::remove_cancel_mapping_inner(&mut state, id);
         }
 
         removed
@@ -224,22 +216,15 @@ impl ResponseRouter {
     /// the per-connection router simplifies the architecture at the cost of
     /// temporarily stale entries that have no runtime impact.
     pub(crate) fn fail_all(&self, error_message: &str) {
-        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-        let entries: Vec<_> = pending.drain().collect();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let entries: Vec<_> = state.pending.drain().collect();
 
         // Clear both cancel map directions
-        {
-            let mut up_to_down = self
-                .upstream_to_downstream
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            let mut down_to_up = self
-                .downstream_to_upstream
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            up_to_down.clear();
-            down_to_up.clear();
-        }
+        state.upstream_to_downstream.clear();
+        state.downstream_to_upstream.clear();
+
+        // Release lock before sending to avoid holding it during channel operations
+        drop(state);
 
         for (id, tx) in entries {
             let error_response = serde_json::json!({
