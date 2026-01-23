@@ -39,6 +39,13 @@ use super::{DownstreamMessage, DownstreamNotification};
 /// Dropping this handle will cause the channel sender to be orphaned,
 /// which will eventually terminate the handler loop when the last
 /// sender is dropped.
+///
+/// # Note on Supervisor Panics
+///
+/// The supervisor itself has minimal logic (await + log) and is designed to be
+/// infallible. In the extremely unlikely event that the supervisor panics
+/// (e.g., logger poisoned), that panic would not be observed since no task
+/// awaits the supervisor's JoinHandle.
 pub(crate) struct DownstreamHandlerHandle {
     /// Join handle for the supervisor task (which monitors the handler task).
     _supervisor_handle: JoinHandle<()>,
@@ -73,15 +80,7 @@ pub(crate) fn spawn_downstream_handler(
                 );
             }
             Err(e) if e.is_panic() => {
-                // Extract panic payload for logging
-                let panic_info = e.into_panic();
-                let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-                    (*s).to_string()
-                } else if let Some(s) = panic_info.downcast_ref::<String>() {
-                    s.clone()
-                } else {
-                    "unknown panic payload".to_string()
-                };
+                let panic_msg = extract_panic_message(e.into_panic());
                 error!(
                     target: "kakehashi::bridge::downstream_handler",
                     "Downstream handler PANICKED: {}",
@@ -105,6 +104,9 @@ pub(crate) fn spawn_downstream_handler(
 }
 
 /// The main handler loop - receives and processes downstream messages.
+///
+/// Exits when all senders are dropped (channel closed). The supervisor task
+/// logs the exit, so no logging is done here to avoid duplication.
 async fn handler_loop(mut rx: mpsc::Receiver<DownstreamMessage>, client: Client) {
     while let Some(message) = rx.recv().await {
         match message {
@@ -113,11 +115,7 @@ async fn handler_loop(mut rx: mpsc::Receiver<DownstreamMessage>, client: Client)
             }
         }
     }
-
-    debug!(
-        target: "kakehashi::bridge::downstream_handler",
-        "Downstream handler loop exited (channel closed)"
-    );
+    // Exit is logged by the supervisor task
 }
 
 /// Handle a notification from a downstream language server.
@@ -218,6 +216,23 @@ fn prefix_progress_token(mut params: Value, server_name: &str) -> Option<Value> 
     Some(params)
 }
 
+/// Extract a human-readable message from a panic payload.
+///
+/// Handles the two common panic types:
+/// - `&'static str` from `panic!("literal")`
+/// - `String` from `panic!("{}", formatted)`
+///
+/// Returns "unknown panic payload" for other types.
+fn extract_panic_message(panic_info: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = panic_info.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = panic_info.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic payload".to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,5 +324,107 @@ mod tests {
                 assert_eq!(n.notification["method"], "$/progress");
             }
         }
+    }
+
+    // ========================================================================
+    // Panic extraction tests
+    // ========================================================================
+
+    #[test]
+    fn extract_panic_message_from_str_literal() {
+        // Simulates panic!("literal string")
+        let result = std::panic::catch_unwind(|| {
+            panic!("test panic message");
+        });
+
+        let panic_payload = result.unwrap_err();
+        let msg = extract_panic_message(panic_payload);
+
+        assert_eq!(msg, "test panic message");
+    }
+
+    #[test]
+    fn extract_panic_message_from_formatted_string() {
+        // Simulates panic!("{}", formatted)
+        let value = 42;
+        let result = std::panic::catch_unwind(|| {
+            panic!("error code: {}", value);
+        });
+
+        let panic_payload = result.unwrap_err();
+        let msg = extract_panic_message(panic_payload);
+
+        assert_eq!(msg, "error code: 42");
+    }
+
+    #[test]
+    fn extract_panic_message_from_unknown_type() {
+        // Simulates std::panic::panic_any with a custom type
+        let result = std::panic::catch_unwind(|| {
+            std::panic::panic_any(123i32); // Panic with an integer
+        });
+
+        let panic_payload = result.unwrap_err();
+        let msg = extract_panic_message(panic_payload);
+
+        assert_eq!(msg, "unknown panic payload");
+    }
+
+    // ========================================================================
+    // Supervisor behavior tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn supervisor_completes_when_handler_task_panics() {
+        // Spawn a task that panics
+        let handler_handle = tokio::spawn(async {
+            panic!("intentional test panic");
+        });
+
+        // Simulate supervisor behavior: await the handle
+        let result = handler_handle.await;
+
+        // Verify we can detect and extract the panic
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.is_panic());
+
+        let panic_msg = extract_panic_message(err.into_panic());
+        assert_eq!(panic_msg, "intentional test panic");
+    }
+
+    #[tokio::test]
+    async fn supervisor_completes_when_handler_task_exits_normally() {
+        // Spawn a task that exits normally
+        let handler_handle = tokio::spawn(async {
+            // Normal completion
+        });
+
+        // Await the handle
+        let result = handler_handle.await;
+
+        // Should complete successfully
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn supervisor_detects_cancelled_task() {
+        // Spawn a task that will be aborted
+        let handler_handle = tokio::spawn(async {
+            // Sleep forever (will be aborted)
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+
+        // Abort the task
+        handler_handle.abort();
+
+        // Await the handle
+        let result = handler_handle.await;
+
+        // Should be cancelled, not panic
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.is_cancelled());
+        assert!(!err.is_panic());
     }
 }
