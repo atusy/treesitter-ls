@@ -21,7 +21,7 @@
 //! - Phase 1: `textDocument/publishDiagnostics` with URI/position transformation
 //! - Phase 5: `window/showMessage`, `window/logMessage`
 
-use log::{debug, warn};
+use log::{debug, error, warn};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -33,32 +33,74 @@ use super::{DownstreamMessage, DownstreamNotification};
 
 /// Handle to a running DownstreamMessageHandler task.
 ///
+/// The handle wraps a supervisor task that monitors the handler for panics.
+/// If the handler panics, the supervisor logs the error at ERROR level.
+///
 /// Dropping this handle will cause the channel sender to be orphaned,
 /// which will eventually terminate the handler loop when the last
 /// sender is dropped.
 pub(crate) struct DownstreamHandlerHandle {
-    /// Join handle for the spawned handler task.
-    _join_handle: JoinHandle<()>,
+    /// Join handle for the supervisor task (which monitors the handler task).
+    _supervisor_handle: JoinHandle<()>,
 }
 
-/// Spawn a downstream message handler task.
+/// Spawn a downstream message handler task with supervisor.
 ///
 /// The handler receives notifications from the channel and forwards them
-/// to the client with appropriate transformations.
+/// to the client with appropriate transformations. A supervisor task monitors
+/// the handler and logs any panics at ERROR level.
 ///
 /// # Arguments
 /// * `rx` - The receiving end of the downstream message channel
 /// * `client` - The LSP client for sending notifications
 ///
 /// # Returns
-/// A handle to the spawned handler task.
+/// A handle to the spawned supervisor task.
 pub(crate) fn spawn_downstream_handler(
     rx: mpsc::Receiver<DownstreamMessage>,
     client: Client,
 ) -> DownstreamHandlerHandle {
-    let join_handle = tokio::spawn(handler_loop(rx, client));
+    // Spawn the actual handler task
+    let handler_handle = tokio::spawn(handler_loop(rx, client));
+
+    // Spawn a supervisor that awaits the handler and logs panics
+    let supervisor_handle = tokio::spawn(async move {
+        match handler_handle.await {
+            Ok(()) => {
+                debug!(
+                    target: "kakehashi::bridge::downstream_handler",
+                    "Downstream handler exited normally"
+                );
+            }
+            Err(e) if e.is_panic() => {
+                // Extract panic payload for logging
+                let panic_info = e.into_panic();
+                let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                    (*s).to_string()
+                } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic payload".to_string()
+                };
+                error!(
+                    target: "kakehashi::bridge::downstream_handler",
+                    "Downstream handler PANICKED: {}",
+                    panic_msg
+                );
+            }
+            Err(e) => {
+                // Task was cancelled (e.g., via abort())
+                warn!(
+                    target: "kakehashi::bridge::downstream_handler",
+                    "Downstream handler was cancelled: {}",
+                    e
+                );
+            }
+        }
+    });
+
     DownstreamHandlerHandle {
-        _join_handle: join_handle,
+        _supervisor_handle: supervisor_handle,
     }
 }
 
