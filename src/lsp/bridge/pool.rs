@@ -311,25 +311,22 @@ impl LanguageServerPool {
     /// Sends didOpen if this is the first request for the document.
     /// Returns error if another request is in the process of opening (race condition).
     ///
-    /// The `cleanup_on_error` closure is called before returning error to clean up resources.
+    /// Callers are responsible for cleanup on error (removing router entry and
+    /// unregistering from upstream request registry).
     ///
     /// # Decision Logic
     ///
     /// Uses `DocumentOpenDecision` to determine action:
     /// - `SendDidOpen`: Send didOpen notification, mark as opened
     /// - `AlreadyOpened`: Skip (no-op), document was already opened
-    /// - `PendingError`: Race condition, call cleanup and return error
-    pub(crate) async fn ensure_document_opened<F>(
+    /// - `PendingError`: Race condition, return error
+    pub(crate) async fn ensure_document_opened(
         &self,
         writer: &mut SplitConnectionWriter,
         host_uri: &Url,
         virtual_uri: &VirtualDocumentUri,
         virtual_content: &str,
-        cleanup_on_error: F,
-    ) -> io::Result<()>
-    where
-        F: FnOnce(),
-    {
+    ) -> io::Result<()> {
         match self
             .document_tracker
             .document_open_decision(host_uri, virtual_uri)
@@ -337,20 +334,14 @@ impl LanguageServerPool {
         {
             DocumentOpenDecision::SendDidOpen => {
                 let did_open = build_bridge_didopen_notification(virtual_uri, virtual_content);
-                if let Err(e) = writer.write_message(&did_open).await {
-                    cleanup_on_error();
-                    return Err(e);
-                }
+                writer.write_message(&did_open).await?;
                 self.document_tracker.mark_document_opened(virtual_uri);
                 Ok(())
             }
             DocumentOpenDecision::AlreadyOpened => Ok(()),
-            DocumentOpenDecision::PendingError => {
-                cleanup_on_error();
-                Err(io::Error::other(
-                    "bridge: document not yet opened (didOpen pending)",
-                ))
-            }
+            DocumentOpenDecision::PendingError => Err(io::Error::other(
+                "bridge: document not yet opened (didOpen pending)",
+            )),
         }
     }
 
@@ -1359,8 +1350,8 @@ mod tests {
     // Decision logic unit tests (DocumentOpenDecision) live in document_tracker.rs.
     // These integration tests verify ensure_document_opened I/O behavior:
     // - Writing didOpen notification to downstream
-    // - Cleanup callback invocation on error
     // - Post-condition: document marked as opened
+    // Note: Cleanup on error is now the caller's responsibility.
 
     /// Test that ensure_document_opened sends didOpen when document is not yet opened.
     ///
@@ -1392,31 +1383,13 @@ mod tests {
             "Document should not be opened initially"
         );
 
-        // Track if cleanup was called (should NOT be called in happy path)
-        let cleanup_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let cleanup_called_clone = cleanup_called.clone();
-
         // Call ensure_document_opened
         let result = pool
-            .ensure_document_opened(
-                &mut writer,
-                &host_uri,
-                &virtual_uri,
-                virtual_content,
-                move || {
-                    cleanup_called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
-                },
-            )
+            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content)
             .await;
 
         // Should succeed
         assert!(result.is_ok(), "ensure_document_opened should succeed");
-
-        // Cleanup should NOT have been called
-        assert!(
-            !cleanup_called.load(std::sync::atomic::Ordering::SeqCst),
-            "Cleanup callback should NOT be called in happy path"
-        );
 
         // After ensure_document_opened, document should be marked as opened
         assert!(
@@ -1461,33 +1434,15 @@ mod tests {
 
         let (mut writer, _reader) = conn.split();
 
-        // Track if cleanup was called (should NOT be called)
-        let cleanup_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let cleanup_called_clone = cleanup_called.clone();
-
         // Call ensure_document_opened - should skip didOpen
         let result = pool
-            .ensure_document_opened(
-                &mut writer,
-                &host_uri,
-                &virtual_uri,
-                virtual_content,
-                move || {
-                    cleanup_called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
-                },
-            )
+            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content)
             .await;
 
         // Should succeed (just skips didOpen)
         assert!(
             result.is_ok(),
             "ensure_document_opened should succeed for already opened document"
-        );
-
-        // Cleanup should NOT have been called
-        assert!(
-            !cleanup_called.load(std::sync::atomic::Ordering::SeqCst),
-            "Cleanup callback should NOT be called when document already opened"
         );
 
         // Document should still be marked as opened
@@ -1505,9 +1460,9 @@ mod tests {
     /// - is_document_opened returns false (not yet marked)
     /// This is a race condition where didOpen is pending.
     ///
-    /// Expected behavior: cleanup_on_error is called, returns error.
+    /// Expected behavior: returns error (caller is responsible for cleanup).
     #[tokio::test]
-    async fn ensure_document_opened_returns_error_and_calls_cleanup_for_pending_didopen() {
+    async fn ensure_document_opened_returns_error_for_pending_didopen() {
         use super::super::protocol::VirtualDocumentUri;
 
         let pool = LanguageServerPool::new();
@@ -1543,21 +1498,9 @@ mod tests {
 
         let (mut writer, _reader) = conn.split();
 
-        // Track cleanup calls with counter to verify called exactly once
-        let cleanup_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let cleanup_count_clone = cleanup_count.clone();
-
-        // Call ensure_document_opened - should fail and call cleanup
+        // Call ensure_document_opened - should fail
         let result = pool
-            .ensure_document_opened(
-                &mut writer,
-                &host_uri,
-                &virtual_uri,
-                virtual_content,
-                move || {
-                    cleanup_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                },
-            )
+            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content)
             .await;
 
         // Should return error
@@ -1572,13 +1515,6 @@ mod tests {
             err.to_string().contains("didOpen pending"),
             "Error message should mention didOpen pending: {}",
             err
-        );
-
-        // CRITICAL: Cleanup callback MUST be called exactly once
-        assert_eq!(
-            cleanup_count.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "Cleanup callback must be called exactly once for pending didOpen error"
         );
 
         // Document should still NOT be marked as opened

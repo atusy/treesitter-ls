@@ -83,23 +83,28 @@ impl LanguageServerPool {
         );
 
         // Send messages while holding writer lock, then release
+        // Use a closure for cleanup on any failure path
+        let cleanup = || {
+            handle.router().remove(request_id);
+            self.unregister_upstream_request(&upstream_request_id);
+        };
+
         {
             let mut writer = handle.writer().await;
 
             // Send didOpen notification only if document hasn't been opened yet
-            self.ensure_document_opened(
-                &mut writer,
-                host_uri,
-                &virtual_uri,
-                virtual_content,
-                || {
-                    handle.router().remove(request_id);
-                    self.unregister_upstream_request(&upstream_request_id);
-                },
-            )
-            .await?;
+            if let Err(e) = self
+                .ensure_document_opened(&mut writer, host_uri, &virtual_uri, virtual_content)
+                .await
+            {
+                cleanup();
+                return Err(e);
+            }
 
-            writer.write_message(&request).await?;
+            if let Err(e) = writer.write_message(&request).await {
+                cleanup();
+                return Err(e);
+            }
         } // writer lock released here
 
         // Build transformation context for response handling
