@@ -27,7 +27,7 @@
 //! - Semantic token operations (get, store)
 //! - Request tracking (start, is_active, finish, cancel)
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use tower_lsp_server::ls_types::SemanticTokens;
 use tree_sitter::{InputEdit, Tree};
@@ -191,7 +191,7 @@ impl CacheCoordinator {
             let existing_regions = self.injection_map.get(uri);
 
             // Build lookup map for existing regions by region_id
-            let existing_by_id: std::collections::HashMap<&str, &CacheableInjectionRegion> =
+            let existing_by_id: HashMap<&str, &CacheableInjectionRegion> =
                 existing_regions
                     .as_ref()
                     .map(|regions| {
