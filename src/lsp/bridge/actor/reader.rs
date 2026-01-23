@@ -582,12 +582,18 @@ fn handle_message(
                 }
             }
         } else {
-            // No channel configured - log and skip (legacy behavior for tests)
+            // Missing channel or server name - log and skip (legacy behavior for tests)
+            let reason = match (downstream_tx.is_some(), server_name.is_some()) {
+                (false, _) => "no downstream channel",
+                (true, false) => "no server name",
+                (true, true) => unreachable!(),
+            };
             debug!(
                 target: "kakehashi::bridge::reader",
-                "{}Received notification: {}, skipping (no downstream channel)",
+                "{}Received notification: {}, skipping ({})",
                 lang_prefix,
-                method.as_deref().unwrap_or("unknown")
+                method.as_deref().unwrap_or("unknown"),
+                reason
             );
         }
     }
