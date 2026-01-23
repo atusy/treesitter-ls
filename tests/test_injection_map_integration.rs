@@ -111,7 +111,7 @@ def foo():
     );
     assert!(
         !lua_region.region_id.is_empty(),
-        "Lua region should have a result_id"
+        "Lua region should have a region_id"
     );
 
     // Verify the second region (python)
@@ -688,8 +688,8 @@ def foo():
             .is_some()
     );
 
-    // Save the old python result_id for later check
-    let old_python_result_id = python_region.region_id.clone();
+    // Save the old python region_id for later check
+    let old_python_region_id = python_region.region_id.clone();
 
     // Now simulate removing the python code block (structural change)
     let edited_text = r#"# Example
@@ -714,10 +714,10 @@ Some text instead of python block.
             Some(&injection_query),
         ) {
             // Convert to cacheable for comparison
-            let new_result_ids: std::collections::HashSet<_> = new_region_infos
+            let new_byte_ranges: std::collections::HashSet<_> = new_region_infos
                 .iter()
                 .map(|info| {
-                    // We need to match by byte_range since result_id will be new
+                    // We need to match by byte_range since region_id will be new
                     (info.content_node.start_byte(), info.content_node.end_byte())
                 })
                 .collect();
@@ -725,7 +725,7 @@ Some text instead of python block.
             // Old regions that don't match any new region should have cache cleared
             for old_region in &old_regions {
                 let old_key = (old_region.byte_range.start, old_region.byte_range.end);
-                if !new_result_ids.contains(&old_key) {
+                if !new_byte_ranges.contains(&old_key) {
                     injection_token_cache.remove(&uri, &old_region.region_id);
                 }
             }
@@ -754,15 +754,15 @@ Some text instead of python block.
     // Note: This tests the expected behavior - implementation may vary
     assert!(
         injection_token_cache
-            .get(&uri, &old_python_result_id)
+            .get(&uri, &old_python_region_id)
             .is_none(),
         "Removed python region cache should be cleared"
     );
 
     // Lua cache is still there (lua region wasn't removed)
-    // Note: In reality, the lua result_id changes after re-population since
-    // populate_injection_map generates new result_ids. So this assertion
-    // checks the OLD result_id which should still be in cache until explicit removal.
+    // Note: In reality, the lua region_id changes after re-population since
+    // populate_injection_map generates new region_ids. So this assertion
+    // checks the OLD region_id which should still be in cache until explicit removal.
     // The implementation might need to handle this differently.
 }
 
@@ -770,10 +770,10 @@ Some text instead of python block.
 // AC3 (PBI-084): Stable region IDs preserve cache across parses
 // ===========================================================================
 
-/// Helper that preserves result_ids for unchanged injection regions.
+/// Helper that preserves region_ids for unchanged injection regions.
 ///
-/// This is the key optimization: instead of always generating new result_ids,
-/// we match existing regions by (language, byte_range) and preserve their IDs.
+/// This is the key optimization: instead of always generating new region_ids,
+/// we match existing regions by (language, content_hash) and preserve their IDs.
 fn populate_injection_map_with_stable_ids(
     injection_map: &InjectionMap,
     uri: &Url,
@@ -808,7 +808,7 @@ fn populate_injection_map_with_stable_ids(
             })
             .unwrap_or_default();
 
-    // Convert to CacheableInjectionRegion, reusing result_ids where possible
+    // Convert to CacheableInjectionRegion, reusing region_ids where possible
     let cacheable_regions: Vec<CacheableInjectionRegion> = regions
         .iter()
         .map(|info| {
@@ -844,7 +844,7 @@ fn test_stable_region_id_preserved_after_edit_outside_injection() {
     // AC3 (PBI-084): After edit outside injection, region_id for unchanged injection is preserved
     //
     // This is the key optimization: when editing host text (not touching injections),
-    // the injection regions retain their result_ids, enabling cache hits.
+    // the injection regions retain their region_ids, enabling cache hits.
 
     let injection_map = InjectionMap::new();
     let uri = Url::parse("file:///test/stable_ids.md").unwrap();
@@ -884,7 +884,7 @@ Footer text
 
     let initial_regions = injection_map.get(&uri).expect("should have regions");
     assert_eq!(initial_regions.len(), 1, "Should have one lua region");
-    let initial_result_id = initial_regions[0].region_id.clone();
+    let initial_region_id = initial_regions[0].region_id.clone();
     let initial_byte_range = initial_regions[0].byte_range.clone();
 
     // Edit the header (outside the injection)
@@ -912,8 +912,8 @@ Footer text
     let updated_regions = injection_map.get(&uri).expect("should have regions");
     assert_eq!(updated_regions.len(), 1, "Should still have one region");
 
-    // THE KEY ASSERTION: result_id should be PRESERVED for unchanged injection
-    // Note: byte_range will change since header is now longer, so result_id
+    // THE KEY ASSERTION: region_id should be PRESERVED for unchanged injection
+    // Note: byte_range will change since header is now longer, so region_id
     // will actually be NEW. This test documents the EXPECTED behavior.
     //
     // For stable IDs to work, we need to match by something other than byte_range
@@ -925,7 +925,7 @@ Footer text
     // For now, this test will FAIL because byte_range changes when header grows.
     // This documents the problem we need to solve.
 
-    let updated_result_id = &updated_regions[0].region_id;
+    let updated_region_id = &updated_regions[0].region_id;
     let updated_byte_range = &updated_regions[0].byte_range;
 
     // Header grew by "Modified ".len() = 9 chars, so byte_range shifts
@@ -934,11 +934,11 @@ Footer text
         "Byte range should shift when header changes"
     );
 
-    // Currently FAILS: result_id is regenerated because byte_range changed
+    // Currently FAILS: region_id is regenerated because byte_range changed
     // After implementing stable IDs via content hash, this should pass.
     assert_eq!(
-        initial_result_id, *updated_result_id,
-        "Result ID should be preserved for unchanged injection content"
+        initial_region_id, *updated_region_id,
+        "Region ID should be preserved for unchanged injection content"
     );
 }
 
@@ -948,7 +948,7 @@ fn test_cache_hit_after_edit_outside_injection() {
     //
     // This test verifies that when we edit host text (outside injection),
     // the cached tokens for the injection can still be retrieved using
-    // the preserved result_id.
+    // the preserved region_id.
 
     let injection_map = InjectionMap::new();
     let injection_token_cache = kakehashi::analysis::InjectionTokenCache::new();
@@ -989,11 +989,11 @@ Footer text
 
     let initial_regions = injection_map.get(&uri).expect("should have regions");
     assert_eq!(initial_regions.len(), 1, "Should have one lua region");
-    let initial_result_id = initial_regions[0].region_id.clone();
+    let initial_region_id = initial_regions[0].region_id.clone();
 
-    // Store tokens for the lua injection using the result_id
+    // Store tokens for the lua injection using the region_id
     let lua_tokens = tower_lsp_server::ls_types::SemanticTokens {
-        result_id: Some(initial_result_id.clone()),
+        result_id: Some(initial_region_id.clone()),
         data: vec![tower_lsp_server::ls_types::SemanticToken {
             delta_line: 0,
             delta_start: 0,
@@ -1002,14 +1002,14 @@ Footer text
             token_modifiers_bitset: 0,
         }],
     };
-    injection_token_cache.store(&uri, &initial_result_id, lua_tokens);
+    injection_token_cache.store(&uri, &initial_region_id, lua_tokens);
 
     // Verify cache is populated
     assert!(
         injection_token_cache
-            .get(&uri, &initial_result_id)
+            .get(&uri, &initial_region_id)
             .is_some(),
-        "Should have cached tokens for initial result_id"
+        "Should have cached tokens for initial region_id"
     );
 
     // Edit the header (outside the injection)
@@ -1035,16 +1035,16 @@ Footer text
 
     let updated_regions = injection_map.get(&uri).expect("should have regions");
     assert_eq!(updated_regions.len(), 1, "Should still have one region");
-    let updated_result_id = &updated_regions[0].region_id;
+    let updated_region_id = &updated_regions[0].region_id;
 
-    // THE KEY ASSERTION: result_id is preserved, so we can get a CACHE HIT
+    // THE KEY ASSERTION: region_id is preserved, so we can get a CACHE HIT
     assert_eq!(
-        initial_result_id, *updated_result_id,
-        "Result ID should be preserved"
+        initial_region_id, *updated_region_id,
+        "Region ID should be preserved"
     );
 
-    // CACHE HIT: We can retrieve the cached tokens using the updated result_id
-    let cached_tokens = injection_token_cache.get(&uri, updated_result_id);
+    // CACHE HIT: We can retrieve the cached tokens using the updated region_id
+    let cached_tokens = injection_token_cache.get(&uri, updated_region_id);
     assert!(
         cached_tokens.is_some(),
         "Should get CACHE HIT - tokens should still be retrievable after edit outside injection"

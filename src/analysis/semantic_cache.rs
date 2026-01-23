@@ -1,12 +1,12 @@
-//! Semantic token caching with result_id validation and injection region tracking.
+//! Semantic token caching with LSP result_id validation and injection region tracking.
 //!
 //! This module provides three caching layers for semantic token performance:
 //!
-//! 1. **SemanticTokenCache** - Document-level token caching by URI with result_id validation.
+//! 1. **SemanticTokenCache** - Document-level token caching by URI with LSP result_id validation.
 //!    Used for cache hits when the document version matches.
 //!
 //! 2. **InjectionMap** - Tracks all injection regions per document URI.
-//!    Each `CacheableInjectionRegion` stores language, byte/line ranges, and a result_id.
+//!    Each `CacheableInjectionRegion` stores language, byte/line ranges, and a region_id (ULID).
 //!    Enables targeted invalidation: when an edit occurs, only regions overlapping
 //!    the edit need re-tokenization (see PBI-083).
 //!    Uses interval tree (rust_lapper) for O(log n) overlap queries (PBI-167).
