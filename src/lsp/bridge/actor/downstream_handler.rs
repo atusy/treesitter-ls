@@ -151,29 +151,23 @@ async fn handle_notification(notification: DownstreamNotification, client: &Clie
 /// For example, token `"abc123"` from `lua-language-server` becomes
 /// `"lua-language-server:abc123"`.
 async fn handle_progress(notification: DownstreamNotification, client: &Client) {
-    let params = match notification.notification.get("params") {
-        Some(params) => params.clone(),
-        None => {
-            warn!(
-                target: "kakehashi::bridge::downstream_handler",
-                "Progress notification from {} missing params",
-                notification.server_name
-            );
-            return;
-        }
+    let Some(params) = notification.notification.get("params").cloned() else {
+        warn!(
+            target: "kakehashi::bridge::downstream_handler",
+            "Progress notification from {} missing params",
+            notification.server_name
+        );
+        return;
     };
 
     // Extract and prefix the token
-    let prefixed_params = match prefix_progress_token(params, &notification.server_name) {
-        Some(p) => p,
-        None => {
-            warn!(
-                target: "kakehashi::bridge::downstream_handler",
-                "Progress notification from {} has invalid token format",
-                notification.server_name
-            );
-            return;
-        }
+    let Some(prefixed_params) = prefix_progress_token(params, &notification.server_name) else {
+        warn!(
+            target: "kakehashi::bridge::downstream_handler",
+            "Progress notification from {} has invalid token format",
+            notification.server_name
+        );
+        return;
     };
 
     // Parse into ProgressParams and send
