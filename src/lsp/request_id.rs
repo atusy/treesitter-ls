@@ -121,11 +121,14 @@ where
             && let Some(id_to_cancel) = params.get("id").and_then(|v| v.as_i64())
         {
             let forwarder = forwarder.clone();
-            // Spawn a task to forward the cancel in the background.
-            // We don't await this because:
-            // 1. Cancel notifications don't expect a response
-            // 2. We don't want to block the main request flow
-            // 3. tower-lsp also handles its own cancel processing
+            // Fire-and-forget: spawn without tracking JoinHandle.
+            //
+            // This is intentional for $/cancelRequest because:
+            // 1. LSP notifications don't expect responses (fire-and-forget by spec)
+            // 2. Cancel is "best effort" - failures are logged but non-fatal
+            // 3. We must not block the main request flow
+            // 4. Graceful shutdown doesn't need to wait for cancels - the downstream
+            //    server will clean up its own state when it shuts down
             tokio::spawn(async move {
                 if let Err(e) = forwarder.forward_cancel(id_to_cancel).await {
                     // Log the error but don't fail - cancel forwarding is best-effort
