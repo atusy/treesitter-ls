@@ -86,7 +86,7 @@ pub(super) fn test_host_uri(name: &str) -> Url {
 /// Spawns a real `cat` process to get a working connection, then sets
 /// the desired state. This allows testing state-dependent behavior
 /// without going through the full initialization flow.
-pub(super) async fn create_handle_with_state(state: ConnectionState) -> Arc<ConnectionHandle> {
+pub async fn create_handle_with_state(state: ConnectionState) -> Arc<ConnectionHandle> {
     // Create a mock server process to get a real connection
     let mut conn =
         AsyncBridgeConnection::spawn(vec!["sh".to_string(), "-c".to_string(), "cat".to_string()])

@@ -14,7 +14,7 @@ mod liveness_timeout;
 mod shutdown;
 mod shutdown_timeout;
 #[cfg(test)]
-mod test_helpers;
+pub(super) mod test_helpers;
 
 use connection_action::{ConnectionAction, decide_connection_action};
 use handshake::perform_lsp_handshake;
