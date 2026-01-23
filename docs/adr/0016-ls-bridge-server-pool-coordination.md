@@ -34,9 +34,13 @@ The bridge manages connections to multiple downstream language servers. Even in 
 
 **Adopt a phased approach: start with single-LS-per-language routing, extend to multi-LS aggregation in Phase 3.**
 
-### Phase 1: Single-LS-per-Language (Current)
+### Phase 1: Server-Name-Based Routing (Current)
 
-Each language maps to exactly one downstream server. Routing is simple: language → server.
+Each language maps to a `server_name` via configuration. The pool is keyed by `server_name`, enabling:
+- **Process sharing for related languages**: e.g., `typescript` and `typescriptreact` can share a single `tsgo` process
+- **Decoupling language from process**: The same binary can serve multiple languages
+
+Routing: `language` → `server_name` (via config) → connection.
 
 **No-Provider Handling:** Return `REQUEST_FAILED` with clear message ("bridge: no provider for hover in python") to keep misconfiguration visible.
 
@@ -92,14 +96,19 @@ Client (editor)          kakehashi           Downstream Server
 
 ### Routing (Phase 1)
 
-In Phase 1, routing is simple: `languageId` → single server.
+In Phase 1, routing resolves `languageId` → `server_name` via configuration, then looks up the connection by `server_name`:
 
 ```rust
-// Phase 1: Simple language-based routing
+// Phase 1: Server-name-based routing
 fn route_request(language_id: &str) -> Option<&Connection> {
-    self.connections.get(language_id)
+    // 1. Resolve server_name from config (e.g., "typescript" → "tsgo")
+    let server_name = config.get_server_for_language(language_id)?;
+    // 2. Look up connection by server_name (enables process sharing)
+    self.connections.get(server_name)
 }
 ```
+
+**Key difference from pure language-based routing**: Multiple languages can share the same connection when they map to the same `server_name`. For example, `typescript` and `typescriptreact` can both resolve to `tsgo`, sharing a single process.
 
 **Phase 3 Extension**: Multi-LS routing strategies (SingleByCapability, FanOut) — see Future Extensions.
 
@@ -378,7 +387,7 @@ Silently discard notifications instead of explicit DROP with state tracking.
 ## Configuration Example (Phase 1)
 
 ```yaml
-# Phase 1: One server per language (simple)
+# Phase 1: Server-name-based routing with process sharing
 languages:
   markdown:
     bridges:
@@ -386,6 +395,10 @@ languages:
         server: pyright          # Single server for Python
       lua:
         server: lua-ls           # Single server for Lua
+      typescript:
+        server: tsgo             # TypeScript → tsgo
+      typescriptreact:
+        server: tsgo             # TSX → same tsgo (process sharing!)
       toml:
         server: taplo            # Single server for TOML
 
@@ -396,10 +409,18 @@ languageServers:
   lua-ls:
     cmd: [lua-language-server, --stdio]
     languages: [lua]
+  tsgo:
+    cmd: [tsgo, --stdio]
+    languages: [typescript, typescriptreact]  # Serves both ts and tsx
   taplo:
     cmd: [taplo, lsp, stdio]
     languages: [toml]
 ```
+
+**Process Sharing Example**: In the above configuration, `typescript` and `typescriptreact` both map to `server: tsgo`. When a request comes for either language:
+1. Configuration resolves the language to `server_name: "tsgo"`
+2. Pool looks up connection by `"tsgo"` (not by language)
+3. Both languages share the same process, improving resource usage
 
 **Phase 3 Configuration Example** (future): See Future Extensions for multi-LS aggregation config.
 
@@ -421,5 +442,6 @@ languageServers:
 
 ## Amendment History
 
+- **2026-01-24**: Changed from language-based to server-name-based pool keying to enable process sharing for related languages (e.g., ts/tsx sharing tsgo). Connection pool is now keyed by `server_name` instead of `languageId`, with configuration resolving `language` → `server_name`.
 - **2026-01-07**: Merged [Amendment 002](0015-multi-server-coordination-amendment-002.md) - Simplified ID namespace by using upstream request IDs directly (no transformation), replaced `pending_correlations` with `pending_responses`
 - **2026-01-06**: Merged [Amendment 001](0015-multi-server-coordination-amendment-001.md) - Updated partial results to use LSP-native fields (isIncomplete), clarified $/cancelRequest semantics, added response guarantees for cancelled requests

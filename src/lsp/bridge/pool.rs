@@ -3,7 +3,20 @@
 //! This module provides the LanguageServerPool which manages connections to
 //! downstream language servers per ADR-0016 (Server Pool Coordination).
 //!
-//! Currently implements single-LS-per-language routing (language → single server).
+//! # Server-Name-Based Pooling
+//!
+//! The pool is keyed by `server_name`, not by `languageId`. This enables:
+//! - **Process sharing**: Multiple languages can share a single process
+//!   (e.g., `typescript` and `typescriptreact` both mapping to `tsgo`)
+//! - **Decoupling**: Language identity is separate from server identity
+//!
+//! Routing flow: `languageId` → `server_name` (via config) → connection
+//!
+//! # Key Types
+//!
+//! - [`LanguageServerPool`]: Main pool managing all downstream connections
+//! - [`ConnectionHandle`]: Handle to a single downstream connection (ADR-0014)
+//! - [`ConnectionState`]: State machine for connection lifecycle
 
 mod connection_action;
 mod connection_handle;
