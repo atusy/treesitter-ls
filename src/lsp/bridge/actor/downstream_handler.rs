@@ -26,8 +26,8 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tower_lsp_server::Client;
-use tower_lsp_server::ls_types::notification::Progress;
 use tower_lsp_server::ls_types::ProgressParams;
+use tower_lsp_server::ls_types::notification::Progress;
 
 use super::{DownstreamMessage, DownstreamNotification};
 

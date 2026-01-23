@@ -294,7 +294,10 @@ impl LanguageServerPool {
         let (tx, rx) = mpsc::channel(DOWNSTREAM_CHANNEL_CAPACITY);
         let handle = spawn_downstream_handler(rx, client);
 
-        let state = DownstreamHandlerState { tx, _handle: handle };
+        let state = DownstreamHandlerState {
+            tx,
+            _handle: handle,
+        };
 
         if self.downstream_handler.set(state).is_err() {
             panic!("init_downstream_handler() called more than once");
@@ -615,10 +618,7 @@ impl LanguageServerPool {
 
         // Use the command name for notification prefixing in logs
         // e.g., "lua-language-server" from ["lua-language-server", "--stdio"]
-        let command_name = server_config
-            .cmd
-            .first()
-            .map(|s| s.to_string());
+        let command_name = server_config.cmd.first().map(|s| s.to_string());
 
         let reader_handle = spawn_reader_task_for_language(
             reader,
