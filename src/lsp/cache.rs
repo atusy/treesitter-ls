@@ -187,8 +187,20 @@ impl CacheCoordinator {
                 return;
             }
 
-            // Get existing regions for cache cleanup
+            // Get existing regions for cache cleanup and content comparison
             let existing_regions = self.injection_map.get(uri);
+
+            // Build lookup map for existing regions by region_id
+            let existing_by_id: std::collections::HashMap<&str, &CacheableInjectionRegion> =
+                existing_regions
+                    .as_ref()
+                    .map(|regions| {
+                        regions
+                            .iter()
+                            .map(|r| (r.region_id.as_str(), r))
+                            .collect()
+                    })
+                    .unwrap_or_default();
 
             // Convert to CacheableInjectionRegion using position-based ULIDs
             // RegionIdTracker provides stable IDs based on (uri, start_byte, end_byte, kind)
@@ -202,7 +214,23 @@ impl CacheCoordinator {
                         info.content_node.end_byte(),
                         info.content_node.kind(),
                     );
-                    CacheableInjectionRegion::from_region_info(info, &ulid.to_string(), text)
+                    let region_id = ulid.to_string();
+                    let new_region =
+                        CacheableInjectionRegion::from_region_info(info, &region_id, text);
+
+                    // Check if content_hash or language changed - invalidate semantic token cache
+                    // Position-based ULIDs are stable, but cached tokens become invalid when:
+                    // - content_hash changes: code content was modified
+                    // - language changes: info string changed (e.g., lua → python)
+                    if let Some(old) = existing_by_id.get(region_id.as_str()) {
+                        let content_changed = old.content_hash != new_region.content_hash;
+                        let language_changed = old.language != new_region.language;
+                        if content_changed || language_changed {
+                            self.injection_token_cache.remove(uri, &region_id);
+                        }
+                    }
+
+                    new_region
                 })
                 .collect();
 
