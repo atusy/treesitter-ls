@@ -575,7 +575,7 @@ fn handle_message(
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     warn!(
                         target: "kakehashi::bridge::reader",
-                        "{}Downstream channel closed, dropping notification: {}. Handler may have panicked.",
+                        "{}Downstream channel closed, dropping notification: {}. Handler task exited or receiver was dropped.",
                         lang_prefix,
                         method.as_deref().unwrap_or("unknown")
                     );
