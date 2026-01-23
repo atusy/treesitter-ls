@@ -12,20 +12,23 @@ use url::Url;
 ///
 /// This extracts the logic that should run after parsing to populate the InjectionMap.
 ///
-/// # Note on ID Systems
+/// # Test-Only ID Generation (differs from production)
 ///
-/// This test helper uses `next_result_id()` to generate `region_id` values as a shortcut.
-/// In production, `CacheCoordinator::populate_injections()` uses `RegionIdTracker` instead,
-/// which provides position-based ULIDs that are stable across document edits.
+/// This helper uses `next_result_id()` to generate `region_id` values - a deliberate
+/// test simplification that differs from production behavior.
 ///
-/// The ID systems serve different purposes:
-/// - `next_result_id()`: Sequential integers for LSP SemanticTokens delta computation
-/// - `RegionIdTracker`: Position-based ULIDs for injection region identity
+/// **Production** uses `RegionIdTracker` to generate position-based ULIDs that remain
+/// stable when edits occur before a code block (e.g., adding lines above doesn't
+/// change the region's identity).
 ///
-/// Using `next_result_id()` here is acceptable for tests because:
-/// 1. Tests don't require position stability across edits
-/// 2. Tests run in isolation, so global counter collision isn't a concern
-/// 3. It avoids the complexity of setting up a full `RegionIdTracker`
+/// **Tests** can use `next_result_id()` because:
+/// 1. No edits occur mid-test, so position stability is irrelevant
+/// 2. Tests run in isolation, avoiding global counter collisions
+/// 3. Simpler than instantiating `RegionIdTracker` with byte positions
+///
+/// Note: `next_result_id()` and `RegionIdTracker` serve entirely different purposes
+/// in production - the former is for LSP delta computation, the latter for region
+/// identity. This test reuses `next_result_id()` only as a convenient unique ID source.
 fn populate_injection_map(
     injection_map: &InjectionMap,
     uri: &Url,
