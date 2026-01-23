@@ -219,6 +219,15 @@ impl CacheCoordinator {
                     // Position-based ULIDs are stable, but cached tokens become invalid when:
                     // - content_hash changes: code content was modified
                     // - language changes: info string changed (e.g., lua → python)
+                    //
+                    // NOTE: This may double-invalidate regions already handled by invalidate_for_edits().
+                    // This is intentional and correct because the two functions serve different purposes:
+                    // - invalidate_for_edits(): Called BEFORE parse, handles spatial overlap (edit touched region)
+                    // - This code: Called AFTER parse, handles semantic change (content/language changed)
+                    // Double removal is idempotent (DashMap remove on missing key is a no-op), so this
+                    // is safe. Combining these checks would require tracking invalidation state, adding
+                    // complexity for negligible performance gain.
+                    //
                     // Skip this check entirely if no existing regions (first document open)
                     if let Some(ref map) = existing_by_id {
                         if let Some(old) = map.get(region_id.as_str()) {
