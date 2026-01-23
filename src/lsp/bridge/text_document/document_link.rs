@@ -54,12 +54,23 @@ impl LanguageServerPool {
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
 
-        // Register request with upstream ID mapping for cancel forwarding
-        let (request_id, response_rx) =
-            handle.register_request_with_upstream(Some(upstream_request_id.clone()))?;
-
-        // Register in the upstream request registry for cancel lookup
+        // Register in the upstream request registry FIRST for cancel lookup.
+        // This order matters: if a cancel arrives between pool and router registration,
+        // the cancel will fail at the router lookup (which is acceptable for best-effort
+        // cancel semantics) rather than finding the language but no downstream ID.
         self.register_upstream_request(upstream_request_id.clone(), injection_language);
+
+        // Register request with upstream ID mapping for cancel forwarding
+        let (request_id, response_rx) = match handle
+            .register_request_with_upstream(Some(upstream_request_id.clone()))
+        {
+            Ok(result) => result,
+            Err(e) => {
+                // Clean up the pool registration on failure
+                self.unregister_upstream_request(&upstream_request_id);
+                return Err(e);
+            }
+        };
 
         // Build document link request
         // Note: document link doesn't need position - it operates on the whole document
