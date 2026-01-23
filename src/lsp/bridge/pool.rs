@@ -157,6 +157,19 @@ impl Default for LanguageServerPool {
 
 impl LanguageServerPool {
     /// Create a new language server pool.
+    ///
+    /// This is public for cancel forwarding middleware setup. Create a shared
+    /// `Arc<LanguageServerPool>` and pass it to both `Kakehashi::with_pool()`
+    /// and `CancelForwarder::new()`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let pool = Arc::new(LanguageServerPool::new());
+    /// let cancel_forwarder = CancelForwarder::new(Arc::clone(&pool));
+    /// let kakehashi = Kakehashi::with_pool(pool);
+    /// let service = RequestIdCapture::with_cancel_forwarder(kakehashi, cancel_forwarder);
+    /// ```
     pub fn new() -> Self {
         Self {
             connections: Mutex::new(HashMap::new()),
