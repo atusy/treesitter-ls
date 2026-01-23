@@ -37,6 +37,7 @@ impl LanguageServerPool {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_color_presentation_request(
         &self,
+        server_name: &str,
         server_config: &BridgeServerConfig,
         host_uri: &Url,
         host_range: Range,
@@ -53,7 +54,7 @@ impl LanguageServerPool {
 
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
-            .get_or_create_connection(injection_language, server_config)
+            .get_or_create_connection(server_name, server_config)
             .await?;
 
         // Build virtual document URI
@@ -62,8 +63,8 @@ impl LanguageServerPool {
         // Register in the upstream request registry FIRST for cancel lookup.
         // This order matters: if a cancel arrives between pool and router registration,
         // the cancel will fail at the router lookup (which is acceptable for best-effort
-        // cancel semantics) rather than finding the language but no downstream ID.
-        self.register_upstream_request(upstream_request_id.clone(), injection_language);
+        // cancel semantics) rather than finding the server but no downstream ID.
+        self.register_upstream_request(upstream_request_id.clone(), server_name);
 
         // Register request with upstream ID mapping for cancel forwarding
         let (request_id, response_rx) =

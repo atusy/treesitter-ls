@@ -109,6 +109,7 @@ impl Kakehashi {
             .bridge
             .pool()
             .send_inlay_hint_request(
+                &resolved_config.server_name,
                 &resolved_config.config,
                 &uri,
                 range,

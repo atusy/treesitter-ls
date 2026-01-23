@@ -108,6 +108,7 @@ impl Kakehashi {
             .bridge
             .pool()
             .send_type_definition_request(
+                &resolved_config.server_name,
                 &resolved_config.config,
                 &uri,
                 position,

@@ -104,6 +104,7 @@ impl Kakehashi {
             .bridge
             .pool()
             .send_moniker_request(
+                &resolved_config.server_name,
                 &resolved_config.config,
                 &uri,
                 position,

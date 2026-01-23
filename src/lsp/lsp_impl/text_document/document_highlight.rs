@@ -107,6 +107,7 @@ impl Kakehashi {
             .bridge
             .pool()
             .send_document_highlight_request(
+                &resolved_config.server_name,
                 &resolved_config.config,
                 &uri,
                 position,

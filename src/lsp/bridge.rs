@@ -68,6 +68,7 @@ mod tests {
 
         let response = pool
             .send_hover_request(
+                "lua", // server_name
                 &server_config,
                 &host_uri,
                 host_position,
@@ -120,6 +121,7 @@ mod tests {
 
         let response = pool
             .send_completion_request(
+                "lua", // server_name
                 &server_config,
                 &host_uri,
                 host_position,
@@ -181,6 +183,7 @@ mod tests {
         // (unique IDs are generated internally)
         let response = pool
             .send_hover_request(
+                "lua", // server_name
                 &server_config,
                 &host_uri,
                 host_position,
@@ -252,6 +255,7 @@ mod tests {
         // (unique IDs are generated internally)
         let response = pool
             .send_completion_request(
+                "lua", // server_name
                 &server_config,
                 &host_uri,
                 host_position,
@@ -314,6 +318,7 @@ mod tests {
 
         let response = pool
             .send_document_link_request(
+                "lua", // server_name
                 &server_config,
                 &host_uri,
                 "lua",

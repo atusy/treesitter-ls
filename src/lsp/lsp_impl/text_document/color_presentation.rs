@@ -112,6 +112,7 @@ impl Kakehashi {
             .bridge
             .pool()
             .send_color_presentation_request(
+                &resolved_config.server_name,
                 &resolved_config.config,
                 &uri,
                 range,

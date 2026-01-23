@@ -163,7 +163,8 @@ impl CancelForwardingMetrics {
 
 /// Pool of connections to downstream language servers (ADR-0016).
 ///
-/// Each injection language maps to exactly one downstream server (single-LS-per-language).
+/// Each server_name maps to exactly one downstream server connection.
+/// Multiple injection languages can share the same server (e.g., "ts" and "tsx" → "tsgo").
 ///
 /// Provides lazy initialization of connections and handles the LSP handshake
 /// (initialize/initialized) for each language server.
@@ -175,15 +176,15 @@ impl CancelForwardingMetrics {
 /// This type is public to allow creating a shared pool for the cancel forwarding
 /// middleware. Normal usage should go through `BridgeCoordinator`.
 pub struct LanguageServerPool {
-    /// Map of language -> connection handle (wraps connection with its state)
+    /// Map of server_name -> connection handle (wraps connection with its state)
     connections: Mutex<HashMap<String, Arc<ConnectionHandle>>>,
     /// Document tracking for virtual documents (versions, host mappings, opened state)
     document_tracker: DocumentTracker,
-    /// Maps upstream request ID -> language for cancel forwarding (ADR-0015).
+    /// Maps upstream request ID -> server_name for cancel forwarding (ADR-0015).
     ///
     /// When a request is sent to a downstream server, we record the mapping so that
     /// when a $/cancelRequest notification arrives with the upstream ID, we can look up
-    /// which language server to forward it to.
+    /// which server to forward it to.
     ///
     /// # Cleanup Behavior
     ///
@@ -384,19 +385,23 @@ impl LanguageServerPool {
             .await
     }
 
-    /// Get or create a connection for the specified language.
+    /// Get or create a connection for the specified server.
     ///
     /// If no connection exists, spawns the language server and performs
     /// the LSP initialize/initialized handshake with default timeout.
     ///
     /// Returns the ConnectionHandle which wraps both the connection and its state.
+    ///
+    /// # Arguments
+    /// * `server_name` - The server name from config (e.g., "tsgo", "rust-analyzer")
+    /// * `server_config` - The server configuration containing command and options
     pub(super) async fn get_or_create_connection(
         &self,
-        language: &str,
+        server_name: &str,
         server_config: &crate::config::settings::BridgeServerConfig,
     ) -> io::Result<Arc<ConnectionHandle>> {
         self.get_or_create_connection_with_timeout(
-            language,
+            server_name,
             server_config,
             Duration::from_secs(INIT_TIMEOUT_SECS),
         )
@@ -405,7 +410,7 @@ impl LanguageServerPool {
 }
 
 impl LanguageServerPool {
-    /// Get or create a connection for the specified language with custom timeout.
+    /// Get or create a connection for the specified server with custom timeout.
     ///
     /// If no connection exists, spawns the language server and stores the connection
     /// in Initializing state immediately. A background task performs the LSP handshake.
@@ -424,20 +429,25 @@ impl LanguageServerPool {
     /// 3. Store ConnectionHandle in Initializing state
     /// 4. Spawn background task for LSP handshake
     /// 5. Background task transitions to Ready or Failed
+    ///
+    /// # Arguments
+    /// * `server_name` - The server name from config (e.g., "tsgo", "rust-analyzer")
+    /// * `server_config` - The server configuration containing command and options
+    /// * `timeout` - Timeout for the LSP initialize handshake
     async fn get_or_create_connection_with_timeout(
         &self,
-        language: &str,
+        server_name: &str,
         server_config: &crate::config::settings::BridgeServerConfig,
         timeout: Duration,
     ) -> io::Result<Arc<ConnectionHandle>> {
         let mut connections = self.connections.lock().await;
 
-        // Check if we already have a connection for this language
+        // Check if we already have a connection for this server
         // Use pure decision function for testability (ADR-0015 Operation Gating)
-        let existing_state = connections.get(language).map(|h| h.state());
+        let existing_state = connections.get(server_name).map(|h| h.state());
         match decide_connection_action(existing_state) {
             ConnectionAction::ReturnExisting => {
-                return Ok(Arc::clone(connections.get(language).expect(
+                return Ok(Arc::clone(connections.get(server_name).expect(
                     "Invariant violation: Connection expected for ReturnExisting action",
                 )));
             }
@@ -447,7 +457,7 @@ impl LanguageServerPool {
             ConnectionAction::SpawnNew => {
                 // Remove stale connection if present (Failed or Closed state)
                 if existing_state.is_some() {
-                    connections.remove(language);
+                    connections.remove(server_name);
                 }
             }
         }
@@ -470,13 +480,13 @@ impl LanguageServerPool {
 
         // Now spawn reader task with liveness timeout - it can route the initialize response immediately
         // Liveness timeout is configured via LivenessTimeout::default() (60s per ADR-0018 Tier 2)
-        // Language is passed for structured logging (observability improvement)
+        // Server name is passed for structured logging (observability improvement)
         let liveness_timeout = liveness_timeout::LivenessTimeout::default();
         let reader_handle = spawn_reader_task_for_language(
             reader,
             Arc::clone(&router),
             Some(liveness_timeout.as_duration()),
-            Some(language.to_string()),
+            Some(server_name.to_string()),
         );
 
         // Create handle in Initializing state (fast-fail for concurrent requests)
@@ -488,7 +498,7 @@ impl LanguageServerPool {
         ));
 
         // Insert into pool immediately so concurrent requests see Initializing state
-        connections.insert(language.to_string(), Arc::clone(&handle));
+        connections.insert(server_name.to_string(), Arc::clone(&handle));
 
         // Release lock before async initialization
         drop(connections);
@@ -533,7 +543,7 @@ impl LanguageServerPool {
     /// still respond with either a result or a REQUEST_CANCELLED error (-32800).
     ///
     /// # Arguments
-    /// * `language` - The language of the downstream server
+    /// * `server_name` - The server name from config (e.g., "tsgo", "rust-analyzer")
     /// * `upstream_id` - The original request ID from the upstream client
     ///
     /// # Returns
@@ -541,20 +551,20 @@ impl LanguageServerPool {
     /// * `Err` if no connection exists or the upstream ID is not found
     pub(crate) async fn forward_cancel(
         &self,
-        language: &str,
+        server_name: &str,
         upstream_id: &UpstreamId,
     ) -> io::Result<()> {
-        // Get the connection for this language
+        // Get the connection for this server
         let handle = {
             let connections = self.connections().await;
-            let Some(handle) = connections.get(language) else {
+            let Some(handle) = connections.get(server_name) else {
                 self.cancel_metrics.record_no_connection();
                 log::debug!(
                     target: "kakehashi::bridge::cancel",
-                    "Cancel forward failed: no connection for language '{}'",
-                    language
+                    "Cancel forward failed: no connection for server '{}'",
+                    server_name
                 );
-                return Err(io::Error::other("bridge: no connection for language"));
+                return Err(io::Error::other("bridge: no connection for server"));
             };
 
             // Only forward if connection is Ready
@@ -562,8 +572,8 @@ impl LanguageServerPool {
                 self.cancel_metrics.record_not_ready();
                 log::debug!(
                     target: "kakehashi::bridge::cancel",
-                    "Cancel forward failed: connection not ready for language '{}'",
-                    language
+                    "Cancel forward failed: connection not ready for server '{}'",
+                    server_name
                 );
                 return Err(io::Error::other("bridge: connection not ready"));
             }
@@ -578,9 +588,9 @@ impl LanguageServerPool {
                 self.cancel_metrics.record_unknown_id();
                 log::debug!(
                     target: "kakehashi::bridge::cancel",
-                    "Cancel forward failed: unknown upstream ID {} for language '{}'",
+                    "Cancel forward failed: unknown upstream ID {} for server '{}'",
                     upstream_id,
-                    language
+                    server_name
                 );
                 return Err(io::Error::other("bridge: upstream request ID not found"));
             }
@@ -603,10 +613,10 @@ impl LanguageServerPool {
             self.cancel_metrics.record_success();
             log::debug!(
                 target: "kakehashi::bridge::cancel",
-                "Cancel forwarded: upstream {} -> downstream {} for language '{}'",
+                "Cancel forwarded: upstream {} -> downstream {} for server '{}'",
                 upstream_id,
                 downstream_id.as_i64(),
-                language
+                server_name
             );
         }
 
@@ -615,8 +625,8 @@ impl LanguageServerPool {
 
     /// Forward a $/cancelRequest notification using only the upstream request ID.
     ///
-    /// This method looks up the language from the upstream request registry,
-    /// then delegates to `forward_cancel(language, upstream_id)`.
+    /// This method looks up the server_name from the upstream request registry,
+    /// then delegates to `forward_cancel(server_name, upstream_id)`.
     ///
     /// Called by the RequestIdCapture middleware when it intercepts a $/cancelRequest
     /// notification from the client.
@@ -631,8 +641,8 @@ impl LanguageServerPool {
         &self,
         upstream_id: UpstreamId,
     ) -> io::Result<()> {
-        // Look up the language from the registry
-        let language = {
+        // Look up the server_name from the registry
+        let server_name = {
             let registry = self
                 .upstream_request_registry
                 .lock()
@@ -640,7 +650,7 @@ impl LanguageServerPool {
             registry.get(&upstream_id).cloned()
         };
 
-        let Some(language) = language else {
+        let Some(server_name) = server_name else {
             self.cancel_metrics.record_not_in_registry();
             log::debug!(
                 target: "kakehashi::bridge::cancel",
@@ -652,10 +662,10 @@ impl LanguageServerPool {
             ));
         };
 
-        self.forward_cancel(&language, &upstream_id).await
+        self.forward_cancel(&server_name, &upstream_id).await
     }
 
-    /// Register an upstream request ID -> language mapping for cancel forwarding.
+    /// Register an upstream request ID -> server_name mapping for cancel forwarding.
     ///
     /// Called when a request is sent to a downstream server to enable $/cancelRequest
     /// forwarding. When a cancel notification arrives from the client with the upstream ID,
@@ -666,9 +676,9 @@ impl LanguageServerPool {
     /// 1. Client sends request with ID 42
     /// 2. Bridge creates downstream request with ID 7 and calls this method
     /// 3. Client sends `$/cancelRequest { id: 42 }`
-    /// 4. Bridge looks up 42 in registry → finds "lua"
+    /// 4. Bridge looks up 42 in registry → finds "tsgo"
     /// 5. Bridge looks up 42 in ResponseRouter → finds downstream ID 7
-    /// 6. Bridge sends `$/cancelRequest { id: 7 }` to lua-language-server
+    /// 6. Bridge sends `$/cancelRequest { id: 7 }` to tsgo server
     ///
     /// # Cleanup
     ///
@@ -679,13 +689,13 @@ impl LanguageServerPool {
     ///
     /// # Arguments
     /// * `upstream_id` - The original request ID from the upstream client
-    /// * `language` - The language of the downstream server handling this request
-    pub(crate) fn register_upstream_request(&self, upstream_id: UpstreamId, language: &str) {
+    /// * `server_name` - The server name handling this request (e.g., "tsgo", "rust-analyzer")
+    pub(crate) fn register_upstream_request(&self, upstream_id: UpstreamId, server_name: &str) {
         let mut registry = self
             .upstream_request_registry
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        registry.insert(upstream_id, language.to_string());
+        registry.insert(upstream_id, server_name.to_string());
     }
 
     /// Unregister an upstream request ID from the registry.
@@ -763,6 +773,7 @@ mod tests {
         let start = std::time::Instant::now();
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -785,6 +796,7 @@ mod tests {
         // Test completion request - same behavior
         let result = pool
             .send_completion_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -832,6 +844,7 @@ mod tests {
         // Test hover request - should trigger retry and succeed with new server
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -862,6 +875,7 @@ mod tests {
         // Test completion request - should also succeed (connection is now Ready)
         let result = pool
             .send_completion_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -902,6 +916,7 @@ mod tests {
         // After init completes, state should be Ready and request should succeed
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -934,6 +949,7 @@ mod tests {
         // Second request should also succeed (state remains Ready)
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -1197,6 +1213,7 @@ mod tests {
         // First, send a hover request to establish connection and open a virtual doc
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -1251,6 +1268,7 @@ mod tests {
         // Use positions that are within the code block (position.line >= region_start_line)
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 tower_lsp_server::ls_types::Position {
@@ -1268,6 +1286,7 @@ mod tests {
 
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 tower_lsp_server::ls_types::Position {
@@ -1571,6 +1590,7 @@ mod tests {
         let start = std::time::Instant::now();
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -1593,6 +1613,7 @@ mod tests {
         // Test completion request - same behavior
         let result = pool
             .send_completion_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,

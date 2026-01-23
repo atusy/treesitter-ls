@@ -93,6 +93,7 @@ impl Kakehashi {
                 .bridge
                 .pool()
                 .send_document_color_request(
+                    &resolved_config.server_name,
                     &resolved_config.config,
                     &uri,
                     &resolved.injection_language,
