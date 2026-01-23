@@ -608,7 +608,9 @@ print("hello")
 
     // Verify cache is populated
     assert!(
-        injection_token_cache.get(&uri, &initial_region_id).is_some(),
+        injection_token_cache
+            .get(&uri, &initial_region_id)
+            .is_some(),
         "Should have cached tokens for lua region"
     );
 
@@ -721,7 +723,9 @@ print("hello")
 
     // Verify cache is populated
     assert!(
-        injection_token_cache.get(&uri, &initial_region_id).is_some(),
+        injection_token_cache
+            .get(&uri, &initial_region_id)
+            .is_some(),
         "Should have cached tokens"
     );
 

@@ -35,8 +35,8 @@ use url::Url;
 
 use crate::analysis::{InjectionMap, InjectionTokenCache, SemanticTokenCache};
 use crate::language::LanguageCoordinator;
-use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
 use crate::language::RegionIdTracker;
+use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
 
 use super::semantic_request_tracker::SemanticRequestTracker;
 
@@ -191,13 +191,9 @@ impl CacheCoordinator {
             let existing_regions = self.injection_map.get(uri);
 
             // Build lookup map for existing regions by region_id (skip if no existing regions)
-            let existing_by_id: Option<HashMap<&str, &CacheableInjectionRegion>> =
-                existing_regions.as_ref().map(|regions| {
-                    regions
-                        .iter()
-                        .map(|r| (r.region_id.as_str(), r))
-                        .collect()
-                });
+            let existing_by_id: Option<HashMap<&str, &CacheableInjectionRegion>> = existing_regions
+                .as_ref()
+                .map(|regions| regions.iter().map(|r| (r.region_id.as_str(), r)).collect());
 
             // Convert to CacheableInjectionRegion using position-based ULIDs
             // RegionIdTracker provides stable IDs based on (uri, start_byte, end_byte, kind)
@@ -218,7 +214,7 @@ impl CacheCoordinator {
                     // Check if content_hash or language changed - invalidate semantic token cache
                     // Position-based ULIDs are stable, but cached tokens become invalid when:
                     // - content_hash changes: code content was modified
-                    // - language changes: info string changed (e.g., lua → python)
+                    // - language changes: info string changed (e.g., ```lua → ```python)
                     //
                     // NOTE: This may double-invalidate regions already handled by invalidate_for_edits().
                     // This is intentional and correct because the two functions serve different purposes:
