@@ -139,14 +139,14 @@ impl Kakehashi {
         let auto_install = AutoInstallManager::new(InstallingLanguages::new(), failed_parsers);
 
         Self {
-            client,
+            client: client.clone(),
             language,
             parser_pool: Mutex::new(parser_pool),
             documents: DocumentStore::new(),
             cache: CacheCoordinator::new(),
             settings_manager: SettingsManager::new(),
             auto_install,
-            bridge: BridgeCoordinator::new(),
+            bridge: BridgeCoordinator::with_client(client),
         }
     }
 
@@ -166,14 +166,14 @@ impl Kakehashi {
         let auto_install = AutoInstallManager::new(InstallingLanguages::new(), failed_parsers);
 
         Self {
-            client,
+            client: client.clone(),
             language,
             parser_pool: Mutex::new(parser_pool),
             documents: DocumentStore::new(),
             cache: CacheCoordinator::new(),
             settings_manager: SettingsManager::new(),
             auto_install,
-            bridge: BridgeCoordinator::with_pool(pool),
+            bridge: BridgeCoordinator::with_pool(pool, client),
         }
     }
 
