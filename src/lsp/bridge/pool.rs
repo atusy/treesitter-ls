@@ -288,8 +288,15 @@ impl LanguageServerPool {
     /// Removes the document from version tracking and opened state.
     /// Used by did_close module for cleanup and by
     /// close_invalidated_virtual_docs for invalidated region cleanup.
-    pub(crate) async fn untrack_document(&self, virtual_uri: &VirtualDocumentUri) {
-        self.document_tracker.untrack_document(virtual_uri).await
+    ///
+    /// # Arguments
+    ///
+    /// * `virtual_uri` - The virtual document URI
+    /// * `server_name` - The server name for HashMap lookup
+    pub(crate) async fn untrack_document(&self, virtual_uri: &VirtualDocumentUri, server_name: &str) {
+        self.document_tracker
+            .untrack_document(virtual_uri, server_name)
+            .await
     }
 
     /// Check if a document has had didOpen ACTUALLY sent to downstream (ADR-0015).
@@ -301,6 +308,19 @@ impl LanguageServerPool {
     /// Returns false if the document hasn't been opened yet.
     pub(crate) fn is_document_opened(&self, virtual_uri: &VirtualDocumentUri) -> bool {
         self.document_tracker.is_document_opened(virtual_uri)
+    }
+
+    /// Find server_name for a virtual document URI (for reverse lookup).
+    ///
+    /// Used by did_change to look up which server a virtual document was opened on.
+    /// Returns None if the document is not tracked.
+    pub(crate) async fn get_server_for_virtual_uri(
+        &self,
+        virtual_uri: &VirtualDocumentUri,
+    ) -> Option<String> {
+        self.document_tracker
+            .get_server_for_virtual_uri(virtual_uri)
+            .await
     }
 
     /// Mark a document as having had didOpen sent to downstream (ADR-0015).
@@ -324,6 +344,14 @@ impl LanguageServerPool {
     /// Callers are responsible for cleanup on error (removing router entry and
     /// unregistering from upstream request registry).
     ///
+    /// # Arguments
+    ///
+    /// * `writer` - Connection writer for sending didOpen
+    /// * `host_uri` - The host document URI
+    /// * `virtual_uri` - The virtual document URI
+    /// * `virtual_content` - Content for the didOpen notification
+    /// * `server_name` - Server name for document tracking
+    ///
     /// # Decision Logic
     ///
     /// Uses `DocumentOpenDecision` to determine action:
@@ -336,10 +364,11 @@ impl LanguageServerPool {
         host_uri: &Url,
         virtual_uri: &VirtualDocumentUri,
         virtual_content: &str,
+        server_name: &str,
     ) -> io::Result<()> {
         match self
             .document_tracker
-            .document_open_decision(host_uri, virtual_uri)
+            .document_open_decision(host_uri, virtual_uri, server_name)
             .await
         {
             DocumentOpenDecision::SendDidOpen => {
@@ -358,12 +387,18 @@ impl LanguageServerPool {
     /// Increment the version of a virtual document and return the new version.
     ///
     /// Returns None if the document has not been opened.
+    ///
+    /// # Arguments
+    ///
+    /// * `virtual_uri` - The virtual document URI
+    /// * `server_name` - Server name for HashMap lookup
     pub(super) async fn increment_document_version(
         &self,
         virtual_uri: &VirtualDocumentUri,
+        server_name: &str,
     ) -> Option<i32> {
         self.document_tracker
-            .increment_document_version(virtual_uri)
+            .increment_document_version(virtual_uri, server_name)
             .await
     }
 
@@ -374,14 +409,21 @@ impl LanguageServerPool {
     ///
     /// This is exposed for tests that need to simulate document opening without
     /// using the full ensure_document_opened flow.
+    ///
+    /// # Arguments
+    ///
+    /// * `host_uri` - The host document URI
+    /// * `virtual_uri` - The virtual document URI
+    /// * `server_name` - Server name for HashMap key
     #[cfg(test)]
     pub(super) async fn should_send_didopen(
         &self,
         host_uri: &Url,
         virtual_uri: &VirtualDocumentUri,
+        server_name: &str,
     ) -> bool {
         self.document_tracker
-            .should_send_didopen(host_uri, virtual_uri)
+            .should_send_didopen(host_uri, virtual_uri, server_name)
             .await
     }
 
@@ -1343,7 +1385,9 @@ mod tests {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-        let opened = pool.should_send_didopen(&host_uri, &virtual_uri).await;
+        let opened = pool
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
         assert!(opened, "First call should open the document");
         // Also mark as opened (simulating successful didOpen write)
         pool.mark_document_opened(&virtual_uri);
@@ -1413,7 +1457,7 @@ mod tests {
 
         // Call ensure_document_opened
         let result = pool
-            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content)
+            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content, "lua")
             .await;
 
         // Should succeed
@@ -1441,7 +1485,8 @@ mod tests {
         let virtual_content = "print('hello')";
 
         // Pre-open the document (simulate previous didOpen)
-        pool.should_send_didopen(&host_uri, &virtual_uri).await;
+        pool.should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
         pool.mark_document_opened(&virtual_uri);
 
         // Verify document is already marked as opened
@@ -1464,7 +1509,7 @@ mod tests {
 
         // Call ensure_document_opened - should skip didOpen
         let result = pool
-            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content)
+            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content, "lua")
             .await;
 
         // Should succeed (just skips didOpen)
@@ -1500,14 +1545,17 @@ mod tests {
 
         // Simulate another request having called should_send_didopen but NOT mark_document_opened
         // This puts the document in the "didOpen pending" state
-        pool.should_send_didopen(&host_uri, &virtual_uri).await;
+        pool.should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
         // Deliberately do NOT call mark_document_opened to simulate pending didOpen
 
         // Verify the inconsistent state:
         // - should_send_didopen will return false (document already registered)
         // - is_document_opened will return false (not yet marked as opened)
         assert!(
-            !pool.should_send_didopen(&host_uri, &virtual_uri).await,
+            !pool
+                .should_send_didopen(&host_uri, &virtual_uri, "lua")
+                .await,
             "should_send_didopen should return false (already registered)"
         );
         assert!(
@@ -1528,7 +1576,7 @@ mod tests {
 
         // Call ensure_document_opened - should fail
         let result = pool
-            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content)
+            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content, "lua")
             .await;
 
         // Should return error

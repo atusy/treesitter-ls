@@ -94,7 +94,7 @@ impl LanguageServerPool {
 
             // Send didOpen notification only if document hasn't been opened yet
             if let Err(e) = self
-                .ensure_document_opened(&mut writer, host_uri, &virtual_uri, virtual_content)
+                .ensure_document_opened(&mut writer, host_uri, &virtual_uri, virtual_content, server_name)
                 .await
             {
                 cleanup();
@@ -103,7 +103,7 @@ impl LanguageServerPool {
 
             // Document already opened: send didChange with incremented version
             if was_already_opened
-                && let Some(version) = self.increment_document_version(&virtual_uri).await
+                && let Some(version) = self.increment_document_version(&virtual_uri, server_name).await
             {
                 let did_change = build_bridge_didchange_notification(
                     &host_uri_lsp,

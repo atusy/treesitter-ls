@@ -62,6 +62,11 @@ use crate::lsp::bridge::protocol::VirtualDocumentUri;
 pub(crate) struct OpenedVirtualDoc {
     /// The virtual document URI (contains language and region_id)
     pub(crate) virtual_uri: VirtualDocumentUri,
+    /// The server name this document was opened on.
+    ///
+    /// Used for reverse lookup when routing didClose notifications.
+    /// Multiple languages may map to the same server (e.g., ts and tsx -> tsgo).
+    pub(crate) server_name: String,
 }
 
 /// Tracks virtual document state for downstream language servers.
@@ -70,6 +75,12 @@ pub(crate) struct OpenedVirtualDoc {
 /// - Document versions (for didChange notifications)
 /// - Host-to-virtual mappings (for didClose propagation)
 /// - Opened state (for LSP spec compliance - ADR-0015)
+///
+/// # Server-Name-Based Keying
+///
+/// Document versions are keyed by `server_name`, not by language. This enables
+/// process sharing for related languages (e.g., ts and tsx sharing one tsgo server).
+/// VirtualDocumentUri still uses `injection_language` for URI construction (file extension).
 ///
 /// # Lock Ordering Contract
 ///
@@ -80,9 +91,14 @@ pub(crate) struct OpenedVirtualDoc {
 /// The `opened_documents` lock (std::sync::RwLock) can be acquired
 /// independently of async locks for fast, synchronous read checks.
 pub(crate) struct DocumentTracker {
-    /// Map of language -> (virtual document URI -> version)
+    /// Map of server_name -> (virtual document URI -> version).
+    ///
+    /// Keyed by server_name (not language) to enable process sharing.
+    /// Multiple languages may map to the same server entry.
     document_versions: Mutex<HashMap<String, HashMap<String, i32>>>,
-    /// Tracks which virtual documents were opened for each host document
+    /// Tracks which virtual documents were opened for each host document.
+    ///
+    /// Each OpenedVirtualDoc stores its server_name for reverse lookup during didClose.
     host_to_virtual: Mutex<HashMap<Url, Vec<OpenedVirtualDoc>>>,
     /// Tracks documents that have had didOpen ACTUALLY sent to downstream.
     /// Uses std::sync::RwLock for fast, synchronous read checks (ADR-0015).
@@ -111,6 +127,12 @@ impl DocumentTracker {
     /// in host_to_virtual. This mapping is used for didClose propagation when the host
     /// document is closed.
     ///
+    /// # Arguments
+    ///
+    /// * `host_uri` - The host document URI (e.g., markdown file)
+    /// * `virtual_uri` - The virtual document URI (contains language for file extension)
+    /// * `server_name` - The server name for HashMap key (enables process sharing)
+    ///
     /// # Lock Ordering
     ///
     /// Acquires `document_versions` first, then `host_to_virtual` (only when inserting).
@@ -119,14 +141,14 @@ impl DocumentTracker {
         &self,
         host_uri: &Url,
         virtual_uri: &VirtualDocumentUri,
+        server_name: &str,
     ) -> bool {
         use std::collections::hash_map::Entry;
 
         let uri_string = virtual_uri.to_uri_string();
-        let language = virtual_uri.language();
 
         let mut versions = self.document_versions.lock().await;
-        let docs = versions.entry(language.to_string()).or_default();
+        let docs = versions.entry(server_name.to_string()).or_default();
 
         if let Entry::Vacant(e) = docs.entry(uri_string) {
             e.insert(1);
@@ -138,6 +160,7 @@ impl DocumentTracker {
                 .or_default()
                 .push(OpenedVirtualDoc {
                     virtual_uri: virtual_uri.clone(),
+                    server_name: server_name.to_string(),
                 });
 
             true
@@ -196,6 +219,12 @@ impl DocumentTracker {
     /// It determines whether to send didOpen, skip, or return an error based
     /// on the current document state.
     ///
+    /// # Arguments
+    ///
+    /// * `host_uri` - The host document URI (e.g., markdown file)
+    /// * `virtual_uri` - The virtual document URI (contains language for file extension)
+    /// * `server_name` - The server name for HashMap key (enables process sharing)
+    ///
     /// # Returns
     ///
     /// - `SendDidOpen`: Document not registered - should send didOpen
@@ -214,8 +243,9 @@ impl DocumentTracker {
         &self,
         host_uri: &Url,
         virtual_uri: &VirtualDocumentUri,
+        server_name: &str,
     ) -> DocumentOpenDecision {
-        if self.should_send_didopen(host_uri, virtual_uri).await {
+        if self.should_send_didopen(host_uri, virtual_uri, server_name).await {
             DocumentOpenDecision::SendDidOpen
         } else if self.is_document_opened(virtual_uri) {
             DocumentOpenDecision::AlreadyOpened
@@ -227,15 +257,20 @@ impl DocumentTracker {
     /// Increment the version of a virtual document and return the new version.
     ///
     /// Returns None if the document has not been opened.
+    ///
+    /// # Arguments
+    ///
+    /// * `virtual_uri` - The virtual document URI
+    /// * `server_name` - The server name for HashMap lookup
     pub(super) async fn increment_document_version(
         &self,
         virtual_uri: &VirtualDocumentUri,
+        server_name: &str,
     ) -> Option<i32> {
         let uri_string = virtual_uri.to_uri_string();
-        let language = virtual_uri.language();
 
         let mut versions = self.document_versions.lock().await;
-        if let Some(docs) = versions.get_mut(language)
+        if let Some(docs) = versions.get_mut(server_name)
             && let Some(version) = docs.get_mut(&uri_string)
         {
             *version += 1;
@@ -253,12 +288,16 @@ impl DocumentTracker {
     /// Note: Does NOT remove from `host_to_virtual`. That cleanup is handled
     /// separately by `remove_host_virtual_docs()` or `remove_matching_virtual_docs()`,
     /// which are called before this method in the close flow.
-    pub(crate) async fn untrack_document(&self, virtual_uri: &VirtualDocumentUri) {
+    ///
+    /// # Arguments
+    ///
+    /// * `virtual_uri` - The virtual document URI
+    /// * `server_name` - The server name for HashMap lookup
+    pub(crate) async fn untrack_document(&self, virtual_uri: &VirtualDocumentUri, server_name: &str) {
         let uri_string = virtual_uri.to_uri_string();
-        let language = virtual_uri.language();
 
         let mut versions = self.document_versions.lock().await;
-        if let Some(docs) = versions.get_mut(language) {
+        if let Some(docs) = versions.get_mut(server_name) {
             docs.remove(&uri_string);
         }
 
@@ -328,6 +367,40 @@ impl DocumentTracker {
 
         to_close
     }
+
+    /// Find server_name for a virtual document URI (for didClose routing).
+    ///
+    /// Searches all host_to_virtual entries for a matching virtual URI.
+    /// Returns the server_name stored in OpenedVirtualDoc.
+    ///
+    /// # Performance
+    ///
+    /// O(n) where n is total virtual documents. For typical document counts
+    /// (<100), this is acceptable. Consider indexing if perf becomes an issue.
+    ///
+    /// # Arguments
+    ///
+    /// * `virtual_uri` - The virtual document URI to look up
+    ///
+    /// # Returns
+    ///
+    /// The server_name if found, None if the document is not tracked.
+    pub(crate) async fn get_server_for_virtual_uri(
+        &self,
+        virtual_uri: &VirtualDocumentUri,
+    ) -> Option<String> {
+        let uri_string = virtual_uri.to_uri_string();
+        let host_map = self.host_to_virtual.lock().await;
+
+        for virtual_docs in host_map.values() {
+            for doc in virtual_docs {
+                if doc.virtual_uri.to_uri_string() == uri_string {
+                    return Some(doc.server_name.clone());
+                }
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -343,16 +416,19 @@ mod tests {
     ///
     /// The struct should have:
     /// - virtual_uri: VirtualDocumentUri (typed URI with language and region_id)
+    /// - server_name: String (for reverse lookup during didClose)
     #[tokio::test]
     async fn opened_virtual_doc_struct_has_required_fields() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "region-0");
         let doc = OpenedVirtualDoc {
             virtual_uri: virtual_uri.clone(),
+            server_name: "lua".to_string(),
         };
 
         assert_eq!(doc.virtual_uri.language(), "lua");
         assert_eq!(doc.virtual_uri.region_id(), "region-0");
+        assert_eq!(doc.server_name, "lua");
     }
 
     // ========================================
@@ -370,7 +446,9 @@ mod tests {
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "lua-0");
 
         // First call should return true (document not opened yet)
-        let result = tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        let result = tracker
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
         assert!(result, "First call should return true");
 
         // Verify the host_to_virtual mapping was recorded
@@ -381,6 +459,7 @@ mod tests {
         assert_eq!(virtual_docs.len(), 1);
         assert_eq!(virtual_docs[0].virtual_uri.language(), "lua");
         assert_eq!(virtual_docs[0].virtual_uri.region_id(), "lua-0");
+        assert_eq!(virtual_docs[0].server_name, "lua");
     }
 
     /// Test that should_send_didopen records multiple virtual docs for same host.
@@ -394,12 +473,16 @@ mod tests {
 
         // Open first Lua block
         let virtual_uri_0 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "lua-0");
-        let result = tracker.should_send_didopen(&host_uri, &virtual_uri_0).await;
+        let result = tracker
+            .should_send_didopen(&host_uri, &virtual_uri_0, "lua")
+            .await;
         assert!(result, "First Lua block should return true");
 
         // Open second Lua block
         let virtual_uri_1 = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "lua-1");
-        let result = tracker.should_send_didopen(&host_uri, &virtual_uri_1).await;
+        let result = tracker
+            .should_send_didopen(&host_uri, &virtual_uri_1, "lua")
+            .await;
         assert!(result, "Second Lua block should return true");
 
         // Verify both are tracked under the same host
@@ -423,11 +506,15 @@ mod tests {
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "lua-0");
 
         // First call - should return true and record mapping
-        let result = tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        let result = tracker
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
         assert!(result, "First call should return true");
 
         // Second call for same virtual doc - should return false
-        let result = tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        let result = tracker
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
         assert!(!result, "Second call should return false");
 
         // Verify only one entry exists (no duplicate)
@@ -454,7 +541,9 @@ mod tests {
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         // Call should_send_didopen - this reserves the version but doesn't mark as opened
-        let should_open = tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        let should_open = tracker
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
         assert!(should_open, "First call should return true");
 
         // is_document_opened should still return false
@@ -520,7 +609,7 @@ mod tests {
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         let decision = tracker
-            .document_open_decision(&host_uri, &virtual_uri)
+            .document_open_decision(&host_uri, &virtual_uri, "lua")
             .await;
 
         assert_eq!(
@@ -541,11 +630,13 @@ mod tests {
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         // Simulate successful didOpen flow: register then mark opened
-        tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
         tracker.mark_document_opened(&virtual_uri);
 
         let decision = tracker
-            .document_open_decision(&host_uri, &virtual_uri)
+            .document_open_decision(&host_uri, &virtual_uri, "lua")
             .await;
 
         assert_eq!(
@@ -567,11 +658,13 @@ mod tests {
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         // Simulate race condition: another request registered but hasn't finished didOpen
-        tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
         // Deliberately do NOT call mark_document_opened
 
         let decision = tracker
-            .document_open_decision(&host_uri, &virtual_uri)
+            .document_open_decision(&host_uri, &virtual_uri, "lua")
             .await;
 
         assert_eq!(
@@ -595,7 +688,7 @@ mod tests {
 
         // State 1: New document
         let decision = tracker
-            .document_open_decision(&host_uri, &virtual_uri)
+            .document_open_decision(&host_uri, &virtual_uri, "lua")
             .await;
         assert_eq!(decision, DocumentOpenDecision::SendDidOpen);
 
@@ -605,7 +698,7 @@ mod tests {
         // State 2: Registered but not opened (simulates race condition for OTHER callers)
         // Since first call already registered, subsequent call sees PendingError
         let decision = tracker
-            .document_open_decision(&host_uri, &virtual_uri)
+            .document_open_decision(&host_uri, &virtual_uri, "lua")
             .await;
         assert_eq!(
             decision,
@@ -616,7 +709,7 @@ mod tests {
         // State 3: After marking opened
         tracker.mark_document_opened(&virtual_uri);
         let decision = tracker
-            .document_open_decision(&host_uri, &virtual_uri)
+            .document_open_decision(&host_uri, &virtual_uri, "lua")
             .await;
         assert_eq!(
             decision,
@@ -637,7 +730,9 @@ mod tests {
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         // Document was never opened via should_send_didopen
-        let version = tracker.increment_document_version(&virtual_uri).await;
+        let version = tracker
+            .increment_document_version(&virtual_uri, "lua")
+            .await;
         assert!(
             version.is_none(),
             "increment_document_version should return None for unopened document"
@@ -652,14 +747,20 @@ mod tests {
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         // Open the document (sets version to 1)
-        tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
 
         // First increment: 1 -> 2
-        let version = tracker.increment_document_version(&virtual_uri).await;
+        let version = tracker
+            .increment_document_version(&virtual_uri, "lua")
+            .await;
         assert_eq!(version, Some(2), "First increment should return 2");
 
         // Second increment: 2 -> 3
-        let version = tracker.increment_document_version(&virtual_uri).await;
+        let version = tracker
+            .increment_document_version(&virtual_uri, "lua")
+            .await;
         assert_eq!(version, Some(3), "Second increment should return 3");
     }
 
@@ -675,20 +776,26 @@ mod tests {
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         // Open the document
-        tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
 
         // Verify version exists
-        let version = tracker.increment_document_version(&virtual_uri).await;
+        let version = tracker
+            .increment_document_version(&virtual_uri, "lua")
+            .await;
         assert!(
             version.is_some(),
             "Document should have version before untrack"
         );
 
         // Untrack the document
-        tracker.untrack_document(&virtual_uri).await;
+        tracker.untrack_document(&virtual_uri, "lua").await;
 
         // Version should no longer exist
-        let version = tracker.increment_document_version(&virtual_uri).await;
+        let version = tracker
+            .increment_document_version(&virtual_uri, "lua")
+            .await;
         assert!(
             version.is_none(),
             "Document should not have version after untrack"
@@ -703,7 +810,9 @@ mod tests {
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         // Open and mark as opened
-        tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
         tracker.mark_document_opened(&virtual_uri);
         assert!(
             tracker.is_document_opened(&virtual_uri),
@@ -711,7 +820,7 @@ mod tests {
         );
 
         // Untrack the document
-        tracker.untrack_document(&virtual_uri).await;
+        tracker.untrack_document(&virtual_uri, "lua").await;
 
         // Should no longer be marked as opened
         assert!(
@@ -731,10 +840,12 @@ mod tests {
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
         // Open the document (adds to host_to_virtual)
-        tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
 
         // Untrack the document
-        tracker.untrack_document(&virtual_uri).await;
+        tracker.untrack_document(&virtual_uri, "lua").await;
 
         // host_to_virtual should still have the entry
         let host_map = tracker.host_to_virtual.lock().await;
@@ -759,8 +870,12 @@ mod tests {
         let virtual_uri_2 =
             VirtualDocumentUri::new(&url_to_uri(&host_uri), "python", TEST_ULID_PYTHON_0);
 
-        tracker.should_send_didopen(&host_uri, &virtual_uri_1).await;
-        tracker.should_send_didopen(&host_uri, &virtual_uri_2).await;
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri_1, "lua")
+            .await;
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri_2, "python")
+            .await;
 
         // Parse the ULIDs for matching
         let ulid_lua: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
@@ -801,7 +916,9 @@ mod tests {
 
         // Register a virtual doc
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-        tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
 
         // Try to take a different ULID
         let other_ulid: ulid::Ulid = TEST_ULID_LUA_1.parse().unwrap();
@@ -837,7 +954,9 @@ mod tests {
 
         // Register a virtual doc
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-        tracker.should_send_didopen(&host_uri, &virtual_uri).await;
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
 
         // Take with empty ULID list (fast path)
         let taken = tracker.remove_matching_virtual_docs(&host_uri, &[]).await;
@@ -861,9 +980,15 @@ mod tests {
         let virtual_uri_3 =
             VirtualDocumentUri::new(&url_to_uri(&host_uri), "python", TEST_ULID_PYTHON_0);
 
-        tracker.should_send_didopen(&host_uri, &virtual_uri_1).await;
-        tracker.should_send_didopen(&host_uri, &virtual_uri_2).await;
-        tracker.should_send_didopen(&host_uri, &virtual_uri_3).await;
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri_1, "lua")
+            .await;
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri_2, "lua")
+            .await;
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri_3, "python")
+            .await;
 
         // Take both Lua ULIDs
         let ulid_1: ulid::Ulid = TEST_ULID_LUA_0.parse().unwrap();
@@ -883,6 +1008,73 @@ mod tests {
             remaining[0].virtual_uri.language(),
             "python",
             "Remaining doc should be Python"
+        );
+    }
+
+    // ========================================
+    // get_server_for_virtual_uri tests
+    // ========================================
+
+    /// Test that get_server_for_virtual_uri returns the server_name.
+    #[tokio::test]
+    async fn get_server_for_virtual_uri_returns_server_name() {
+        let tracker = DocumentTracker::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
+
+        // Open the document with server_name "lua"
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
+
+        // Lookup should return the server_name
+        let server_name = tracker.get_server_for_virtual_uri(&virtual_uri).await;
+        assert_eq!(server_name, Some("lua".to_string()));
+    }
+
+    /// Test that get_server_for_virtual_uri returns None for unknown document.
+    #[tokio::test]
+    async fn get_server_for_virtual_uri_returns_none_for_unknown() {
+        let tracker = DocumentTracker::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
+
+        // Without opening, lookup should return None
+        let server_name = tracker.get_server_for_virtual_uri(&virtual_uri).await;
+        assert_eq!(server_name, None);
+    }
+
+    /// Test that get_server_for_virtual_uri works with process sharing.
+    ///
+    /// When ts and tsx both use "tsgo" as server_name, the reverse lookup
+    /// should return "tsgo" for both languages.
+    #[tokio::test]
+    async fn get_server_for_virtual_uri_with_process_sharing() {
+        let tracker = DocumentTracker::new();
+        let host_uri = Url::parse("file:///test/doc.md").unwrap();
+
+        // Open a ts document with server_name "tsgo"
+        let virtual_uri_ts =
+            VirtualDocumentUri::new(&url_to_uri(&host_uri), "typescript", TEST_ULID_LUA_0);
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri_ts, "tsgo")
+            .await;
+
+        // Open a tsx document with server_name "tsgo"
+        let virtual_uri_tsx =
+            VirtualDocumentUri::new(&url_to_uri(&host_uri), "typescriptreact", TEST_ULID_LUA_1);
+        tracker
+            .should_send_didopen(&host_uri, &virtual_uri_tsx, "tsgo")
+            .await;
+
+        // Both should return "tsgo" as server_name
+        assert_eq!(
+            tracker.get_server_for_virtual_uri(&virtual_uri_ts).await,
+            Some("tsgo".to_string())
+        );
+        assert_eq!(
+            tracker.get_server_for_virtual_uri(&virtual_uri_tsx).await,
+            Some("tsgo".to_string())
         );
     }
 }

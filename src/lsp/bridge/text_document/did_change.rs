@@ -51,11 +51,22 @@ impl LanguageServerPool {
             // Check if this virtual doc has ACTUALLY been opened (didOpen sent to downstream)
             // per ADR-0015. This prevents sending didChange before didOpen.
             if self.is_document_opened(&virtual_uri) {
+                // Look up server_name from tracking (reverse lookup via OpenedVirtualDoc.server_name)
+                // This is required because pool is keyed by server_name, not language.
+                let Some(server_name) = self.get_server_for_virtual_uri(&virtual_uri).await else {
+                    log::warn!(
+                        target: "kakehashi::bridge",
+                        "Could not find server_name for virtual_uri: {}, skipping didChange",
+                        virtual_uri.to_uri_string()
+                    );
+                    continue;
+                };
+
                 // Get version and send didChange
-                if let Some(version) = self.increment_document_version(&virtual_uri).await {
+                if let Some(version) = self.increment_document_version(&virtual_uri, &server_name).await {
                     let handle = {
                         let connections = self.connections().await;
-                        let Some(handle) = connections.get(language.as_str()) else {
+                        let Some(handle) = connections.get(&server_name) else {
                             continue;
                         };
 
