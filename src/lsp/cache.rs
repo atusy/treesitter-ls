@@ -190,17 +190,14 @@ impl CacheCoordinator {
             // Get existing regions for cache cleanup and content comparison
             let existing_regions = self.injection_map.get(uri);
 
-            // Build lookup map for existing regions by region_id
-            let existing_by_id: HashMap<&str, &CacheableInjectionRegion> =
-                existing_regions
-                    .as_ref()
-                    .map(|regions| {
-                        regions
-                            .iter()
-                            .map(|r| (r.region_id.as_str(), r))
-                            .collect()
-                    })
-                    .unwrap_or_default();
+            // Build lookup map for existing regions by region_id (skip if no existing regions)
+            let existing_by_id: Option<HashMap<&str, &CacheableInjectionRegion>> =
+                existing_regions.as_ref().map(|regions| {
+                    regions
+                        .iter()
+                        .map(|r| (r.region_id.as_str(), r))
+                        .collect()
+                });
 
             // Convert to CacheableInjectionRegion using position-based ULIDs
             // RegionIdTracker provides stable IDs based on (uri, start_byte, end_byte, kind)
@@ -222,11 +219,14 @@ impl CacheCoordinator {
                     // Position-based ULIDs are stable, but cached tokens become invalid when:
                     // - content_hash changes: code content was modified
                     // - language changes: info string changed (e.g., lua → python)
-                    if let Some(old) = existing_by_id.get(region_id.as_str()) {
-                        let content_changed = old.content_hash != new_region.content_hash;
-                        let language_changed = old.language != new_region.language;
-                        if content_changed || language_changed {
-                            self.injection_token_cache.remove(uri, &region_id);
+                    // Skip this check entirely if no existing regions (first document open)
+                    if let Some(ref map) = existing_by_id {
+                        if let Some(old) = map.get(region_id.as_str()) {
+                            let content_changed = old.content_hash != new_region.content_hash;
+                            let language_changed = old.language != new_region.language;
+                            if content_changed || language_changed {
+                                self.injection_token_cache.remove(uri, &region_id);
+                            }
                         }
                     }
 
