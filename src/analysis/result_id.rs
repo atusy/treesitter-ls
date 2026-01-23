@@ -1,14 +1,28 @@
-//! Atomic result_id generation for semantic tokens.
+//! Atomic result_id generation for LSP SemanticTokens responses.
 //!
-//! Provides sequential, thread-safe result IDs for LSP semantic token responses.
+//! Provides sequential, thread-safe result IDs exclusively for LSP semantic token responses.
+//! These IDs enable efficient delta computation between `textDocument/semanticTokens/full`
+//! and `textDocument/semanticTokens/full/delta` requests.
+//!
+//! **Note**: This is distinct from injection region IDs (ULIDs from `RegionIdTracker`),
+//! which identify injection regions for bridge server communication.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TOKEN_RESULT_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-/// Generate a unique, monotonically increasing result_id for semantic tokens.
+/// Generate a unique, monotonically increasing result_id for LSP SemanticTokens.
 ///
 /// This function is thread-safe and returns sequential string IDs like "1", "2", "3", etc.
+///
+/// # Usage
+///
+/// Used exclusively for the `result_id` field in `SemanticTokens` and
+/// `SemanticTokensDelta` LSP responses. Not for injection region identification.
+///
+/// # See Also
+///
+/// - `RegionIdTracker::get_or_create()` for injection region IDs (position-based ULIDs)
 pub fn next_result_id() -> String {
     TOKEN_RESULT_COUNTER
         .fetch_add(1, Ordering::SeqCst)
