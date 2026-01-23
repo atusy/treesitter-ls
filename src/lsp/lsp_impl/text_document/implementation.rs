@@ -101,8 +101,8 @@ impl Kakehashi {
         let upstream_request_id = match get_current_request_id() {
             Some(Id::Number(n)) => UpstreamId::Number(n),
             Some(Id::String(s)) => UpstreamId::String(s),
-            // For notifications without ID or null ID, use 0 as fallback
-            None | Some(Id::Null) => UpstreamId::Number(0),
+            // For notifications without ID or null ID, use Null to avoid collision with ID 0
+            None | Some(Id::Null) => UpstreamId::Null,
         };
         let response = self
             .bridge

@@ -57,12 +57,20 @@ use super::connection::AsyncBridgeConnection;
 ///
 /// Per LSP 3.17: "interface CancelParams { id: integer | string; }"
 /// This type ensures we can forward cancel requests for clients using either ID type.
+///
+/// # Null Variant
+///
+/// The `Null` variant handles cases where the request ID is unavailable (e.g.,
+/// `None` or `Id::Null`). This is distinct from `Number(0)` to avoid collision
+/// with valid ID 0 requests.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum UpstreamId {
     /// Numeric request ID (most common)
     Number(i64),
     /// String request ID (less common but valid per LSP spec)
     String(String),
+    /// Null/missing request ID (edge case, distinct from Number(0))
+    Null,
 }
 
 impl std::fmt::Display for UpstreamId {
@@ -70,6 +78,7 @@ impl std::fmt::Display for UpstreamId {
         match self {
             UpstreamId::Number(n) => write!(f, "{}", n),
             UpstreamId::String(s) => write!(f, "\"{}\"", s),
+            UpstreamId::Null => write!(f, "null"),
         }
     }
 }
@@ -2119,7 +2128,9 @@ mod tests {
     async fn forward_cancel_returns_error_when_no_connection() {
         let pool = LanguageServerPool::new();
 
-        let result = pool.forward_cancel("nonexistent", &UpstreamId::Number(42)).await;
+        let result = pool
+            .forward_cancel("nonexistent", &UpstreamId::Number(42))
+            .await;
 
         assert!(
             result.is_err(),
@@ -2173,7 +2184,10 @@ mod tests {
         pool.register_upstream_request(UpstreamId::Number(42), "lua");
 
         let registry = pool.upstream_request_registry.lock().unwrap();
-        assert_eq!(registry.get(&UpstreamId::Number(42)), Some(&"lua".to_string()));
+        assert_eq!(
+            registry.get(&UpstreamId::Number(42)),
+            Some(&"lua".to_string())
+        );
     }
 
     /// Test that unregister_upstream_request removes the mapping.
@@ -2212,7 +2226,9 @@ mod tests {
         pool.register_upstream_request(upstream_id.clone(), "lua");
 
         // Forward cancel by upstream ID only (no language parameter)
-        let result = pool.forward_cancel_by_upstream_id(upstream_id.clone()).await;
+        let result = pool
+            .forward_cancel_by_upstream_id(upstream_id.clone())
+            .await;
 
         // Should succeed because the registry has the mapping
         assert!(
@@ -2228,7 +2244,9 @@ mod tests {
         let pool = LanguageServerPool::new();
 
         // Don't register anything in the registry
-        let result = pool.forward_cancel_by_upstream_id(UpstreamId::Number(999)).await;
+        let result = pool
+            .forward_cancel_by_upstream_id(UpstreamId::Number(999))
+            .await;
 
         assert!(
             result.is_err(),
@@ -2402,10 +2420,14 @@ mod tests {
         let pool = LanguageServerPool::new();
 
         // Test: no connection
-        let _ = pool.forward_cancel("nonexistent", &UpstreamId::Number(1)).await;
+        let _ = pool
+            .forward_cancel("nonexistent", &UpstreamId::Number(1))
+            .await;
 
         // Test: not in registry
-        let _ = pool.forward_cancel_by_upstream_id(UpstreamId::Number(999)).await;
+        let _ = pool
+            .forward_cancel_by_upstream_id(UpstreamId::Number(999))
+            .await;
 
         // Test: connection not ready
         let handle_init = create_handle_with_state(ConnectionState::Initializing).await;
@@ -2413,7 +2435,9 @@ mod tests {
             .lock()
             .await
             .insert("init_lang".to_string(), Arc::clone(&handle_init));
-        let _ = pool.forward_cancel("init_lang", &UpstreamId::Number(2)).await;
+        let _ = pool
+            .forward_cancel("init_lang", &UpstreamId::Number(2))
+            .await;
 
         // Test: unknown upstream ID
         let handle_ready = create_handle_with_state(ConnectionState::Ready).await;
@@ -2421,7 +2445,9 @@ mod tests {
             .lock()
             .await
             .insert("ready_lang".to_string(), Arc::clone(&handle_ready));
-        let _ = pool.forward_cancel("ready_lang", &UpstreamId::Number(3)).await;
+        let _ = pool
+            .forward_cancel("ready_lang", &UpstreamId::Number(3))
+            .await;
 
         // Check metrics
         let (successful, no_conn, not_ready, unknown_id, not_in_reg) =

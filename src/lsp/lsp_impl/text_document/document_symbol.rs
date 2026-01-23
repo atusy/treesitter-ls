@@ -74,8 +74,8 @@ impl Kakehashi {
         let upstream_request_id = match get_current_request_id() {
             Some(tower_lsp_server::jsonrpc::Id::Number(n)) => UpstreamId::Number(n),
             Some(tower_lsp_server::jsonrpc::Id::String(s)) => UpstreamId::String(s),
-            // For notifications without ID or null ID, use 0 as fallback
-            None | Some(tower_lsp_server::jsonrpc::Id::Null) => UpstreamId::Number(0),
+            // For notifications without ID or null ID, use Null to avoid collision with ID 0
+            None | Some(tower_lsp_server::jsonrpc::Id::Null) => UpstreamId::Null,
         };
 
         // Collect document symbols from all injection regions

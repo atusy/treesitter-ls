@@ -95,15 +95,15 @@ impl LivenessTimerState {
     /// Called on any message activity (response or notification).
     /// Only resets if timer is currently active.
     fn reset(&mut self, lang_prefix: &str) {
-        if let Some(timeout) = self.timeout {
-            if self.timer.is_some() {
-                debug!(
-                    target: "kakehashi::bridge::reader",
-                    "{}Liveness timer reset on message activity",
-                    lang_prefix
-                );
-                self.timer = Some(new_liveness_timer(timeout));
-            }
+        if let Some(timeout) = self.timeout
+            && self.timer.is_some()
+        {
+            debug!(
+                target: "kakehashi::bridge::reader",
+                "{}Liveness timer reset on message activity",
+                lang_prefix
+            );
+            self.timer = Some(new_liveness_timer(timeout));
         }
     }
 

@@ -529,8 +529,16 @@ mod tests {
             .unwrap();
 
         // Verify mappings exist
-        assert!(router.lookup_downstream_id(&UpstreamId::Number(100)).is_some());
-        assert!(router.lookup_downstream_id(&UpstreamId::Number(200)).is_some());
+        assert!(
+            router
+                .lookup_downstream_id(&UpstreamId::Number(100))
+                .is_some()
+        );
+        assert!(
+            router
+                .lookup_downstream_id(&UpstreamId::Number(200))
+                .is_some()
+        );
 
         router.fail_all("connection lost");
 

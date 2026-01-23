@@ -20,8 +20,8 @@ use std::task::{Context, Poll};
 use tower::Service;
 use tower_lsp_server::jsonrpc::{Id, Request, Response};
 
-use super::bridge::UpstreamId;
 use super::bridge::LanguageServerPool;
+use super::bridge::UpstreamId;
 
 tokio::task_local! {
     /// Task-local storage for the current upstream request ID.
@@ -124,13 +124,16 @@ where
             && let Some(params) = req.params()
         {
             // Extract the ID as either numeric or string (per LSP spec: integer | string)
-            let id_to_cancel = if let Some(n) = params.get("id").and_then(|v| v.as_i64()) {
-                Some(UpstreamId::Number(n))
-            } else if let Some(s) = params.get("id").and_then(|v| v.as_str()) {
-                Some(UpstreamId::String(s.to_string()))
-            } else {
-                None
-            };
+            let id_to_cancel = params
+                .get("id")
+                .and_then(|v| v.as_i64())
+                .map(UpstreamId::Number)
+                .or_else(|| {
+                    params
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| UpstreamId::String(s.to_string()))
+                });
 
             if let Some(upstream_id) = id_to_cancel {
                 let forwarder = forwarder.clone();

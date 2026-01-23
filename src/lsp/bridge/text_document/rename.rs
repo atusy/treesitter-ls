@@ -59,16 +59,15 @@ impl LanguageServerPool {
         self.register_upstream_request(upstream_request_id.clone(), injection_language);
 
         // Register request with upstream ID mapping for cancel forwarding
-        let (request_id, response_rx) = match handle
-            .register_request_with_upstream(Some(upstream_request_id.clone()))
-        {
-            Ok(result) => result,
-            Err(e) => {
-                // Clean up the pool registration on failure
-                self.unregister_upstream_request(&upstream_request_id);
-                return Err(e);
-            }
-        };
+        let (request_id, response_rx) =
+            match handle.register_request_with_upstream(Some(upstream_request_id.clone())) {
+                Ok(result) => result,
+                Err(e) => {
+                    // Clean up the pool registration on failure
+                    self.unregister_upstream_request(&upstream_request_id);
+                    return Err(e);
+                }
+            };
 
         // Build rename request
         let rename_request = build_bridge_rename_request(
