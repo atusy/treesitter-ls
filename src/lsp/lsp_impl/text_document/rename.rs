@@ -4,6 +4,7 @@ use tower_lsp_server::jsonrpc::{Id, Result};
 use tower_lsp_server::ls_types::{MessageType, RenameParams, WorkspaceEdit};
 
 use crate::language::InjectionResolver;
+use crate::lsp::bridge::UpstreamId;
 use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
@@ -95,9 +96,10 @@ impl Kakehashi {
         // Send rename request via language server pool
         // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
         let upstream_request_id = match get_current_request_id() {
-            Some(Id::Number(n)) => n,
-            // For string IDs or no ID, use 0 as fallback
-            _ => 0,
+            Some(Id::Number(n)) => UpstreamId::Number(n),
+            Some(Id::String(s)) => UpstreamId::String(s),
+            // For notifications without ID or null ID, use Null to avoid collision with ID 0
+            None | Some(Id::Null) => UpstreamId::Null,
         };
         let response = self
             .bridge

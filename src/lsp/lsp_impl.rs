@@ -150,6 +150,33 @@ impl Kakehashi {
         }
     }
 
+    /// Create a Kakehashi instance with an externally-provided pool.
+    ///
+    /// This is used when the pool needs to be shared with other components,
+    /// such as the cancel forwarding middleware.
+    pub fn with_pool(
+        client: Client,
+        pool: std::sync::Arc<super::bridge::LanguageServerPool>,
+    ) -> Self {
+        let language = LanguageCoordinator::new();
+        let parser_pool = language.create_document_parser_pool();
+
+        // Initialize auto-install manager with crash detection
+        let failed_parsers = AutoInstallManager::init_failed_parser_registry();
+        let auto_install = AutoInstallManager::new(InstallingLanguages::new(), failed_parsers);
+
+        Self {
+            client,
+            language,
+            parser_pool: Mutex::new(parser_pool),
+            documents: DocumentStore::new(),
+            cache: CacheCoordinator::new(),
+            settings_manager: SettingsManager::new(),
+            auto_install,
+            bridge: BridgeCoordinator::with_pool(pool),
+        }
+    }
+
     /// Create a `ClientNotifier` for centralized client communication.
     ///
     /// The notifier wraps the LSP client and references the stored capabilities,

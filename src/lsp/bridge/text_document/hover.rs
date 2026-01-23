@@ -9,7 +9,7 @@ use crate::config::settings::BridgeServerConfig;
 use tower_lsp_server::ls_types::Position;
 use url::Url;
 
-use super::super::pool::LanguageServerPool;
+use super::super::pool::{LanguageServerPool, UpstreamId};
 use super::super::protocol::{
     VirtualDocumentUri, build_bridge_hover_request, transform_hover_response_to_host,
 };
@@ -24,22 +24,8 @@ impl LanguageServerPool {
     /// 4. Send the hover request (release writer lock after)
     /// 5. Wait for response via oneshot channel (no Mutex held)
     ///
-    /// # Note on `_upstream_request_id`
-    ///
-    /// This parameter is intentionally unused. Originally, the upstream request ID was
-    /// passed directly to downstream servers (per ADR-0016's "Request ID Semantics").
-    /// However, using upstream IDs caused ID collisions when multiple downstream servers
-    /// were active, since each server expects unique request IDs within its connection.
-    ///
-    /// The current implementation generates unique downstream request IDs via
-    /// `register_request()` (using an atomic counter per connection). The parameter is
-    /// retained for:
-    /// - **API consistency**: All text_document handlers share a uniform signature
-    /// - **Future correlation logging**: May be used to correlate upstream/downstream
-    ///   request pairs in debug logs
-    ///
-    /// The underscore prefix signals "intentionally unused" to both the compiler and
-    /// code reviewers.
+    /// The `upstream_request_id` enables $/cancelRequest forwarding.
+    /// See [`LanguageServerPool::register_upstream_request()`] for the full flow.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_hover_request(
         &self,
@@ -50,7 +36,7 @@ impl LanguageServerPool {
         region_id: &str,
         region_start_line: u32,
         virtual_content: &str,
-        _upstream_request_id: i64,
+        upstream_request_id: UpstreamId,
     ) -> io::Result<serde_json::Value> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
@@ -64,8 +50,22 @@ impl LanguageServerPool {
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
 
-        // Register request with router to get oneshot receiver
-        let (request_id, response_rx) = handle.register_request()?;
+        // Register in the upstream request registry FIRST for cancel lookup.
+        // This order matters: if a cancel arrives between pool and router registration,
+        // the cancel will fail at the router lookup (which is acceptable for best-effort
+        // cancel semantics) rather than finding the language but no downstream ID.
+        self.register_upstream_request(upstream_request_id.clone(), injection_language);
+
+        // Register request with upstream ID mapping for cancel forwarding
+        let (request_id, response_rx) =
+            match handle.register_request_with_upstream(Some(upstream_request_id.clone())) {
+                Ok(result) => result,
+                Err(e) => {
+                    // Clean up the pool registration on failure
+                    self.unregister_upstream_request(&upstream_request_id);
+                    return Err(e);
+                }
+            };
 
         // Build hover request
         let hover_request = build_bridge_hover_request(
@@ -78,30 +78,39 @@ impl LanguageServerPool {
         );
 
         // Send messages while holding writer lock, then release
+        // Use a closure for cleanup on any failure path
+        let cleanup = || {
+            handle.router().remove(request_id);
+            self.unregister_upstream_request(&upstream_request_id);
+        };
+
         {
             let mut writer = handle.writer().await;
 
             // Send didOpen notification only if document hasn't been opened yet
-            self.ensure_document_opened(
-                &mut writer,
-                host_uri,
-                &virtual_uri,
-                virtual_content,
-                || {
-                    handle.router().remove(request_id);
-                },
-            )
-            .await?;
+            if let Err(e) = self
+                .ensure_document_opened(&mut writer, host_uri, &virtual_uri, virtual_content)
+                .await
+            {
+                cleanup();
+                return Err(e);
+            }
 
-            writer.write_message(&hover_request).await?;
+            if let Err(e) = writer.write_message(&hover_request).await {
+                cleanup();
+                return Err(e);
+            }
         } // writer lock released here
 
         // Wait for response via oneshot channel (no Mutex held) with timeout
-        let response = handle.wait_for_response(request_id, response_rx).await?;
+        let response = handle.wait_for_response(request_id, response_rx).await;
+
+        // Unregister from the upstream request registry regardless of result
+        self.unregister_upstream_request(&upstream_request_id);
 
         // Transform response to host coordinates
         Ok(transform_hover_response_to_host(
-            response,
+            response?,
             region_start_line,
         ))
     }

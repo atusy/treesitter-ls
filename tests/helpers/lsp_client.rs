@@ -253,6 +253,37 @@ impl LspClient {
         self.stdin = None;
     }
 
+    /// Get the current request ID counter (for cancel testing).
+    pub(crate) fn current_request_id(&self) -> i64 {
+        self.request_id
+    }
+
+    /// Send an LSP request without waiting for response.
+    ///
+    /// Returns the request ID used. Caller is responsible for receiving the response
+    /// via `receive_response_for_id_public()`.
+    pub(crate) fn send_request_async(&mut self, method: &str, params: Value) -> i64 {
+        self.request_id += 1;
+        let request_id = self.request_id;
+
+        let mut request = serde_json::Map::new();
+        request.insert("jsonrpc".to_string(), json!("2.0"));
+        request.insert("id".to_string(), json!(request_id));
+        request.insert("method".to_string(), json!(method));
+
+        if !params.is_null() {
+            request.insert("params".to_string(), params);
+        }
+
+        self.send_message(&Value::Object(request));
+        request_id
+    }
+
+    /// Receive response for a specific request ID (public version).
+    pub(crate) fn receive_response_for_id_public(&mut self, expected_id: i64) -> Value {
+        self.receive_response_for_id(expected_id)
+    }
+
     /// Check if the server process is still running.
     pub(crate) fn is_running(&mut self) -> bool {
         self.child

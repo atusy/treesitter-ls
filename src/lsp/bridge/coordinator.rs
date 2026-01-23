@@ -9,6 +9,8 @@
 //! - Tracks stable ULID-based region IDs via `RegionIdTracker`
 //! - Provides bridge config lookup with wildcard resolution
 
+use std::sync::Arc;
+
 use ulid::Ulid;
 use url::Url;
 
@@ -31,8 +33,28 @@ use super::LanguageServerPool;
 /// for handlers that need direct access. This is a pragmatic trade-off for Phase 5:
 /// - Keeps handler changes minimal (just path changes, not signature changes)
 /// - Allows future phases to encapsulate these internals further
+///
+/// The pool is wrapped in `Arc` to enable sharing with the cancel forwarding middleware.
+///
+/// # API Design Pattern (Sprint 15 Retrospective)
+///
+/// Two access patterns coexist:
+///
+/// 1. **Direct pool access** (preferred for NEW code): Use `self.bridge.pool().*` to call
+///    pool methods directly. This is the primary pattern for LSP request handlers.
+///    - Pros: No coordinator changes needed, smaller API surface
+///    - Use for: send_*_request(), forward_cancel(), new pool operations
+///
+/// 2. **Delegating methods** (for common lifecycle operations): Methods like
+///    `close_host_document()`, `shutdown_all()`, etc. delegate to pool methods.
+///    - Pros: Semantic naming, hides pool implementation details
+///    - Use for: Document lifecycle (open/close), shutdown, region ID management
+///
+/// **Decision Guide**: Use direct pool access by default. Only add a delegating method
+/// if the operation is (a) used in 3+ places, (b) involves coordinator-level logic
+/// (e.g., combining pool + region_id_tracker), or (c) needs semantic naming for clarity.
 pub(crate) struct BridgeCoordinator {
-    pool: LanguageServerPool,
+    pool: Arc<LanguageServerPool>,
     region_id_tracker: RegionIdTracker,
 }
 
@@ -40,7 +62,18 @@ impl BridgeCoordinator {
     /// Create a new bridge coordinator with fresh pool and tracker.
     pub(crate) fn new() -> Self {
         Self {
-            pool: LanguageServerPool::new(),
+            pool: Arc::new(LanguageServerPool::new()),
+            region_id_tracker: RegionIdTracker::new(),
+        }
+    }
+
+    /// Create a bridge coordinator with an existing pool.
+    ///
+    /// This is used when the pool needs to be shared with external components
+    /// like the cancel forwarding middleware.
+    pub(crate) fn with_pool(pool: Arc<LanguageServerPool>) -> Self {
+        Self {
+            pool,
             region_id_tracker: RegionIdTracker::new(),
         }
     }

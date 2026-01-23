@@ -18,51 +18,13 @@ const scrum: ScrumDashboard = {
     ],
   },
   product_backlog: [
-    {
-      id: "pbi-liveness-timeout",
-      story: {
-        role: "developer using tree-sitter-ls with multiple embedded languages",
-        capability: "have hung downstream servers detected and recovered",
-        benefit: "unresponsive servers do not block LSP features indefinitely",
-      },
-      acceptance_criteria: [
-        { criterion: "LivenessTimeout newtype (30-120s configurable) validates range", verification: "Unit test: LivenessTimeout rejects <30s and >120s, accepts 30-120s inclusive" },
-        { criterion: "Liveness timer starts when pending count transitions 0 to 1 in Ready state", verification: "Unit test: first request registration starts timer; timer not running when pending=0" },
-        { criterion: "Liveness timer resets on any stdout activity (response or notification)", verification: "Unit test: reader task receiving message resets timer to full duration" },
-        { criterion: "Liveness timer stops when pending count returns to 0", verification: "Unit test: last response received (pending 1->0) stops timer without state transition" },
-        { criterion: "Ready to Failed transition on liveness timeout expiry", verification: "Unit test: timeout fires while pending>0 triggers Ready->Failed, calls router.fail_all()" },
-        { criterion: "Liveness timeout disabled during Closing state (global shutdown overrides)", verification: "Unit test: begin_shutdown() cancels active liveness timer; timer does not start in Closing state" },
-      ],
-      status: "done",
-      refinement_notes: [
-        "ADR-0014: Liveness timeout detects zombie servers (process alive but unresponsive); state-based gating ensures timer only active when Ready with pending>0",
-        "ADR-0018: Liveness is Tier 2 timeout (30-120s); Global shutdown (Tier 3) overrides - liveness STOPS when entering Closing state",
-        "Pattern: Follow GlobalShutdownTimeout newtype (src/lsp/bridge/pool/shutdown_timeout.rs) - new() with validation, default(), as_duration()",
-        "Implementation: Add liveness_timer field to reader task or ConnectionHandle; use tokio::time::sleep with select! for cancellation",
-        "Pending count: ResponseRouter.pending_count() exists (#[cfg(test)]); consider making pub(crate) or track count in ConnectionHandle",
-        "Timer reset signal: Reader task handle_message() must signal timer reset on ANY message (response OR notification), not just routed responses",
-        "State transition: On timeout, set ConnectionState::Failed via handle.set_state(); router.fail_all() ensures pending requests get error responses",
-        "Recovery: Failed state triggers SpawnNew action on next request (existing pattern in decide_connection_action())",
-        "Testing: Use mock slow server (cat >/dev/null) with short timeout; verify timer reset with periodic stdout activity",
-      ],
-    },
-    {
-      id: "pbi-cancellation-forwarding",
-      story: {
-        role: "developer using tree-sitter-ls with multiple embedded languages",
-        capability: "have cancellation requests forwarded to downstream servers",
-        benefit: "cancelled operations release server resources and respect client intent",
-      },
-      acceptance_criteria: [
-        { criterion: "Forward $/cancelRequest notification to downstream server", verification: "Integration test: cancel notification reaches downstream server" },
-        { criterion: "Keep pending request entry after forwarding cancel", verification: "Unit test: pending map still contains request after cancel forwarded" },
-        { criterion: "Forward server response (result or REQUEST_CANCELLED)", verification: "Integration test: server's cancel response (either type) reaches client" },
-      ],
-      status: "draft",
-    },
+    // All current PBIs are done - Product Goal achieved!
+    // Done PBIs: pbi-liveness-timeout (Sprint 14), pbi-cancellation-forwarding (Sprint 15)
   ],
   sprint: null,
   completed: [
+    // Sprint 15: 3 phases, 6 subtasks, key commits: a874a7d9, 52d7c3d0, a0c16e97
+    { number: 15, pbi_id: "pbi-cancellation-forwarding", goal: "Implement $/cancelRequest notification forwarding to downstream servers while preserving pending request entries", status: "done", subtasks: [] },
     // Sprint 14: 4 phases, 6 acceptance criteria, key commits: eefa609a, 67b9db3d, b2721d65, cfe5cd33
     { number: 14, pbi_id: "pbi-liveness-timeout", goal: "Implement liveness timeout to detect and recover from hung downstream servers", status: "done", subtasks: [] },
     // Sprint 13: 5 phases, 7 subtasks, key commits: b4f667bb, c0e58e62, 7e88b266, 4155548f, 23131874, aaa2954b, b76d5878
@@ -78,6 +40,11 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 15, improvements: [
+      { action: "Document BridgeCoordinator delegation pattern: handlers access pool directly, delegating methods added to coordinator are unused - clarify API design expectations upfront", timing: "immediate", status: "completed", outcome: "Added API Design Pattern section to coordinator.rs documenting two access patterns: direct pool access (preferred) vs delegating methods (convenience). Clarifies YAGNI principle for new features." },
+      { action: "Run 'make check' after each green phase, not just at review - catches Clippy issues (missing Default impl, nested if) earlier", timing: "sprint", status: "active", outcome: null },
+      { action: "Notification forwarding pattern validated: CancelMap design cleanly separates upstream/downstream ID mapping; similar pattern reusable for other notifications requiring ID translation", timing: "immediate", status: "completed", outcome: "CancelMap with DashMap provided clean thread-safe upstream->downstream mapping; retain() pattern acceptable for typical request counts." },
+    ] },
     { sprint: 14, improvements: [
       { action: "Pattern validated: LivenessTimeout reused GlobalShutdownTimeout newtype pattern; BoundedDuration extraction viable for future", timing: "immediate", status: "completed", outcome: "Sprint 14 reused validation pattern from Sprint 13 without issues." },
       { action: "Timer infrastructure in reader task scales well - select! multiplexing isolates liveness from connection lifecycle", timing: "immediate", status: "completed", outcome: "Clean separation of concerns validated." },

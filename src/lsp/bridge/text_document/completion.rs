@@ -9,7 +9,7 @@ use crate::config::settings::BridgeServerConfig;
 use tower_lsp_server::ls_types::Position;
 use url::Url;
 
-use super::super::pool::LanguageServerPool;
+use super::super::pool::{LanguageServerPool, UpstreamId};
 use super::super::protocol::{
     VirtualDocumentUri, build_bridge_completion_request, build_bridge_didchange_notification,
     transform_completion_response_to_host,
@@ -25,8 +25,8 @@ impl LanguageServerPool {
     /// 4. Send the completion request (release writer lock after)
     /// 5. Wait for response via oneshot channel (no Mutex held)
     ///
-    /// See [`send_hover_request`](Self::send_hover_request) for documentation on why
-    /// `_upstream_request_id` is intentionally unused.
+    /// The `upstream_request_id` enables $/cancelRequest forwarding.
+    /// See [`LanguageServerPool::register_upstream_request()`] for the full flow.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_completion_request(
         &self,
@@ -37,7 +37,7 @@ impl LanguageServerPool {
         region_id: &str,
         region_start_line: u32,
         virtual_content: &str,
-        _upstream_request_id: i64,
+        upstream_request_id: UpstreamId,
     ) -> io::Result<serde_json::Value> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
@@ -51,8 +51,22 @@ impl LanguageServerPool {
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
 
-        // Register request with router to get oneshot receiver
-        let (request_id, response_rx) = handle.register_request()?;
+        // Register in the upstream request registry FIRST for cancel lookup.
+        // This order matters: if a cancel arrives between pool and router registration,
+        // the cancel will fail at the router lookup (which is acceptable for best-effort
+        // cancel semantics) rather than finding the language but no downstream ID.
+        self.register_upstream_request(upstream_request_id.clone(), injection_language);
+
+        // Register request with upstream ID mapping for cancel forwarding
+        let (request_id, response_rx) =
+            match handle.register_request_with_upstream(Some(upstream_request_id.clone())) {
+                Ok(result) => result,
+                Err(e) => {
+                    // Clean up the pool registration on failure
+                    self.unregister_upstream_request(&upstream_request_id);
+                    return Err(e);
+                }
+            };
 
         // Build completion request
         let completion_request = build_bridge_completion_request(
@@ -65,6 +79,12 @@ impl LanguageServerPool {
         );
 
         // Send messages while holding writer lock, then release
+        // Use a closure for cleanup on any failure path
+        let cleanup = || {
+            handle.router().remove(request_id);
+            self.unregister_upstream_request(&upstream_request_id);
+        };
+
         {
             let mut writer = handle.writer().await;
 
@@ -72,16 +92,13 @@ impl LanguageServerPool {
             let was_already_opened = self.is_document_opened(&virtual_uri);
 
             // Send didOpen notification only if document hasn't been opened yet
-            self.ensure_document_opened(
-                &mut writer,
-                host_uri,
-                &virtual_uri,
-                virtual_content,
-                || {
-                    handle.router().remove(request_id);
-                },
-            )
-            .await?;
+            if let Err(e) = self
+                .ensure_document_opened(&mut writer, host_uri, &virtual_uri, virtual_content)
+                .await
+            {
+                cleanup();
+                return Err(e);
+            }
 
             // Document already opened: send didChange with incremented version
             if was_already_opened
@@ -94,18 +111,27 @@ impl LanguageServerPool {
                     virtual_content,
                     version,
                 );
-                writer.write_message(&did_change).await?;
+                if let Err(e) = writer.write_message(&did_change).await {
+                    cleanup();
+                    return Err(e);
+                }
             }
 
-            writer.write_message(&completion_request).await?;
+            if let Err(e) = writer.write_message(&completion_request).await {
+                cleanup();
+                return Err(e);
+            }
         } // writer lock released here
 
         // Wait for response via oneshot channel (no Mutex held) with timeout
-        let response = handle.wait_for_response(request_id, response_rx).await?;
+        let response = handle.wait_for_response(request_id, response_rx).await;
+
+        // Unregister from the upstream request registry regardless of result
+        self.unregister_upstream_request(&upstream_request_id);
 
         // Transform response to host coordinates
         Ok(transform_completion_response_to_host(
-            response,
+            response?,
             region_start_line,
         ))
     }
