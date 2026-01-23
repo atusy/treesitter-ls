@@ -404,8 +404,14 @@ impl Kakehashi {
             // Store the parsed document
             if let Some(tree) = parsed_tree {
                 // Populate InjectionMap with injection regions for targeted cache invalidation
-                self.cache
-                    .populate_injections(&uri, &text, &tree, &language_name, &self.language);
+                self.cache.populate_injections(
+                    &uri,
+                    &text,
+                    &tree,
+                    &language_name,
+                    &self.language,
+                    self.bridge.region_id_tracker(),
+                );
 
                 if !edits.is_empty() {
                     self.documents

@@ -27,15 +27,16 @@
 //! - Semantic token operations (get, store)
 //! - Request tracking (start, is_active, finish, cancel)
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use tower_lsp_server::ls_types::SemanticTokens;
 use tree_sitter::{InputEdit, Tree};
 use url::Url;
 
-use crate::analysis::{InjectionMap, InjectionTokenCache, SemanticTokenCache, next_result_id};
+use crate::analysis::{InjectionMap, InjectionTokenCache, SemanticTokenCache};
 use crate::language::LanguageCoordinator;
 use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
+use crate::language::RegionIdTracker;
 
 use super::semantic_request_tracker::SemanticRequestTracker;
 
@@ -149,9 +150,11 @@ impl CacheCoordinator {
     /// This enables targeted cache invalidation (PBI-083): when an edit occurs,
     /// we can check which injection regions overlap and only invalidate those.
     ///
-    /// AC6: Also clears stale InjectionTokenCache entries for removed regions.
-    /// Since result_ids are regenerated on each parse, we clear the entire
-    /// document's injection token cache and let it be repopulated on demand.
+    /// Region IDs are generated using `RegionIdTracker` which provides position-based
+    /// ULIDs. The same (uri, start_byte, end_byte, kind) always produces the same ULID,
+    /// enabling stable IDs across document edits when position adjustments are applied.
+    ///
+    /// Also clears stale InjectionTokenCache entries for removed regions.
     pub(crate) fn populate_injections(
         &self,
         uri: &Url,
@@ -159,6 +162,7 @@ impl CacheCoordinator {
         tree: &Tree,
         language_name: &str,
         language: &LanguageCoordinator,
+        tracker: &RegionIdTracker,
     ) {
         // Get the injection query for this language
         let injection_query = match language.get_injection_query(language_name) {
@@ -183,56 +187,33 @@ impl CacheCoordinator {
                 return;
             }
 
-            // Build map of existing regions by (language, content_hash) for stable ID matching
-            // This enables cache reuse when document structure changes but injection content stays same
+            // Get existing regions for cache cleanup
             let existing_regions = self.injection_map.get(uri);
-            let existing_by_hash: HashMap<(&str, u64), &CacheableInjectionRegion> =
-                existing_regions
-                    .as_ref()
-                    .map(|regions| {
-                        regions
-                            .iter()
-                            .map(|r| ((r.language.as_str(), r.content_hash), r))
-                            .collect()
-                    })
-                    .unwrap_or_default();
 
-            // Convert to CacheableInjectionRegion, reusing region_ids for unchanged content
+            // Convert to CacheableInjectionRegion using position-based ULIDs
+            // RegionIdTracker provides stable IDs based on (uri, start_byte, end_byte, kind)
             let cacheable_regions: Vec<CacheableInjectionRegion> = regions
                 .iter()
                 .map(|info| {
-                    // Compute hash for the new region's content
-                    let temp_region = CacheableInjectionRegion::from_region_info(info, "", text);
-                    let key = (info.language.as_str(), temp_region.content_hash);
-
-                    // Check if we have an existing region with same (language, content_hash)
-                    if let Some(existing) = existing_by_hash.get(&key) {
-                        // Reuse the existing region_id - this enables cache hit!
-                        CacheableInjectionRegion {
-                            language: temp_region.language,
-                            byte_range: temp_region.byte_range,
-                            line_range: temp_region.line_range,
-                            region_id: existing.region_id.clone(),
-                            content_hash: temp_region.content_hash,
-                        }
-                    } else {
-                        // New content - generate new region_id
-                        CacheableInjectionRegion {
-                            region_id: next_result_id(),
-                            ..temp_region
-                        }
-                    }
+                    // Get position-based ULID from tracker
+                    let ulid = tracker.get_or_create(
+                        uri,
+                        info.content_node.start_byte(),
+                        info.content_node.end_byte(),
+                        info.content_node.kind(),
+                    );
+                    CacheableInjectionRegion::from_region_info(info, &ulid.to_string(), text)
                 })
                 .collect();
 
             // Find stale region IDs that are no longer present
             if let Some(old_regions) = existing_regions {
-                let new_hashes: HashSet<_> = cacheable_regions
+                let new_region_ids: HashSet<_> = cacheable_regions
                     .iter()
-                    .map(|r| (r.language.as_str(), r.content_hash))
+                    .map(|r| r.region_id.as_str())
                     .collect();
                 for old in old_regions.iter() {
-                    if !new_hashes.contains(&(old.language.as_str(), old.content_hash)) {
+                    if !new_region_ids.contains(old.region_id.as_str()) {
                         // This region no longer exists - clear its cache
                         self.injection_token_cache.remove(uri, &old.region_id);
                     }
