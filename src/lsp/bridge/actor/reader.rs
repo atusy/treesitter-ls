@@ -555,20 +555,31 @@ fn handle_message(
             let downstream_msg = DownstreamMessage::Notification(notification);
 
             // Use try_send to avoid blocking. On channel full, drop and warn (ADR-0015 backpressure).
-            if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(downstream_msg) {
-                warn!(
-                    target: "kakehashi::bridge::reader",
-                    "{}Downstream channel full, dropping notification: {}",
-                    lang_prefix,
-                    method.as_deref().unwrap_or("unknown")
-                );
-            } else {
-                debug!(
-                    target: "kakehashi::bridge::reader",
-                    "{}Forwarded notification to handler: {}",
-                    lang_prefix,
-                    method.as_deref().unwrap_or("unknown")
-                );
+            match tx.try_send(downstream_msg) {
+                Ok(()) => {
+                    debug!(
+                        target: "kakehashi::bridge::reader",
+                        "{}Forwarded notification to handler: {}",
+                        lang_prefix,
+                        method.as_deref().unwrap_or("unknown")
+                    );
+                }
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    warn!(
+                        target: "kakehashi::bridge::reader",
+                        "{}Downstream channel full, dropping notification: {}",
+                        lang_prefix,
+                        method.as_deref().unwrap_or("unknown")
+                    );
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    warn!(
+                        target: "kakehashi::bridge::reader",
+                        "{}Downstream channel closed, dropping notification: {}. Handler may have panicked.",
+                        lang_prefix,
+                        method.as_deref().unwrap_or("unknown")
+                    );
+                }
             }
         } else {
             // No channel configured - log and skip (legacy behavior for tests)
