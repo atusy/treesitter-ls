@@ -264,7 +264,7 @@ impl LanguageServerPool {
     /// ```ignore
     /// let pool = Arc::new(LanguageServerPool::new());
     /// let cancel_forwarder = CancelForwarder::new(Arc::clone(&pool));
-    /// let kakehashi = Kakehashi::with_pool(pool, client.clone());
+    /// let kakehashi = Kakehashi::with_pool(client.clone(), pool);
     /// let service = RequestIdCapture::with_cancel_forwarder(kakehashi, cancel_forwarder);
     /// ```
     pub fn new() -> Self {
