@@ -255,16 +255,16 @@ impl LanguageServerPool {
     /// `Arc<LanguageServerPool>` and pass it to both `Kakehashi::with_pool()`
     /// and `CancelForwarder::new()`.
     ///
-    /// After creating the pool, call `init_downstream_handler()` with the LSP client
-    /// to enable notification forwarding from downstream language servers.
+    /// The pool's downstream handler is initialized when constructing the LSP
+    /// service via `Kakehashi::with_pool`, enabling notification forwarding
+    /// from downstream language servers.
     ///
     /// # Example
     ///
     /// ```ignore
     /// let pool = Arc::new(LanguageServerPool::new());
-    /// pool.init_downstream_handler(client.clone());
     /// let cancel_forwarder = CancelForwarder::new(Arc::clone(&pool));
-    /// let kakehashi = Kakehashi::with_pool(pool);
+    /// let kakehashi = Kakehashi::with_pool(pool, client.clone());
     /// let service = RequestIdCapture::with_cancel_forwarder(kakehashi, cancel_forwarder);
     /// ```
     pub fn new() -> Self {
