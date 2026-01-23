@@ -190,7 +190,7 @@ impl CancelForwardingMetrics {
 struct DownstreamHandlerState {
     /// Sender for downstream notification forwarding.
     tx: mpsc::Sender<DownstreamMessage>,
-    /// Handle to the handler task (kept alive via RAII).
+    /// Handle to the handler task, retained so the task remains owned by this state.
     _handle: DownstreamHandlerHandle,
 }
 
