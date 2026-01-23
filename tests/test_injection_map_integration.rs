@@ -20,7 +20,7 @@ fn populate_injection_map(
 ) {
     // Collect all injection regions from the parsed tree
     if let Some(regions) = collect_all_injections(&tree.root_node(), text, injection_query) {
-        // Convert to CacheableInjectionRegion with unique result_ids
+        // Convert to CacheableInjectionRegion with unique region_ids
         let cacheable_regions: Vec<CacheableInjectionRegion> = regions
             .iter()
             .map(|info| CacheableInjectionRegion::from_region_info(info, &next_result_id(), text))
@@ -110,7 +110,7 @@ def foo():
         "Lua region should have valid byte range"
     );
     assert!(
-        !lua_region.result_id.is_empty(),
+        !lua_region.region_id.is_empty(),
         "Lua region should have a result_id"
     );
 
@@ -268,7 +268,7 @@ fn edit_overlaps_injection(
             // Overlap occurs when: edit_start < region_end AND edit_end > region_start
             edit_start < r.byte_range.end && edit_end > r.byte_range.start
         })
-        .map(|r| r.result_id.clone())
+        .map(|r| r.region_id.clone())
         .collect()
 }
 
@@ -328,7 +328,7 @@ fn test_edit_outside_injection_preserves_all_caches() {
             token_modifiers_bitset: 0,
         }],
     };
-    injection_token_cache.store(&uri, &lua_region.result_id, lua_tokens);
+    injection_token_cache.store(&uri, &lua_region.region_id, lua_tokens);
 
     // Simulate edit to header (line 0, bytes 0-8) - OUTSIDE injection
     let edit_start = 0;
@@ -343,7 +343,7 @@ fn test_edit_outside_injection_preserves_all_caches() {
 
     // Since no regions overlap, injection_token_cache should remain unchanged
     // In real implementation, we would NOT call injection_token_cache.remove() for any region
-    let cached = injection_token_cache.get(&uri, &lua_region.result_id);
+    let cached = injection_token_cache.get(&uri, &lua_region.region_id);
     assert!(
         cached.is_some(),
         "Lua tokens should still be cached after edit outside injection"
@@ -390,7 +390,7 @@ fn test_edit_in_footer_preserves_all_caches() {
         result_id: Some("lua-tokens-2".to_string()),
         data: vec![],
     };
-    injection_token_cache.store(&uri, &lua_region.result_id, lua_tokens);
+    injection_token_cache.store(&uri, &lua_region.region_id, lua_tokens);
 
     // Simulate edit to footer (after all code blocks)
     let footer_start = markdown_text.find("Footer").unwrap();
@@ -403,7 +403,7 @@ fn test_edit_in_footer_preserves_all_caches() {
     );
 
     // Cache should be preserved
-    let cached = injection_token_cache.get(&uri, &lua_region.result_id);
+    let cached = injection_token_cache.get(&uri, &lua_region.region_id);
     assert!(
         cached.is_some(),
         "Lua tokens should still be cached after edit in footer"
@@ -473,18 +473,18 @@ def foo():
         result_id: Some("python-tokens".to_string()),
         data: vec![],
     };
-    injection_token_cache.store(&uri, &lua_region.result_id, lua_tokens);
-    injection_token_cache.store(&uri, &python_region.result_id, python_tokens);
+    injection_token_cache.store(&uri, &lua_region.region_id, lua_tokens);
+    injection_token_cache.store(&uri, &python_region.region_id, python_tokens);
 
     // Verify both are cached
     assert!(
         injection_token_cache
-            .get(&uri, &lua_region.result_id)
+            .get(&uri, &lua_region.region_id)
             .is_some()
     );
     assert!(
         injection_token_cache
-            .get(&uri, &python_region.result_id)
+            .get(&uri, &python_region.region_id)
             .is_some()
     );
 
@@ -500,7 +500,7 @@ def foo():
         "Edit should overlap exactly one region"
     );
     assert_eq!(
-        overlapping_regions[0], lua_region.result_id,
+        overlapping_regions[0], lua_region.region_id,
         "Should overlap lua region only"
     );
 
@@ -512,13 +512,13 @@ def foo():
     // Verify: lua cache is gone, python cache is preserved
     assert!(
         injection_token_cache
-            .get(&uri, &lua_region.result_id)
+            .get(&uri, &lua_region.region_id)
             .is_none(),
         "Lua tokens should be invalidated after edit inside lua block"
     );
     assert!(
         injection_token_cache
-            .get(&uri, &python_region.result_id)
+            .get(&uri, &python_region.region_id)
             .is_some(),
         "Python tokens should be preserved after edit inside lua block"
     );
@@ -673,23 +673,23 @@ def foo():
         result_id: Some("python-tokens".to_string()),
         data: vec![],
     };
-    injection_token_cache.store(&uri, &lua_region.result_id, lua_tokens);
-    injection_token_cache.store(&uri, &python_region.result_id, python_tokens);
+    injection_token_cache.store(&uri, &lua_region.region_id, lua_tokens);
+    injection_token_cache.store(&uri, &python_region.region_id, python_tokens);
 
     // Verify both cached
     assert!(
         injection_token_cache
-            .get(&uri, &lua_region.result_id)
+            .get(&uri, &lua_region.region_id)
             .is_some()
     );
     assert!(
         injection_token_cache
-            .get(&uri, &python_region.result_id)
+            .get(&uri, &python_region.region_id)
             .is_some()
     );
 
     // Save the old python result_id for later check
-    let old_python_result_id = python_region.result_id.clone();
+    let old_python_result_id = python_region.region_id.clone();
 
     // Now simulate removing the python code block (structural change)
     let edited_text = r#"# Example
@@ -726,7 +726,7 @@ Some text instead of python block.
             for old_region in &old_regions {
                 let old_key = (old_region.byte_range.start, old_region.byte_range.end);
                 if !new_result_ids.contains(&old_key) {
-                    injection_token_cache.remove(&uri, &old_region.result_id);
+                    injection_token_cache.remove(&uri, &old_region.region_id);
                 }
             }
         }
@@ -818,18 +818,18 @@ fn populate_injection_map_with_stable_ids(
 
             // Check if we have an existing region with same (language, content_hash)
             if let Some(existing) = existing_map.get(&key) {
-                // Reuse the existing result_id - enable cache hit!
+                // Reuse the existing region_id - enable cache hit!
                 CacheableInjectionRegion {
                     language: temp_region.language,
                     byte_range: temp_region.byte_range,
                     line_range: temp_region.line_range,
-                    result_id: existing.result_id.clone(),
+                    region_id: existing.region_id.clone(),
                     content_hash: temp_region.content_hash,
                 }
             } else {
-                // Generate new result_id for new regions
+                // Generate new region_id for new regions
                 CacheableInjectionRegion {
-                    result_id: next_result_id(),
+                    region_id: next_result_id(),
                     ..temp_region
                 }
             }
@@ -884,7 +884,7 @@ Footer text
 
     let initial_regions = injection_map.get(&uri).expect("should have regions");
     assert_eq!(initial_regions.len(), 1, "Should have one lua region");
-    let initial_result_id = initial_regions[0].result_id.clone();
+    let initial_result_id = initial_regions[0].region_id.clone();
     let initial_byte_range = initial_regions[0].byte_range.clone();
 
     // Edit the header (outside the injection)
@@ -925,7 +925,7 @@ Footer text
     // For now, this test will FAIL because byte_range changes when header grows.
     // This documents the problem we need to solve.
 
-    let updated_result_id = &updated_regions[0].result_id;
+    let updated_result_id = &updated_regions[0].region_id;
     let updated_byte_range = &updated_regions[0].byte_range;
 
     // Header grew by "Modified ".len() = 9 chars, so byte_range shifts
@@ -989,7 +989,7 @@ Footer text
 
     let initial_regions = injection_map.get(&uri).expect("should have regions");
     assert_eq!(initial_regions.len(), 1, "Should have one lua region");
-    let initial_result_id = initial_regions[0].result_id.clone();
+    let initial_result_id = initial_regions[0].region_id.clone();
 
     // Store tokens for the lua injection using the result_id
     let lua_tokens = tower_lsp_server::ls_types::SemanticTokens {
@@ -1035,7 +1035,7 @@ Footer text
 
     let updated_regions = injection_map.get(&uri).expect("should have regions");
     assert_eq!(updated_regions.len(), 1, "Should still have one region");
-    let updated_result_id = &updated_regions[0].result_id;
+    let updated_result_id = &updated_regions[0].region_id;
 
     // THE KEY ASSERTION: result_id is preserved, so we can get a CACHE HIT
     assert_eq!(

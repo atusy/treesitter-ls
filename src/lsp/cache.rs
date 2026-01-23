@@ -110,7 +110,7 @@ impl CacheCoordinator {
             {
                 for region in overlapping_regions {
                     // This region is affected - invalidate its cache
-                    self.injection_token_cache.remove(uri, &region.result_id);
+                    self.injection_token_cache.remove(uri, &region.region_id);
                     log::debug!(
                         target: "kakehashi::injection_cache",
                         "Invalidated injection cache for {} region (edit bytes {}..{})",
@@ -197,7 +197,7 @@ impl CacheCoordinator {
                     })
                     .unwrap_or_default();
 
-            // Convert to CacheableInjectionRegion, reusing result_ids for unchanged content
+            // Convert to CacheableInjectionRegion, reusing region_ids for unchanged content
             let cacheable_regions: Vec<CacheableInjectionRegion> = regions
                 .iter()
                 .map(|info| {
@@ -207,18 +207,18 @@ impl CacheCoordinator {
 
                     // Check if we have an existing region with same (language, content_hash)
                     if let Some(existing) = existing_by_hash.get(&key) {
-                        // Reuse the existing result_id - this enables cache hit!
+                        // Reuse the existing region_id - this enables cache hit!
                         CacheableInjectionRegion {
                             language: temp_region.language,
                             byte_range: temp_region.byte_range,
                             line_range: temp_region.line_range,
-                            result_id: existing.result_id.clone(),
+                            region_id: existing.region_id.clone(),
                             content_hash: temp_region.content_hash,
                         }
                     } else {
-                        // New content - generate new result_id
+                        // New content - generate new region_id
                         CacheableInjectionRegion {
-                            result_id: next_result_id(),
+                            region_id: next_result_id(),
                             ..temp_region
                         }
                     }
@@ -234,7 +234,7 @@ impl CacheCoordinator {
                 for old in old_regions.iter() {
                     if !new_hashes.contains(&(old.language.as_str(), old.content_hash)) {
                         // This region no longer exists - clear its cache
-                        self.injection_token_cache.remove(uri, &old.result_id);
+                        self.injection_token_cache.remove(uri, &old.region_id);
                     }
                 }
             }
