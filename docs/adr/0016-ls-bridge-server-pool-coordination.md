@@ -170,27 +170,70 @@ Transitions:
 
 **Connection Termination**: When a connection enters `Closed` state (graceful shutdown, crash, or respawn), all document lifecycle entries for that downstream are discarded. A respawned connection starts with all documents in `Closed` (default) state, requiring fresh `didOpen` notifications.
 
-### Notification Pass-Through
+### Notification Forwarding
 
-**Diagnostics and other server-initiated notifications do NOT require aggregation.**
+Server-initiated notifications from downstream servers are forwarded to the upstream client with URI transformation.
+
+**Basic Flow:**
 
 ```
-pyright  ──publishDiagnostics──►  bridge  ──publishDiagnostics──►  upstream
-ruff     ──publishDiagnostics──►  bridge  ──publishDiagnostics──►  upstream
-                                  (pass-through, no merge)
+downstream ──notification──►  bridge  ──notification──►  upstream
+                               │
+                               └─ Transform virtual URI → host URI
 ```
 
 The bridge:
 1. Receives notification from downstream
 2. Transforms URI (virtual → host document URI)
-3. Forwards to upstream client
+3. Transforms positions if needed (add region offset)
+4. Forwards to upstream client
 
-The client (e.g., VSCode) automatically aggregates diagnostics from multiple sources per LSP standard behavior.
-
-**Other Pass-Through Notifications:**
-- `$/progress` — Already forwarded via notification channel
+**Pass-Through Notifications** (no transformation needed):
+- `$/progress` — Forwarded with server-name prefix on token (e.g., `lua-ls:token123`)
 - `window/logMessage` — Forwarded as-is
 - `window/showMessage` — Forwarded as-is
+
+**Diagnostics — Aggregation for Injection Regions:**
+
+For diagnostics from **different servers**, the client automatically aggregates per LSP standard:
+
+```
+pyright  ──publishDiagnostics──►  bridge  ──publishDiagnostics──►  upstream
+ruff     ──publishDiagnostics──►  bridge  ──publishDiagnostics──►  upstream
+                                  (pass-through, client aggregates)
+```
+
+However, kakehashi's injection model requires **bridge-level aggregation** for multiple injection regions within the same host document:
+
+```
+Host: README.md
+├── Lua block 1 (lines 5-10)  → virtual: region-0.lua → diagnostics A
+├── Lua block 2 (lines 20-25) → virtual: region-1.lua → diagnostics B
+└── Lua block 3 (lines 40-45) → virtual: region-2.lua → diagnostics C
+
+Problem: Each publishDiagnostics for README.md replaces the previous one.
+Solution: Bridge caches and aggregates → sends A + B + C together.
+```
+
+**Diagnostic Aggregation Rules:**
+
+| Scenario | Aggregation |
+|----------|-------------|
+| Same host, same server, multiple injection regions | Bridge aggregates |
+| Same host, different servers | Client aggregates (pass-through) |
+| Different hosts | No aggregation needed |
+
+**Diagnostic Cache Structure:**
+
+```rust
+// host_uri → (virtual_uri → diagnostics)
+diagnostic_cache: HashMap<Url, HashMap<String, Vec<Diagnostic>>>
+```
+
+**Cache Lifecycle:**
+- Virtual document closed → Remove entry, re-send aggregated diagnostics
+- Host document closed → Clear entire cache for host_uri
+- Server crash/respawn → Clear all cache entries for that server
 
 ### Cancellation Propagation
 
