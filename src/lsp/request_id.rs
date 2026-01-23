@@ -264,4 +264,116 @@ mod tests {
         let id = get_current_request_id();
         assert_eq!(id, None);
     }
+
+    // ========================================
+    // CancelForwarder tests
+    // ========================================
+
+    /// Test that with_cancel_forwarder creates a middleware that forwards cancels.
+    ///
+    /// We can't easily mock CancelForwarder (it requires a real LanguageServerPool),
+    /// so we test that:
+    /// 1. The middleware is constructed correctly
+    /// 2. Cancel notifications are intercepted (not passed through unchanged)
+    /// 3. Non-cancel requests work normally
+    #[tokio::test]
+    async fn with_cancel_forwarder_passes_non_cancel_requests() {
+        let mock = MockService::new();
+        let pool = Arc::new(LanguageServerPool::new());
+        let forwarder = CancelForwarder::new(pool);
+        let mut service = RequestIdCapture::with_cancel_forwarder(mock.clone(), forwarder);
+
+        // Create a hover request (not a cancel)
+        let request = Request::build("textDocument/hover")
+            .params(serde_json::json!({}))
+            .id(42i64)
+            .finish();
+
+        // Call the service
+        let _ = service.call(request).await;
+
+        // Verify the request was passed through and ID captured
+        let captured = mock.get_captured_id().await;
+        assert_eq!(captured, Some(Some(Id::Number(42))));
+    }
+
+    #[tokio::test]
+    async fn cancel_notification_is_intercepted() {
+        let mock = MockService::new();
+        let pool = Arc::new(LanguageServerPool::new());
+        let forwarder = CancelForwarder::new(pool);
+        let mut service = RequestIdCapture::with_cancel_forwarder(mock.clone(), forwarder);
+
+        // Create a $/cancelRequest notification
+        let request = Request::build("$/cancelRequest")
+            .params(serde_json::json!({ "id": 123 }))
+            .finish();
+
+        // Call the service
+        let result = service.call(request).await;
+
+        // The notification should be processed (no error)
+        assert!(result.is_ok());
+
+        // The inner service was still called (tower-lsp needs to see it too)
+        let captured = mock.get_captured_id().await;
+        assert!(captured.is_some(), "Inner service should still be called");
+
+        // Note: We can't verify the forward happened without a real pool setup,
+        // but we've verified the middleware processes the cancel notification.
+    }
+
+    #[tokio::test]
+    async fn cancel_forwarder_handles_missing_id_in_params() {
+        let mock = MockService::new();
+        let pool = Arc::new(LanguageServerPool::new());
+        let forwarder = CancelForwarder::new(pool);
+        let mut service = RequestIdCapture::with_cancel_forwarder(mock.clone(), forwarder);
+
+        // Create a $/cancelRequest with no id parameter (malformed)
+        let request = Request::build("$/cancelRequest")
+            .params(serde_json::json!({}))
+            .finish();
+
+        // Should not crash, just skip forwarding
+        let result = service.call(request).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn cancel_forwarder_handles_non_numeric_id() {
+        let mock = MockService::new();
+        let pool = Arc::new(LanguageServerPool::new());
+        let forwarder = CancelForwarder::new(pool);
+        let mut service = RequestIdCapture::with_cancel_forwarder(mock.clone(), forwarder);
+
+        // Create a $/cancelRequest with string id (which we don't support)
+        let request = Request::build("$/cancelRequest")
+            .params(serde_json::json!({ "id": "string-id" }))
+            .finish();
+
+        // Should not crash, just skip forwarding
+        let result = service.call(request).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn middleware_without_forwarder_ignores_cancel() {
+        let mock = MockService::new();
+        // Create middleware without cancel forwarder
+        let mut service = RequestIdCapture::new(mock.clone());
+
+        // Create a $/cancelRequest notification
+        let request = Request::build("$/cancelRequest")
+            .params(serde_json::json!({ "id": 123 }))
+            .finish();
+
+        // Should work without crash (cancel just isn't forwarded)
+        let result = service.call(request).await;
+        assert!(result.is_ok());
+
+        // Inner service was still called
+        let captured = mock.get_captured_id().await;
+        assert!(captured.is_some());
+    }
 }
