@@ -371,17 +371,17 @@ mod tests {
     }
 
     // ========================================================================
-    // Supervisor behavior tests
+    // JoinHandle behavior tests (validates assumptions the supervisor relies on)
     // ========================================================================
 
     #[tokio::test]
-    async fn supervisor_completes_when_handler_task_panics() {
+    async fn join_handle_captures_panic_for_extraction() {
         // Spawn a task that panics
         let handler_handle = tokio::spawn(async {
             panic!("intentional test panic");
         });
 
-        // Simulate supervisor behavior: await the handle
+        // Await the handle (as the supervisor does)
         let result = handler_handle.await;
 
         // Verify we can detect and extract the panic
@@ -394,7 +394,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn supervisor_completes_when_handler_task_exits_normally() {
+    async fn join_handle_returns_ok_on_normal_exit() {
         // Spawn a task that exits normally
         let handler_handle = tokio::spawn(async {
             // Normal completion
