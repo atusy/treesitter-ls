@@ -285,28 +285,26 @@ impl LanguageServerPool {
     /// Must be called after the pool is created and before any connections are established.
     /// Called automatically by `BridgeCoordinator` when the client is available.
     ///
+    /// This method is idempotent: the first call initializes the handler;
+    /// subsequent calls are ignored and leave the existing handler in place.
+    ///
     /// # Arguments
     /// * `client` - The LSP client for sending notifications
-    ///
-    /// # Panics
-    /// Panics if called more than once (handler already initialized).
     pub fn init_downstream_handler(&self, client: Client) {
-        let (tx, rx) = mpsc::channel(DOWNSTREAM_CHANNEL_CAPACITY);
-        let handle = spawn_downstream_handler(rx, client);
+        let _ = self.downstream_handler.get_or_init(|| {
+            let (tx, rx) = mpsc::channel(DOWNSTREAM_CHANNEL_CAPACITY);
+            let handle = spawn_downstream_handler(rx, client);
 
-        let state = DownstreamHandlerState {
-            tx,
-            _handle: handle,
-        };
+            log::debug!(
+                target: "kakehashi::bridge::pool",
+                "Downstream handler initialized"
+            );
 
-        if self.downstream_handler.set(state).is_err() {
-            panic!("init_downstream_handler() called more than once");
-        }
-
-        log::debug!(
-            target: "kakehashi::bridge::pool",
-            "Downstream handler initialized"
-        );
+            DownstreamHandlerState {
+                tx,
+                _handle: handle,
+            }
+        });
     }
 
     /// Get access to cancel forwarding metrics (for testing).
