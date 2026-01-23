@@ -11,6 +11,21 @@ use url::Url;
 /// Helper to populate injection map from a parsed tree (simulates parse_document behavior).
 ///
 /// This extracts the logic that should run after parsing to populate the InjectionMap.
+///
+/// # Note on ID Systems
+///
+/// This test helper uses `next_result_id()` to generate `region_id` values as a shortcut.
+/// In production, `CacheCoordinator::populate_injections()` uses `RegionIdTracker` instead,
+/// which provides position-based ULIDs that are stable across document edits.
+///
+/// The ID systems serve different purposes:
+/// - `next_result_id()`: Sequential integers for LSP SemanticTokens delta computation
+/// - `RegionIdTracker`: Position-based ULIDs for injection region identity
+///
+/// Using `next_result_id()` here is acceptable for tests because:
+/// 1. Tests don't require position stability across edits
+/// 2. Tests run in isolation, so global counter collision isn't a concern
+/// 3. It avoids the complexity of setting up a full `RegionIdTracker`
 fn populate_injection_map(
     injection_map: &InjectionMap,
     uri: &Url,
@@ -21,6 +36,7 @@ fn populate_injection_map(
     // Collect all injection regions from the parsed tree
     if let Some(regions) = collect_all_injections(&tree.root_node(), text, injection_query) {
         // Convert to CacheableInjectionRegion with unique region_ids
+        // Note: Uses next_result_id() as a test shortcut; production uses RegionIdTracker
         let cacheable_regions: Vec<CacheableInjectionRegion> = regions
             .iter()
             .map(|info| CacheableInjectionRegion::from_region_info(info, &next_result_id(), text))
