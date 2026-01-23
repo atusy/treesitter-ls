@@ -17,6 +17,9 @@ use helpers::lsp_client::LspClient;
 use helpers::lua_bridge::{shutdown_client, skip_if_lua_ls_unavailable};
 use serde_json::json;
 
+/// Request ID that was never sent, used for testing cancel of unknown requests.
+const NONEXISTENT_REQUEST_ID: i64 = 999999;
+
 /// E2E test: cancel request forwarding - response still arrives after cancel.
 ///
 /// Per LSP spec, a cancelled request should still receive a response
@@ -209,15 +212,18 @@ fn e2e_cancel_unknown_request_id_gracefully_handled() {
 
     std::thread::sleep(std::time::Duration::from_millis(300));
 
-    // Send cancel for a request ID that was never sent (999999)
+    // Send cancel for a request ID that was never sent
     client.send_notification(
         "$/cancelRequest",
         json!({
-            "id": 999999
+            "id": NONEXISTENT_REQUEST_ID
         }),
     );
 
-    println!("Sent $/cancelRequest for unknown id: 999999");
+    println!(
+        "Sent $/cancelRequest for unknown id: {}",
+        NONEXISTENT_REQUEST_ID
+    );
 
     // Small delay to let the cancel be processed
     std::thread::sleep(std::time::Duration::from_millis(100));
