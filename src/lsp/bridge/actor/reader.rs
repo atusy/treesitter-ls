@@ -729,7 +729,7 @@ mod tests {
     #[test]
     fn handle_message_drops_notification_on_channel_full() {
         let router = ResponseRouter::new();
-        let (tx, _rx) = mpsc::channel(1); // Capacity 1
+        let (tx, mut rx) = mpsc::channel(1); // Capacity 1
 
         // Fill the channel
         let first_notification = json!({
@@ -747,9 +747,19 @@ mod tests {
         });
         handle_message(second_notification, &router, "", Some(&tx), Some("server"));
 
-        // Only one notification should be in the channel (the first one)
-        // The second was dropped due to channel being full
-        // This test verifies no panic occurs and the function handles backpressure gracefully
+        // Assert: exactly one message in channel (the first notification)
+        let received = rx.try_recv().expect("should have one message");
+        match received {
+            DownstreamMessage::Notification(n) => {
+                assert_eq!(n.notification["params"]["token"], "first");
+            }
+        }
+
+        // Assert: channel is now empty (second notification was dropped)
+        assert!(
+            rx.try_recv().is_err(),
+            "second notification should have been dropped due to backpressure"
+        );
     }
 
     #[tokio::test]
