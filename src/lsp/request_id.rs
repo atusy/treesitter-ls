@@ -358,18 +358,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_forwarder_handles_non_numeric_id() {
+    async fn cancel_forwarder_handles_string_id() {
         let mock = MockService::new();
         let pool = Arc::new(LanguageServerPool::new());
         let forwarder = CancelForwarder::new(pool);
         let mut service = RequestIdCapture::with_cancel_forwarder(mock.clone(), forwarder);
 
-        // Create a $/cancelRequest with string id (which we don't support)
+        // Create a $/cancelRequest with string id (supported per LSP 3.17 spec)
         let request = Request::build("$/cancelRequest")
             .params(serde_json::json!({ "id": "string-id" }))
             .finish();
 
-        // Should not crash, just skip forwarding
+        // Should extract UpstreamId::String and attempt forwarding
         let result = service.call(request).await;
         assert!(result.is_ok());
     }
