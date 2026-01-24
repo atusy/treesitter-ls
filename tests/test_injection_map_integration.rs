@@ -1215,18 +1215,10 @@ Footer text
     let updated_regions = injection_map.get(&uri).expect("should have regions");
     assert_eq!(updated_regions.len(), 1, "Should still have one region");
 
-    // THE KEY ASSERTION: region_id should be PRESERVED for unchanged injection
-    // Note: byte_range will change since header is now longer, so region_id
-    // will actually be NEW. This test documents the EXPECTED behavior.
+    // THE KEY ASSERTION: region_id should be PRESERVED for unchanged injection.
     //
-    // For stable IDs to work, we need to match by something other than byte_range
-    // when the document structure changes. Options:
-    // 1. Content hash
-    // 2. AST path / node identity
-    // 3. Language + relative position (nth lua block)
-    //
-    // For now, this test will FAIL because byte_range changes when header grows.
-    // This documents the problem we need to solve.
+    // With content-hash-based matching, region_id is preserved even when the
+    // byte_range shifts due to edits outside the injection.
 
     let updated_region_id = &updated_regions[0].region_id;
     let updated_byte_range = &updated_regions[0].byte_range;
@@ -1237,8 +1229,7 @@ Footer text
         "Byte range should shift when header changes"
     );
 
-    // Currently FAILS: region_id is regenerated because byte_range changed
-    // After implementing stable IDs via content hash, this should pass.
+    // region_id should be preserved even though byte_range changed.
     assert_eq!(
         initial_region_id, *updated_region_id,
         "Region ID should be preserved for unchanged injection content"
