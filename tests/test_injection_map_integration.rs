@@ -659,16 +659,16 @@ print("hello")
     // 1. If using the old region_id, the cache should be cleared
     // 2. If region_id changed, that's also acceptable (new region = no cache)
     //
-    // For populate_injection_map_with_stable_ids (which matches by content_hash),
-    // the region_id would be reused, and the language change detection would
-    // invalidate the cache. Let's test this with the stable_ids helper.
+    // For populate_injection_map_with_stable_ids (which matches by (language, content_hash)),
+    // the region_id is only reused when both language and content_hash match.
+    // Let's test this behavior with the stable_ids helper.
 }
 
 #[test]
 fn test_language_change_invalidates_with_stable_ids() {
     // This test uses populate_injection_map_with_stable_ids which preserves region_ids
-    // when content_hash matches. This is the scenario where language change detection
-    // is critical: same content, same region_id, but different language.
+    // only when both language and content_hash match. When language changes (lua → python),
+    // a new region_id is generated, naturally orphaning the old cached tokens.
 
     let injection_map = InjectionMap::new();
     let injection_token_cache = kakehashi::analysis::InjectionTokenCache::new();
