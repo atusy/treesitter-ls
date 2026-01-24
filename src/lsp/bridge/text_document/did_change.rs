@@ -63,7 +63,10 @@ impl LanguageServerPool {
                 };
 
                 // Get version and send didChange
-                if let Some(version) = self.increment_document_version(&virtual_uri, &server_name).await {
+                if let Some(version) = self
+                    .increment_document_version(&virtual_uri, &server_name)
+                    .await
+                {
                     let handle = {
                         let connections = self.connections().await;
                         let Some(handle) = connections.get(&server_name) else {

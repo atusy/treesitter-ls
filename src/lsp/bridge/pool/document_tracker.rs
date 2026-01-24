@@ -245,7 +245,10 @@ impl DocumentTracker {
         virtual_uri: &VirtualDocumentUri,
         server_name: &str,
     ) -> DocumentOpenDecision {
-        if self.should_send_didopen(host_uri, virtual_uri, server_name).await {
+        if self
+            .should_send_didopen(host_uri, virtual_uri, server_name)
+            .await
+        {
             DocumentOpenDecision::SendDidOpen
         } else if self.is_document_opened(virtual_uri) {
             DocumentOpenDecision::AlreadyOpened
@@ -293,7 +296,11 @@ impl DocumentTracker {
     ///
     /// * `virtual_uri` - The virtual document URI
     /// * `server_name` - The server name for HashMap lookup
-    pub(crate) async fn untrack_document(&self, virtual_uri: &VirtualDocumentUri, server_name: &str) {
+    pub(crate) async fn untrack_document(
+        &self,
+        virtual_uri: &VirtualDocumentUri,
+        server_name: &str,
+    ) {
         let uri_string = virtual_uri.to_uri_string();
 
         let mut versions = self.document_versions.lock().await;

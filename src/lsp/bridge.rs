@@ -357,8 +357,8 @@ mod tests {
     /// Real-world example: ts and tsx both using server "tsgo" should share one process.
     #[tokio::test]
     async fn same_server_different_languages_share_connection() {
-        use super::pool::test_helpers::create_handle_with_state;
         use super::pool::ConnectionState;
+        use super::pool::test_helpers::create_handle_with_state;
 
         let pool = std::sync::Arc::new(LanguageServerPool::new());
 
@@ -411,8 +411,8 @@ mod tests {
     /// handle TypeScript files.
     #[tokio::test]
     async fn different_servers_create_separate_connections() {
-        use super::pool::test_helpers::create_handle_with_state;
         use super::pool::ConnectionState;
+        use super::pool::test_helpers::create_handle_with_state;
 
         let pool = std::sync::Arc::new(LanguageServerPool::new());
 

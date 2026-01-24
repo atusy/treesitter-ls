@@ -71,7 +71,8 @@ impl LanguageServerPool {
             );
         }
         // Use server_name from OpenedVirtualDoc for server-name-based tracking
-        self.untrack_document(&doc.virtual_uri, &doc.server_name).await;
+        self.untrack_document(&doc.virtual_uri, &doc.server_name)
+            .await;
     }
 
     /// Close all virtual documents associated with a host document.

@@ -306,7 +306,11 @@ impl LanguageServerPool {
     ///
     /// * `virtual_uri` - The virtual document URI
     /// * `server_name` - The server name for HashMap lookup
-    pub(crate) async fn untrack_document(&self, virtual_uri: &VirtualDocumentUri, server_name: &str) {
+    pub(crate) async fn untrack_document(
+        &self,
+        virtual_uri: &VirtualDocumentUri,
+        server_name: &str,
+    ) {
         self.document_tracker
             .untrack_document(virtual_uri, server_name)
             .await
