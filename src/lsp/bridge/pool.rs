@@ -2540,4 +2540,133 @@ mod tests {
         assert_eq!(unknown_id, 1, "1 unknown_id failure");
         assert_eq!(not_in_reg, 1, "1 not_in_registry failure");
     }
+
+    // ========================================
+    // Process-sharing didClose tests
+    // ========================================
+
+    /// Test that send_didclose_notification uses server_name, not language, for connection lookup.
+    ///
+    /// In process-sharing scenarios, the language (e.g., "typescript") differs from the
+    /// server_name (e.g., "tsgo"). didClose must use server_name to find the correct connection.
+    ///
+    /// This test verifies the fix for the bug where send_didclose_notification used
+    /// virtual_uri.language() instead of the server_name parameter.
+    #[tokio::test]
+    async fn send_didclose_uses_server_name_not_language_for_connection_lookup() {
+        use super::super::protocol::VirtualDocumentUri;
+        use std::sync::Arc;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        // Create a virtual document with language="typescript" (for URI/extension)
+        // but we'll use server_name="tsgo" for connection lookup
+        let virtual_uri =
+            VirtualDocumentUri::new(&url_to_uri(&host_uri), "typescript", TEST_ULID_LUA_0);
+
+        // Insert a connection keyed by "tsgo" (server_name), NOT "typescript" (language)
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+        pool.connections
+            .lock()
+            .await
+            .insert("tsgo".to_string(), Arc::clone(&handle));
+
+        // Verify there is NO connection for "typescript" (the language)
+        {
+            let connections = pool.connections.lock().await;
+            assert!(
+                connections.get("typescript").is_none(),
+                "Should NOT have a 'typescript' connection"
+            );
+            assert!(
+                connections.get("tsgo").is_some(),
+                "Should have a 'tsgo' connection"
+            );
+        }
+
+        // Send didClose with server_name="tsgo"
+        // This should succeed because we look up by server_name, not language
+        let result = pool.send_didclose_notification(&virtual_uri, "tsgo").await;
+        assert!(
+            result.is_ok(),
+            "send_didclose_notification should succeed when using server_name 'tsgo': {:?}",
+            result.err()
+        );
+
+        // Verify connection is still Ready (not closed)
+        {
+            let connections = pool.connections.lock().await;
+            let handle = connections.get("tsgo").expect("Connection should exist");
+            assert_eq!(
+                handle.state(),
+                ConnectionState::Ready,
+                "Connection should remain Ready after didClose"
+            );
+        }
+    }
+
+    /// Test that close_single_virtual_doc routes didClose using server_name from OpenedVirtualDoc.
+    ///
+    /// When a document is tracked with server_name="tsgo" but language="typescript",
+    /// close_single_virtual_doc should use the stored server_name for didClose routing.
+    #[tokio::test]
+    async fn close_single_virtual_doc_uses_server_name_for_process_sharing() {
+        use super::super::protocol::VirtualDocumentUri;
+        use std::sync::Arc;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        // Create a virtual document with language="typescript"
+        let virtual_uri =
+            VirtualDocumentUri::new(&url_to_uri(&host_uri), "typescript", TEST_ULID_LUA_0);
+
+        // Register the document with server_name="tsgo" (process-sharing scenario)
+        // This simulates what happens when a typescript block uses the tsgo server
+        let opened = pool
+            .should_send_didopen(&host_uri, &virtual_uri, "tsgo")
+            .await;
+        assert!(opened, "Document should be registered for opening");
+        pool.mark_document_opened(&virtual_uri);
+
+        // Insert a connection keyed by "tsgo" (NOT "typescript")
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+        pool.connections
+            .lock()
+            .await
+            .insert("tsgo".to_string(), Arc::clone(&handle));
+
+        // Close the host document - this triggers close_single_virtual_doc internally
+        let closed_docs = pool.close_host_document(&host_uri).await;
+
+        // Verify the document was closed
+        assert_eq!(closed_docs.len(), 1, "Should have closed 1 document");
+        assert_eq!(
+            closed_docs[0].virtual_uri.language(),
+            "typescript",
+            "Closed doc should have language 'typescript'"
+        );
+        assert_eq!(
+            closed_docs[0].server_name, "tsgo",
+            "Closed doc should have server_name 'tsgo'"
+        );
+
+        // Verify the document is no longer tracked
+        assert!(
+            !pool.is_document_opened(&virtual_uri),
+            "Document should no longer be marked as opened"
+        );
+
+        // Verify connection is still Ready (not closed)
+        {
+            let connections = pool.connections.lock().await;
+            let handle = connections.get("tsgo").expect("Connection should exist");
+            assert_eq!(
+                handle.state(),
+                ConnectionState::Ready,
+                "Connection should remain Ready after close_host_document"
+            );
+        }
+    }
 }
