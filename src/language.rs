@@ -33,6 +33,9 @@ pub use injection::{
     InjectionRegionInfo, InjectionResolver, ResolvedInjection, collect_all_injections,
 };
 
+// Re-export region ID tracking
+pub(crate) use region_id_tracker::RegionIdTracker;
+
 // Re-export detection functions
 pub use extension::detect_from_extension;
 pub use shebang::detect_from_shebang;

@@ -112,7 +112,7 @@ impl Kakehashi {
                 &uri,
                 position,
                 &resolved.injection_language,
-                &resolved.region.result_id,
+                &resolved.region.region_id,
                 resolved.region.line_range.start,
                 &resolved.virtual_content,
                 upstream_request_id,

@@ -1,12 +1,12 @@
-//! Semantic token caching with result_id validation and injection region tracking.
+//! Semantic token caching with LSP result_id validation and injection region tracking.
 //!
 //! This module provides three caching layers for semantic token performance:
 //!
-//! 1. **SemanticTokenCache** - Document-level token caching by URI with result_id validation.
+//! 1. **SemanticTokenCache** - Document-level token caching by URI with LSP result_id validation.
 //!    Used for cache hits when the document version matches.
 //!
 //! 2. **InjectionMap** - Tracks all injection regions per document URI.
-//!    Each `CacheableInjectionRegion` stores language, byte/line ranges, and a result_id.
+//!    Each `CacheableInjectionRegion` stores language, byte/line ranges, and a region_id (ULID).
 //!    Enables targeted invalidation: when an edit occurs, only regions overlapping
 //!    the edit need re-tokenization (see PBI-083).
 //!    Uses interval tree (rust_lapper) for O(log n) overlap queries (PBI-167).
@@ -381,14 +381,14 @@ mod tests {
                 language: "lua".to_string(),
                 byte_range: 10..50,
                 line_range: 2..5,
-                result_id: "region-1".to_string(),
+                region_id: "region-1".to_string(),
                 content_hash: 12345,
             },
             CacheableInjectionRegion {
                 language: "python".to_string(),
                 byte_range: 100..200,
                 line_range: 10..20,
-                result_id: "region-2".to_string(),
+                region_id: "region-2".to_string(),
                 content_hash: 67890,
             },
         ];
@@ -423,7 +423,7 @@ mod tests {
             language: "lua".to_string(),
             byte_range: 10..50,
             line_range: 2..5,
-            result_id: "region-1".to_string(),
+            region_id: "region-1".to_string(),
             content_hash: 12345,
         }];
 
@@ -502,14 +502,14 @@ mod tests {
                 language: "lua".to_string(),
                 byte_range: 10..50,
                 line_range: 2..5,
-                result_id: "lua-region-1".to_string(),
+                region_id: "lua-region-1".to_string(),
                 content_hash: 11111,
             },
             CacheableInjectionRegion {
                 language: "python".to_string(),
                 byte_range: 100..200,
                 line_range: 10..20,
-                result_id: "python-region-2".to_string(),
+                region_id: "python-region-2".to_string(),
                 content_hash: 22222,
             },
         ];
@@ -536,8 +536,8 @@ mod tests {
         let region = region_at_byte_30.unwrap();
         assert_eq!(region.language, "lua");
 
-        // Use result_id to get cached tokens
-        let cached = token_cache.get(&uri, &region.result_id);
+        // Use region_id to get cached tokens
+        let cached = token_cache.get(&uri, &region.region_id);
         assert!(cached.is_some(), "Should have cached tokens for lua region");
         assert_eq!(cached.unwrap().data[0].length, 3);
     }
@@ -555,14 +555,14 @@ mod tests {
                 language: "lua".to_string(),
                 byte_range: 10..50,
                 line_range: 2..5,
-                result_id: "region-1".to_string(),
+                region_id: "region-1".to_string(),
                 content_hash: 12345,
             },
             CacheableInjectionRegion {
                 language: "python".to_string(),
                 byte_range: 100..200,
                 line_range: 10..20,
-                result_id: "region-2".to_string(),
+                region_id: "region-2".to_string(),
                 content_hash: 67890,
             },
         ];
@@ -612,7 +612,7 @@ mod tests {
                     language: "lua".to_string(),
                     byte_range: start..end,
                     line_range: (i as u32)..(i as u32 + 1),
-                    result_id: format!("region-{}", i),
+                    region_id: format!("region-{}", i),
                     content_hash: i as u64,
                 }
             })
@@ -637,7 +637,7 @@ mod tests {
             "Should find exactly 2 overlapping regions"
         );
 
-        let region_ids: Vec<&str> = overlapping.iter().map(|r| r.result_id.as_str()).collect();
+        let region_ids: Vec<&str> = overlapping.iter().map(|r| r.region_id.as_str()).collect();
         assert!(region_ids.contains(&"region-2"), "Should include region-2");
         assert!(region_ids.contains(&"region-3"), "Should include region-3");
 
