@@ -1284,8 +1284,8 @@ mod tests {
         // Get the virtual URI that was opened
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
-        // Send didClose notification
-        let result = pool.send_didclose_notification(&virtual_uri).await;
+        // Send didClose notification (server_name matches the one used in send_hover_request)
+        let result = pool.send_didclose_notification(&virtual_uri, "lua").await;
         assert!(
             result.is_ok(),
             "send_didclose_notification should succeed: {:?}",
