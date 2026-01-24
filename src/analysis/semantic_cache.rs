@@ -489,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn test_injection_map_get_tokens_via_result_id() {
+    fn test_injection_map_get_tokens_via_region_id() {
         use crate::language::injection::CacheableInjectionRegion;
 
         let injection_map = InjectionMap::new();

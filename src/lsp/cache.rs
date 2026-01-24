@@ -415,4 +415,267 @@ mod tests {
         cache.cancel_requests(&uri);
         assert!(!cache.is_request_active(&uri, req));
     }
+
+    /// Integration test: language change with stable region_id triggers cache invalidation.
+    ///
+    /// This test exercises the production invalidation path in `populate_injections`:
+    /// - Uses `RegionIdTracker` with position-based ULIDs (not `next_result_id()`)
+    /// - Simulates a language change at a stable position
+    /// - Verifies that cached tokens are invalidated when language changes
+    ///
+    /// See: Finding 1 in review - tests must exercise production behavior.
+    #[test]
+    fn test_language_change_invalidates_cache_with_region_id_tracker() {
+        use tree_sitter::{Parser, Query};
+
+        let cache = CacheCoordinator::new();
+        let tracker = RegionIdTracker::new();
+        let coordinator = LanguageCoordinator::new();
+        let uri = create_test_uri("test_lang_change.md");
+
+        // Register injection query for markdown (required for populate_injections to work)
+        let md_language: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
+        let injection_query_str = r#"
+            (fenced_code_block
+              (info_string (language) @_lang)
+              (code_fence_content) @injection.content
+              (#set-lang-from-info-string! @_lang))
+        "#;
+        let injection_query =
+            Query::new(&md_language, injection_query_str).expect("create injection query");
+        coordinator.register_injection_query_for_test("markdown", injection_query);
+
+        // Parse markdown with a Lua code block
+        let initial_text = r#"# Test
+
+```lua
+print("hello")
+```
+"#;
+
+        let mut parser = Parser::new();
+        parser.set_language(&md_language).expect("set markdown");
+        let tree = parser.parse(initial_text, None).expect("parse");
+
+        // Populate injections - this should create a region with position-based ULID
+        cache.populate_injections(
+            &uri,
+            initial_text,
+            &tree,
+            "markdown",
+            &coordinator,
+            &tracker,
+        );
+
+        // Verify we have one injection region
+        let regions = cache.get_injections(&uri).expect("should have injections");
+        assert_eq!(regions.len(), 1);
+        let initial_region_id = regions[0].region_id.clone();
+        assert_eq!(regions[0].language, "lua");
+
+        // Store tokens for this injection region
+        let lua_tokens = SemanticTokens {
+            result_id: Some("lua-tokens".to_string()),
+            data: vec![SemanticToken {
+                delta_line: 0,
+                delta_start: 0,
+                length: 5,
+                token_type: 1,
+                token_modifiers_bitset: 0,
+            }],
+        };
+        cache
+            .injection_token_cache
+            .store(&uri, &initial_region_id, lua_tokens);
+
+        // Verify tokens are stored
+        assert!(
+            cache
+                .injection_token_cache
+                .get(&uri, &initial_region_id)
+                .is_some(),
+            "tokens should be cached before language change"
+        );
+
+        // Now simulate editing the document: change ```lua to ```python
+        // The code content stays the same, only the language changes
+        let edited_text = r#"# Test
+
+```python
+print("hello")
+```
+"#;
+
+        // CRITICAL: Apply the text diff to update tracker positions BEFORE re-parsing.
+        // This is the production flow:
+        //   1. apply_text_diff() adjusts positions in RegionIdTracker
+        //   2. parse with new text
+        //   3. populate_injections() finds existing region_id via adjusted positions
+        // Without this step, positions shift and we get a new region_id (no cache hit).
+        tracker.apply_text_diff(&uri, initial_text, edited_text);
+
+        // Re-parse with the edited text
+        let edited_tree = parser.parse(edited_text, None).expect("parse edited");
+
+        // Re-populate injections
+        // Key insight: After apply_text_diff, the tracker's positions are adjusted,
+        // so get_or_create returns the SAME ULID. The invalidation check in
+        // populate_injections should detect language_changed and remove cached tokens.
+        cache.populate_injections(
+            &uri,
+            edited_text,
+            &edited_tree,
+            "markdown",
+            &coordinator,
+            &tracker,
+        );
+
+        // Verify the region still exists with the same region_id (position-based stability)
+        let regions_after = cache.get_injections(&uri).expect("should have injections");
+        assert_eq!(regions_after.len(), 1);
+        assert_eq!(
+            regions_after[0].region_id, initial_region_id,
+            "region_id should be stable (same position)"
+        );
+        assert_eq!(
+            regions_after[0].language, "python",
+            "language should be updated to python"
+        );
+
+        // CRITICAL ASSERTION: Cached tokens should be INVALIDATED
+        // This is the key behavior that wasn't tested before.
+        // The invalidation happens at lines 231-235 in populate_injections:
+        //   if content_changed || language_changed {
+        //       self.injection_token_cache.remove(uri, &region_id);
+        //   }
+        assert!(
+            cache
+                .injection_token_cache
+                .get(&uri, &initial_region_id)
+                .is_none(),
+            "cached tokens should be invalidated when language changes"
+        );
+    }
+
+    /// Integration test: content change with stable region_id triggers cache invalidation.
+    ///
+    /// Similar to the language change test, but tests content_changed path.
+    #[test]
+    fn test_content_change_invalidates_cache_with_region_id_tracker() {
+        use tree_sitter::{Parser, Query};
+
+        let cache = CacheCoordinator::new();
+        let tracker = RegionIdTracker::new();
+        let coordinator = LanguageCoordinator::new();
+        let uri = create_test_uri("test_content_change.md");
+
+        // Register injection query for markdown (required for populate_injections to work)
+        let md_language: tree_sitter::Language = tree_sitter_md::LANGUAGE.into();
+        let injection_query_str = r#"
+            (fenced_code_block
+              (info_string (language) @_lang)
+              (code_fence_content) @injection.content
+              (#set-lang-from-info-string! @_lang))
+        "#;
+        let injection_query =
+            Query::new(&md_language, injection_query_str).expect("create injection query");
+        coordinator.register_injection_query_for_test("markdown", injection_query);
+
+        // Parse markdown with a Lua code block
+        let initial_text = r#"# Test
+
+```lua
+print("hello")
+```
+"#;
+
+        let mut parser = Parser::new();
+        parser.set_language(&md_language).expect("set markdown");
+        let tree = parser.parse(initial_text, None).expect("parse");
+
+        // Populate injections
+        cache.populate_injections(
+            &uri,
+            initial_text,
+            &tree,
+            "markdown",
+            &coordinator,
+            &tracker,
+        );
+
+        let regions = cache.get_injections(&uri).expect("should have injections");
+        assert_eq!(regions.len(), 1);
+        let initial_region_id = regions[0].region_id.clone();
+        let initial_content_hash = regions[0].content_hash;
+
+        // Store tokens
+        let lua_tokens = SemanticTokens {
+            result_id: Some("lua-tokens".to_string()),
+            data: vec![SemanticToken {
+                delta_line: 0,
+                delta_start: 0,
+                length: 5,
+                token_type: 1,
+                token_modifiers_bitset: 0,
+            }],
+        };
+        cache
+            .injection_token_cache
+            .store(&uri, &initial_region_id, lua_tokens);
+
+        assert!(
+            cache
+                .injection_token_cache
+                .get(&uri, &initial_region_id)
+                .is_some(),
+            "tokens should be cached before content change"
+        );
+
+        // Edit the code content (not the language)
+        let edited_text = r#"# Test
+
+```lua
+print("goodbye")
+```
+"#;
+
+        // Apply the text diff to update tracker positions (same as production flow)
+        tracker.apply_text_diff(&uri, initial_text, edited_text);
+
+        let edited_tree = parser.parse(edited_text, None).expect("parse edited");
+
+        // Re-populate injections
+        cache.populate_injections(
+            &uri,
+            edited_text,
+            &edited_tree,
+            "markdown",
+            &coordinator,
+            &tracker,
+        );
+
+        let regions_after = cache.get_injections(&uri).expect("should have injections");
+        assert_eq!(regions_after.len(), 1);
+        assert_eq!(
+            regions_after[0].region_id, initial_region_id,
+            "region_id should be stable"
+        );
+        assert_eq!(
+            regions_after[0].language, "lua",
+            "language should remain lua"
+        );
+        assert_ne!(
+            regions_after[0].content_hash, initial_content_hash,
+            "content_hash should change"
+        );
+
+        // Cached tokens should be invalidated due to content change
+        assert!(
+            cache
+                .injection_token_cache
+                .get(&uri, &initial_region_id)
+                .is_none(),
+            "cached tokens should be invalidated when content changes"
+        );
+    }
 }

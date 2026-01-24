@@ -1073,18 +1073,36 @@ fn populate_injection_map_with_stable_ids(
         return;
     }
 
-    // Get existing regions for ID preservation - match by (language, content_hash)
+    // Get existing regions for ID preservation - match by (language, content_hash, nth_occurrence)
+    //
+    // Including nth_occurrence in the key prevents ID collision when multiple identical
+    // code blocks exist in the same document. Without this, two `print("hello")` blocks
+    // in different positions would incorrectly share the same region_id in tests,
+    // while production (using RegionIdTracker with position-based keys) assigns unique IDs.
+    //
+    // Using nth_occurrence (rather than start_byte) allows IDs to be preserved when
+    // editing *outside* the injection, which shifts byte positions but not occurrence order.
     let existing_regions = injection_map.get(uri);
-    let existing_map: std::collections::HashMap<(&str, u64), &CacheableInjectionRegion> =
-        existing_regions
-            .as_ref()
-            .map(|regions| {
-                regions
-                    .iter()
-                    .map(|r| ((r.language.as_str(), r.content_hash), r))
-                    .collect()
-            })
-            .unwrap_or_default();
+
+    // Build a map keyed by (language, content_hash, nth_occurrence_of_this_key)
+    // Example: Two identical lua blocks → ("lua", hash, 0) and ("lua", hash, 1)
+    let mut existing_map: std::collections::HashMap<(&str, u64, usize), &CacheableInjectionRegion> =
+        std::collections::HashMap::new();
+    let mut occurrence_counts: std::collections::HashMap<(&str, u64), usize> =
+        std::collections::HashMap::new();
+
+    if let Some(regions) = existing_regions.as_ref() {
+        for r in regions.iter() {
+            let base_key = (r.language.as_str(), r.content_hash);
+            let occurrence = occurrence_counts.entry(base_key).or_insert(0);
+            existing_map.insert((r.language.as_str(), r.content_hash, *occurrence), r);
+            *occurrence += 1;
+        }
+    }
+
+    // Reset occurrence counts for new regions
+    let mut new_occurrence_counts: std::collections::HashMap<(&str, u64), usize> =
+        std::collections::HashMap::new();
 
     // Convert to CacheableInjectionRegion, reusing region_ids where possible
     let cacheable_regions: Vec<CacheableInjectionRegion> = regions
@@ -1092,9 +1110,16 @@ fn populate_injection_map_with_stable_ids(
         .map(|info| {
             // Compute hash for matching
             let temp_region = CacheableInjectionRegion::from_region_info(info, "", text);
-            let key = (info.language.as_str(), temp_region.content_hash);
+            let base_key = (info.language.as_str(), temp_region.content_hash);
+            let occurrence = new_occurrence_counts.entry(base_key).or_insert(0);
+            let key = (
+                info.language.as_str(),
+                temp_region.content_hash,
+                *occurrence,
+            );
+            *occurrence += 1;
 
-            // Check if we have an existing region with same (language, content_hash)
+            // Check if we have an existing region with same (language, content_hash, nth_occurrence)
             if let Some(existing) = existing_map.get(&key) {
                 // Reuse the existing region_id - enable cache hit!
                 CacheableInjectionRegion {
@@ -1190,18 +1215,10 @@ Footer text
     let updated_regions = injection_map.get(&uri).expect("should have regions");
     assert_eq!(updated_regions.len(), 1, "Should still have one region");
 
-    // THE KEY ASSERTION: region_id should be PRESERVED for unchanged injection
-    // Note: byte_range will change since header is now longer, so region_id
-    // will actually be NEW. This test documents the EXPECTED behavior.
+    // THE KEY ASSERTION: region_id should be PRESERVED for unchanged injection.
     //
-    // For stable IDs to work, we need to match by something other than byte_range
-    // when the document structure changes. Options:
-    // 1. Content hash
-    // 2. AST path / node identity
-    // 3. Language + relative position (nth lua block)
-    //
-    // For now, this test will FAIL because byte_range changes when header grows.
-    // This documents the problem we need to solve.
+    // With content-hash-based matching, region_id is preserved even when the
+    // byte_range shifts due to edits outside the injection.
 
     let updated_region_id = &updated_regions[0].region_id;
     let updated_byte_range = &updated_regions[0].byte_range;
@@ -1212,8 +1229,7 @@ Footer text
         "Byte range should shift when header changes"
     );
 
-    // Currently FAILS: region_id is regenerated because byte_range changed
-    // After implementing stable IDs via content hash, this should pass.
+    // region_id should be preserved even though byte_range changed.
     assert_eq!(
         initial_region_id, *updated_region_id,
         "Region ID should be preserved for unchanged injection content"
