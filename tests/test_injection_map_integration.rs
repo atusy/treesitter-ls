@@ -653,15 +653,32 @@ print("hello")
     // THE KEY ASSERTION: Even though content_hash is the same, the cached tokens
     // should be invalidated because the LANGUAGE changed.
     //
-    // Note: In the real implementation with RegionIdTracker, the region_id would
-    // be the same if the position is the same. But in this test helper, we generate
-    // new region_ids each time. So we check that:
-    // 1. If using the old region_id, the cache should be cleared
-    // 2. If region_id changed, that's also acceptable (new region = no cache)
+    // Note: populate_injection_map generates new region_ids each time (it doesn't
+    // track previous regions). This means:
+    // - The new python region gets a fresh region_id
+    // - The old lua cache entry becomes orphaned (keyed by initial_region_id)
     //
-    // For populate_injection_map_with_stable_ids (which matches by (language, content_hash)),
-    // the region_id is only reused when both language and content_hash match.
-    // Let's test this behavior with the stable_ids helper.
+    // This test verifies the basic behavior: new region has no cached tokens.
+    // For stable ID behavior (matching by position), see the companion test
+    // test_language_change_invalidates_with_stable_ids.
+
+    let new_region_id = &updated_regions[0].region_id;
+
+    // Verify this helper generates new IDs each time (no stability)
+    assert_ne!(
+        new_region_id, &initial_region_id,
+        "populate_injection_map generates new region_id each call"
+    );
+
+    // The new python region should have no cached tokens
+    assert!(
+        injection_token_cache.get(&uri, new_region_id).is_none(),
+        "New python region should have no cached tokens (fresh region_id)"
+    );
+
+    // Note: The old cache entry (initial_region_id with lua tokens) is now orphaned.
+    // In production, CacheCoordinator cleans up stale entries. Here we just verify
+    // the new region starts with no cache, which is the correct behavior.
 }
 
 #[test]
