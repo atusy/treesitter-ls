@@ -1073,18 +1073,36 @@ fn populate_injection_map_with_stable_ids(
         return;
     }
 
-    // Get existing regions for ID preservation - match by (language, content_hash)
+    // Get existing regions for ID preservation - match by (language, content_hash, nth_occurrence)
+    //
+    // Including nth_occurrence in the key prevents ID collision when multiple identical
+    // code blocks exist in the same document. Without this, two `print("hello")` blocks
+    // in different positions would incorrectly share the same region_id in tests,
+    // while production (using RegionIdTracker with position-based keys) assigns unique IDs.
+    //
+    // Using nth_occurrence (rather than start_byte) allows IDs to be preserved when
+    // editing *outside* the injection, which shifts byte positions but not occurrence order.
     let existing_regions = injection_map.get(uri);
-    let existing_map: std::collections::HashMap<(&str, u64), &CacheableInjectionRegion> =
-        existing_regions
-            .as_ref()
-            .map(|regions| {
-                regions
-                    .iter()
-                    .map(|r| ((r.language.as_str(), r.content_hash), r))
-                    .collect()
-            })
-            .unwrap_or_default();
+
+    // Build a map keyed by (language, content_hash, nth_occurrence_of_this_key)
+    // Example: Two identical lua blocks → ("lua", hash, 0) and ("lua", hash, 1)
+    let mut existing_map: std::collections::HashMap<(&str, u64, usize), &CacheableInjectionRegion> =
+        std::collections::HashMap::new();
+    let mut occurrence_counts: std::collections::HashMap<(&str, u64), usize> =
+        std::collections::HashMap::new();
+
+    if let Some(regions) = existing_regions.as_ref() {
+        for r in regions.iter() {
+            let base_key = (r.language.as_str(), r.content_hash);
+            let occurrence = occurrence_counts.entry(base_key).or_insert(0);
+            existing_map.insert((r.language.as_str(), r.content_hash, *occurrence), r);
+            *occurrence += 1;
+        }
+    }
+
+    // Reset occurrence counts for new regions
+    let mut new_occurrence_counts: std::collections::HashMap<(&str, u64), usize> =
+        std::collections::HashMap::new();
 
     // Convert to CacheableInjectionRegion, reusing region_ids where possible
     let cacheable_regions: Vec<CacheableInjectionRegion> = regions
@@ -1092,9 +1110,16 @@ fn populate_injection_map_with_stable_ids(
         .map(|info| {
             // Compute hash for matching
             let temp_region = CacheableInjectionRegion::from_region_info(info, "", text);
-            let key = (info.language.as_str(), temp_region.content_hash);
+            let base_key = (info.language.as_str(), temp_region.content_hash);
+            let occurrence = new_occurrence_counts.entry(base_key).or_insert(0);
+            let key = (
+                info.language.as_str(),
+                temp_region.content_hash,
+                *occurrence,
+            );
+            *occurrence += 1;
 
-            // Check if we have an existing region with same (language, content_hash)
+            // Check if we have an existing region with same (language, content_hash, nth_occurrence)
             if let Some(existing) = existing_map.get(&key) {
                 // Reuse the existing region_id - enable cache hit!
                 CacheableInjectionRegion {
