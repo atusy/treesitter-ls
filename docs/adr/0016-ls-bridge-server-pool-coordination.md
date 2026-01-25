@@ -50,7 +50,7 @@ Routing: `language` → `server_name` (via config) → connection.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                   kakehashi (Host LS)               │
+│                   kakehashi (Host LS)                   │
 │  ┌────────────────────────────────────────────────────┐ │
 │  │              LanguageServerPool                    │ │
 │  │                                                    │ │
@@ -179,27 +179,20 @@ Transitions:
 
 **Connection Termination**: When a connection enters `Closed` state (graceful shutdown, crash, or respawn), all document lifecycle entries for that downstream are discarded. A respawned connection starts with all documents in `Closed` (default) state, requiring fresh `didOpen` notifications.
 
-### Notification Pass-Through
+### Server-to-Client Notification Forwarding
 
-**Diagnostics and other server-initiated notifications do NOT require aggregation.**
+Server-initiated notifications from downstream servers are forwarded to the upstream client with optional modifications.
 
 ```
-pyright  ──publishDiagnostics──►  bridge  ──publishDiagnostics──►  upstream
-ruff     ──publishDiagnostics──►  bridge  ──publishDiagnostics──►  upstream
-                                  (pass-through, no merge)
+downstream ──notification──►  bridge  ──notification──►  upstream
+                               │
+                               ├─ Transform uri and positions (virtual -> host)
+                               ├─ Transform content for distinguishability
+                               │    (e.g., to prefix title with downstream server name)
+                               ├─ Aggregate for multi-injection regions
+                               │    (e.g., to show diagnostics for multiple code blocks in markdown)
+                               └─ ...
 ```
-
-The bridge:
-1. Receives notification from downstream
-2. Transforms URI (virtual → host document URI)
-3. Forwards to upstream client
-
-The client (e.g., VSCode) automatically aggregates diagnostics from multiple sources per LSP standard behavior.
-
-**Other Pass-Through Notifications:**
-- `$/progress` — Already forwarded via notification channel
-- `window/logMessage` — Forwarded as-is
-- `window/showMessage` — Forwarded as-is
 
 ### Cancellation Propagation
 
