@@ -3,7 +3,20 @@
 //! This module provides the LanguageServerPool which manages connections to
 //! downstream language servers per ADR-0016 (Server Pool Coordination).
 //!
-//! Currently implements single-LS-per-language routing (language → single server).
+//! # Server-Name-Based Pooling
+//!
+//! The pool is keyed by `server_name`, not by `languageId`. This enables:
+//! - **Process sharing**: Multiple languages can share a single process
+//!   (e.g., `typescript` and `typescriptreact` both mapping to `tsgo`)
+//! - **Decoupling**: Language identity is separate from server identity
+//!
+//! Routing flow: `languageId` → `server_name` (via config) → connection
+//!
+//! # Key Types
+//!
+//! - [`LanguageServerPool`]: Main pool managing all downstream connections
+//! - [`ConnectionHandle`]: Handle to a single downstream connection (ADR-0014)
+//! - [`ConnectionState`]: State machine for connection lifecycle
 
 mod connection_action;
 mod connection_handle;
@@ -14,7 +27,7 @@ mod liveness_timeout;
 mod shutdown;
 mod shutdown_timeout;
 #[cfg(test)]
-mod test_helpers;
+pub(super) mod test_helpers;
 
 use connection_action::{ConnectionAction, decide_connection_action};
 use handshake::perform_lsp_handshake;
@@ -163,7 +176,8 @@ impl CancelForwardingMetrics {
 
 /// Pool of connections to downstream language servers (ADR-0016).
 ///
-/// Each injection language maps to exactly one downstream server (single-LS-per-language).
+/// Each server_name maps to exactly one downstream server connection.
+/// Multiple injection languages can share the same server (e.g., "ts" and "tsx" → "tsgo").
 ///
 /// Provides lazy initialization of connections and handles the LSP handshake
 /// (initialize/initialized) for each language server.
@@ -175,15 +189,15 @@ impl CancelForwardingMetrics {
 /// This type is public to allow creating a shared pool for the cancel forwarding
 /// middleware. Normal usage should go through `BridgeCoordinator`.
 pub struct LanguageServerPool {
-    /// Map of language -> connection handle (wraps connection with its state)
+    /// Map of server_name -> connection handle (wraps connection with its state)
     connections: Mutex<HashMap<String, Arc<ConnectionHandle>>>,
     /// Document tracking for virtual documents (versions, host mappings, opened state)
     document_tracker: DocumentTracker,
-    /// Maps upstream request ID -> language for cancel forwarding (ADR-0015).
+    /// Maps upstream request ID -> server_name for cancel forwarding (ADR-0015).
     ///
     /// When a request is sent to a downstream server, we record the mapping so that
     /// when a $/cancelRequest notification arrives with the upstream ID, we can look up
-    /// which language server to forward it to.
+    /// which server to forward it to.
     ///
     /// # Cleanup Behavior
     ///
@@ -287,8 +301,19 @@ impl LanguageServerPool {
     /// Removes the document from version tracking and opened state.
     /// Used by did_close module for cleanup and by
     /// close_invalidated_virtual_docs for invalidated region cleanup.
-    pub(crate) async fn untrack_document(&self, virtual_uri: &VirtualDocumentUri) {
-        self.document_tracker.untrack_document(virtual_uri).await
+    ///
+    /// # Arguments
+    ///
+    /// * `virtual_uri` - The virtual document URI
+    /// * `server_name` - The server name for HashMap lookup
+    pub(crate) async fn untrack_document(
+        &self,
+        virtual_uri: &VirtualDocumentUri,
+        server_name: &str,
+    ) {
+        self.document_tracker
+            .untrack_document(virtual_uri, server_name)
+            .await
     }
 
     /// Check if a document has had didOpen ACTUALLY sent to downstream (ADR-0015).
@@ -300,6 +325,19 @@ impl LanguageServerPool {
     /// Returns false if the document hasn't been opened yet.
     pub(crate) fn is_document_opened(&self, virtual_uri: &VirtualDocumentUri) -> bool {
         self.document_tracker.is_document_opened(virtual_uri)
+    }
+
+    /// Find server_name for a virtual document URI (for reverse lookup).
+    ///
+    /// Used by did_change to look up which server a virtual document was opened on.
+    /// Returns None if the document is not tracked.
+    pub(crate) async fn get_server_for_virtual_uri(
+        &self,
+        virtual_uri: &VirtualDocumentUri,
+    ) -> Option<String> {
+        self.document_tracker
+            .get_server_for_virtual_uri(virtual_uri)
+            .await
     }
 
     /// Mark a document as having had didOpen sent to downstream (ADR-0015).
@@ -323,6 +361,14 @@ impl LanguageServerPool {
     /// Callers are responsible for cleanup on error (removing router entry and
     /// unregistering from upstream request registry).
     ///
+    /// # Arguments
+    ///
+    /// * `writer` - Connection writer for sending didOpen
+    /// * `host_uri` - The host document URI
+    /// * `virtual_uri` - The virtual document URI
+    /// * `virtual_content` - Content for the didOpen notification
+    /// * `server_name` - Server name for document tracking
+    ///
     /// # Decision Logic
     ///
     /// Uses `DocumentOpenDecision` to determine action:
@@ -335,10 +381,11 @@ impl LanguageServerPool {
         host_uri: &Url,
         virtual_uri: &VirtualDocumentUri,
         virtual_content: &str,
+        server_name: &str,
     ) -> io::Result<()> {
         match self
             .document_tracker
-            .document_open_decision(host_uri, virtual_uri)
+            .document_open_decision(host_uri, virtual_uri, server_name)
             .await
         {
             DocumentOpenDecision::SendDidOpen => {
@@ -357,12 +404,18 @@ impl LanguageServerPool {
     /// Increment the version of a virtual document and return the new version.
     ///
     /// Returns None if the document has not been opened.
+    ///
+    /// # Arguments
+    ///
+    /// * `virtual_uri` - The virtual document URI
+    /// * `server_name` - Server name for HashMap lookup
     pub(super) async fn increment_document_version(
         &self,
         virtual_uri: &VirtualDocumentUri,
+        server_name: &str,
     ) -> Option<i32> {
         self.document_tracker
-            .increment_document_version(virtual_uri)
+            .increment_document_version(virtual_uri, server_name)
             .await
     }
 
@@ -373,30 +426,41 @@ impl LanguageServerPool {
     ///
     /// This is exposed for tests that need to simulate document opening without
     /// using the full ensure_document_opened flow.
+    ///
+    /// # Arguments
+    ///
+    /// * `host_uri` - The host document URI
+    /// * `virtual_uri` - The virtual document URI
+    /// * `server_name` - Server name for HashMap key
     #[cfg(test)]
     pub(super) async fn should_send_didopen(
         &self,
         host_uri: &Url,
         virtual_uri: &VirtualDocumentUri,
+        server_name: &str,
     ) -> bool {
         self.document_tracker
-            .should_send_didopen(host_uri, virtual_uri)
+            .should_send_didopen(host_uri, virtual_uri, server_name)
             .await
     }
 
-    /// Get or create a connection for the specified language.
+    /// Get or create a connection for the specified server.
     ///
     /// If no connection exists, spawns the language server and performs
     /// the LSP initialize/initialized handshake with default timeout.
     ///
     /// Returns the ConnectionHandle which wraps both the connection and its state.
+    ///
+    /// # Arguments
+    /// * `server_name` - The server name from config (e.g., "tsgo", "rust-analyzer")
+    /// * `server_config` - The server configuration containing command and options
     pub(super) async fn get_or_create_connection(
         &self,
-        language: &str,
+        server_name: &str,
         server_config: &crate::config::settings::BridgeServerConfig,
     ) -> io::Result<Arc<ConnectionHandle>> {
         self.get_or_create_connection_with_timeout(
-            language,
+            server_name,
             server_config,
             Duration::from_secs(INIT_TIMEOUT_SECS),
         )
@@ -405,7 +469,7 @@ impl LanguageServerPool {
 }
 
 impl LanguageServerPool {
-    /// Get or create a connection for the specified language with custom timeout.
+    /// Get or create a connection for the specified server with custom timeout.
     ///
     /// If no connection exists, spawns the language server and stores the connection
     /// in Initializing state immediately. A background task performs the LSP handshake.
@@ -424,20 +488,25 @@ impl LanguageServerPool {
     /// 3. Store ConnectionHandle in Initializing state
     /// 4. Spawn background task for LSP handshake
     /// 5. Background task transitions to Ready or Failed
+    ///
+    /// # Arguments
+    /// * `server_name` - The server name from config (e.g., "tsgo", "rust-analyzer")
+    /// * `server_config` - The server configuration containing command and options
+    /// * `timeout` - Timeout for the LSP initialize handshake
     async fn get_or_create_connection_with_timeout(
         &self,
-        language: &str,
+        server_name: &str,
         server_config: &crate::config::settings::BridgeServerConfig,
         timeout: Duration,
     ) -> io::Result<Arc<ConnectionHandle>> {
         let mut connections = self.connections.lock().await;
 
-        // Check if we already have a connection for this language
+        // Check if we already have a connection for this server
         // Use pure decision function for testability (ADR-0015 Operation Gating)
-        let existing_state = connections.get(language).map(|h| h.state());
+        let existing_state = connections.get(server_name).map(|h| h.state());
         match decide_connection_action(existing_state) {
             ConnectionAction::ReturnExisting => {
-                return Ok(Arc::clone(connections.get(language).expect(
+                return Ok(Arc::clone(connections.get(server_name).expect(
                     "Invariant violation: Connection expected for ReturnExisting action",
                 )));
             }
@@ -447,7 +516,7 @@ impl LanguageServerPool {
             ConnectionAction::SpawnNew => {
                 // Remove stale connection if present (Failed or Closed state)
                 if existing_state.is_some() {
-                    connections.remove(language);
+                    connections.remove(server_name);
                 }
             }
         }
@@ -470,13 +539,13 @@ impl LanguageServerPool {
 
         // Now spawn reader task with liveness timeout - it can route the initialize response immediately
         // Liveness timeout is configured via LivenessTimeout::default() (60s per ADR-0018 Tier 2)
-        // Language is passed for structured logging (observability improvement)
+        // Server name is passed for structured logging (observability improvement)
         let liveness_timeout = liveness_timeout::LivenessTimeout::default();
         let reader_handle = spawn_reader_task_for_language(
             reader,
             Arc::clone(&router),
             Some(liveness_timeout.as_duration()),
-            Some(language.to_string()),
+            Some(server_name.to_string()),
         );
 
         // Create handle in Initializing state (fast-fail for concurrent requests)
@@ -488,7 +557,7 @@ impl LanguageServerPool {
         ));
 
         // Insert into pool immediately so concurrent requests see Initializing state
-        connections.insert(language.to_string(), Arc::clone(&handle));
+        connections.insert(server_name.to_string(), Arc::clone(&handle));
 
         // Release lock before async initialization
         drop(connections);
@@ -533,7 +602,7 @@ impl LanguageServerPool {
     /// still respond with either a result or a REQUEST_CANCELLED error (-32800).
     ///
     /// # Arguments
-    /// * `language` - The language of the downstream server
+    /// * `server_name` - The server name from config (e.g., "tsgo", "rust-analyzer")
     /// * `upstream_id` - The original request ID from the upstream client
     ///
     /// # Returns
@@ -541,20 +610,20 @@ impl LanguageServerPool {
     /// * `Err` if no connection exists or the upstream ID is not found
     pub(crate) async fn forward_cancel(
         &self,
-        language: &str,
+        server_name: &str,
         upstream_id: &UpstreamId,
     ) -> io::Result<()> {
-        // Get the connection for this language
+        // Get the connection for this server
         let handle = {
             let connections = self.connections().await;
-            let Some(handle) = connections.get(language) else {
+            let Some(handle) = connections.get(server_name) else {
                 self.cancel_metrics.record_no_connection();
                 log::debug!(
                     target: "kakehashi::bridge::cancel",
-                    "Cancel forward failed: no connection for language '{}'",
-                    language
+                    "Cancel forward failed: no connection for server '{}'",
+                    server_name
                 );
-                return Err(io::Error::other("bridge: no connection for language"));
+                return Err(io::Error::other("bridge: no connection for server"));
             };
 
             // Only forward if connection is Ready
@@ -562,8 +631,8 @@ impl LanguageServerPool {
                 self.cancel_metrics.record_not_ready();
                 log::debug!(
                     target: "kakehashi::bridge::cancel",
-                    "Cancel forward failed: connection not ready for language '{}'",
-                    language
+                    "Cancel forward failed: connection not ready for server '{}'",
+                    server_name
                 );
                 return Err(io::Error::other("bridge: connection not ready"));
             }
@@ -578,9 +647,9 @@ impl LanguageServerPool {
                 self.cancel_metrics.record_unknown_id();
                 log::debug!(
                     target: "kakehashi::bridge::cancel",
-                    "Cancel forward failed: unknown upstream ID {} for language '{}'",
+                    "Cancel forward failed: unknown upstream ID {} for server '{}'",
                     upstream_id,
-                    language
+                    server_name
                 );
                 return Err(io::Error::other("bridge: upstream request ID not found"));
             }
@@ -603,10 +672,10 @@ impl LanguageServerPool {
             self.cancel_metrics.record_success();
             log::debug!(
                 target: "kakehashi::bridge::cancel",
-                "Cancel forwarded: upstream {} -> downstream {} for language '{}'",
+                "Cancel forwarded: upstream {} -> downstream {} for server '{}'",
                 upstream_id,
                 downstream_id.as_i64(),
-                language
+                server_name
             );
         }
 
@@ -615,8 +684,8 @@ impl LanguageServerPool {
 
     /// Forward a $/cancelRequest notification using only the upstream request ID.
     ///
-    /// This method looks up the language from the upstream request registry,
-    /// then delegates to `forward_cancel(language, upstream_id)`.
+    /// This method looks up the server_name from the upstream request registry,
+    /// then delegates to `forward_cancel(server_name, upstream_id)`.
     ///
     /// Called by the RequestIdCapture middleware when it intercepts a $/cancelRequest
     /// notification from the client.
@@ -631,8 +700,8 @@ impl LanguageServerPool {
         &self,
         upstream_id: UpstreamId,
     ) -> io::Result<()> {
-        // Look up the language from the registry
-        let language = {
+        // Look up the server_name from the registry
+        let server_name = {
             let registry = self
                 .upstream_request_registry
                 .lock()
@@ -640,7 +709,7 @@ impl LanguageServerPool {
             registry.get(&upstream_id).cloned()
         };
 
-        let Some(language) = language else {
+        let Some(server_name) = server_name else {
             self.cancel_metrics.record_not_in_registry();
             log::debug!(
                 target: "kakehashi::bridge::cancel",
@@ -652,10 +721,10 @@ impl LanguageServerPool {
             ));
         };
 
-        self.forward_cancel(&language, &upstream_id).await
+        self.forward_cancel(&server_name, &upstream_id).await
     }
 
-    /// Register an upstream request ID -> language mapping for cancel forwarding.
+    /// Register an upstream request ID -> server_name mapping for cancel forwarding.
     ///
     /// Called when a request is sent to a downstream server to enable $/cancelRequest
     /// forwarding. When a cancel notification arrives from the client with the upstream ID,
@@ -666,9 +735,9 @@ impl LanguageServerPool {
     /// 1. Client sends request with ID 42
     /// 2. Bridge creates downstream request with ID 7 and calls this method
     /// 3. Client sends `$/cancelRequest { id: 42 }`
-    /// 4. Bridge looks up 42 in registry → finds "lua"
+    /// 4. Bridge looks up 42 in registry → finds "tsgo"
     /// 5. Bridge looks up 42 in ResponseRouter → finds downstream ID 7
-    /// 6. Bridge sends `$/cancelRequest { id: 7 }` to lua-language-server
+    /// 6. Bridge sends `$/cancelRequest { id: 7 }` to tsgo server
     ///
     /// # Cleanup
     ///
@@ -679,13 +748,13 @@ impl LanguageServerPool {
     ///
     /// # Arguments
     /// * `upstream_id` - The original request ID from the upstream client
-    /// * `language` - The language of the downstream server handling this request
-    pub(crate) fn register_upstream_request(&self, upstream_id: UpstreamId, language: &str) {
+    /// * `server_name` - The server name handling this request (e.g., "tsgo", "rust-analyzer")
+    pub(crate) fn register_upstream_request(&self, upstream_id: UpstreamId, server_name: &str) {
         let mut registry = self
             .upstream_request_registry
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        registry.insert(upstream_id, language.to_string());
+        registry.insert(upstream_id, server_name.to_string());
     }
 
     /// Unregister an upstream request ID from the registry.
@@ -763,6 +832,7 @@ mod tests {
         let start = std::time::Instant::now();
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -785,6 +855,7 @@ mod tests {
         // Test completion request - same behavior
         let result = pool
             .send_completion_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -832,6 +903,7 @@ mod tests {
         // Test hover request - should trigger retry and succeed with new server
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -862,6 +934,7 @@ mod tests {
         // Test completion request - should also succeed (connection is now Ready)
         let result = pool
             .send_completion_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -902,6 +975,7 @@ mod tests {
         // After init completes, state should be Ready and request should succeed
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -934,6 +1008,7 @@ mod tests {
         // Second request should also succeed (state remains Ready)
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -1197,6 +1272,7 @@ mod tests {
         // First, send a hover request to establish connection and open a virtual doc
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -1212,8 +1288,8 @@ mod tests {
         // Get the virtual URI that was opened
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
 
-        // Send didClose notification
-        let result = pool.send_didclose_notification(&virtual_uri).await;
+        // Send didClose notification (server_name matches the one used in send_hover_request)
+        let result = pool.send_didclose_notification(&virtual_uri, "lua").await;
         assert!(
             result.is_ok(),
             "send_didclose_notification should succeed: {:?}",
@@ -1251,6 +1327,7 @@ mod tests {
         // Use positions that are within the code block (position.line >= region_start_line)
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 tower_lsp_server::ls_types::Position {
@@ -1268,6 +1345,7 @@ mod tests {
 
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 tower_lsp_server::ls_types::Position {
@@ -1324,7 +1402,9 @@ mod tests {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
-        let opened = pool.should_send_didopen(&host_uri, &virtual_uri).await;
+        let opened = pool
+            .should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
         assert!(opened, "First call should open the document");
         // Also mark as opened (simulating successful didOpen write)
         pool.mark_document_opened(&virtual_uri);
@@ -1394,7 +1474,7 @@ mod tests {
 
         // Call ensure_document_opened
         let result = pool
-            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content)
+            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content, "lua")
             .await;
 
         // Should succeed
@@ -1422,7 +1502,8 @@ mod tests {
         let virtual_content = "print('hello')";
 
         // Pre-open the document (simulate previous didOpen)
-        pool.should_send_didopen(&host_uri, &virtual_uri).await;
+        pool.should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
         pool.mark_document_opened(&virtual_uri);
 
         // Verify document is already marked as opened
@@ -1445,7 +1526,7 @@ mod tests {
 
         // Call ensure_document_opened - should skip didOpen
         let result = pool
-            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content)
+            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content, "lua")
             .await;
 
         // Should succeed (just skips didOpen)
@@ -1481,14 +1562,17 @@ mod tests {
 
         // Simulate another request having called should_send_didopen but NOT mark_document_opened
         // This puts the document in the "didOpen pending" state
-        pool.should_send_didopen(&host_uri, &virtual_uri).await;
+        pool.should_send_didopen(&host_uri, &virtual_uri, "lua")
+            .await;
         // Deliberately do NOT call mark_document_opened to simulate pending didOpen
 
         // Verify the inconsistent state:
         // - should_send_didopen will return false (document already registered)
         // - is_document_opened will return false (not yet marked as opened)
         assert!(
-            !pool.should_send_didopen(&host_uri, &virtual_uri).await,
+            !pool
+                .should_send_didopen(&host_uri, &virtual_uri, "lua")
+                .await,
             "should_send_didopen should return false (already registered)"
         );
         assert!(
@@ -1509,7 +1593,7 @@ mod tests {
 
         // Call ensure_document_opened - should fail
         let result = pool
-            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content)
+            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content, "lua")
             .await;
 
         // Should return error
@@ -1571,6 +1655,7 @@ mod tests {
         let start = std::time::Instant::now();
         let result = pool
             .send_hover_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -1593,6 +1678,7 @@ mod tests {
         // Test completion request - same behavior
         let result = pool
             .send_completion_request(
+                "lua", // server_name
                 &config,
                 &host_uri,
                 host_position,
@@ -2457,5 +2543,134 @@ mod tests {
         assert_eq!(not_ready, 1, "1 not_ready failure");
         assert_eq!(unknown_id, 1, "1 unknown_id failure");
         assert_eq!(not_in_reg, 1, "1 not_in_registry failure");
+    }
+
+    // ========================================
+    // Process-sharing didClose tests
+    // ========================================
+
+    /// Test that send_didclose_notification uses server_name, not language, for connection lookup.
+    ///
+    /// In process-sharing scenarios, the language (e.g., "typescript") differs from the
+    /// server_name (e.g., "tsgo"). didClose must use server_name to find the correct connection.
+    ///
+    /// This test verifies the fix for the bug where send_didclose_notification used
+    /// virtual_uri.language() instead of the server_name parameter.
+    #[tokio::test]
+    async fn send_didclose_uses_server_name_not_language_for_connection_lookup() {
+        use super::super::protocol::VirtualDocumentUri;
+        use std::sync::Arc;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        // Create a virtual document with language="typescript" (for URI/extension)
+        // but we'll use server_name="tsgo" for connection lookup
+        let virtual_uri =
+            VirtualDocumentUri::new(&url_to_uri(&host_uri), "typescript", TEST_ULID_LUA_0);
+
+        // Insert a connection keyed by "tsgo" (server_name), NOT "typescript" (language)
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+        pool.connections
+            .lock()
+            .await
+            .insert("tsgo".to_string(), Arc::clone(&handle));
+
+        // Verify there is NO connection for "typescript" (the language)
+        {
+            let connections = pool.connections.lock().await;
+            assert!(
+                connections.get("typescript").is_none(),
+                "Should NOT have a 'typescript' connection"
+            );
+            assert!(
+                connections.get("tsgo").is_some(),
+                "Should have a 'tsgo' connection"
+            );
+        }
+
+        // Send didClose with server_name="tsgo"
+        // This should succeed because we look up by server_name, not language
+        let result = pool.send_didclose_notification(&virtual_uri, "tsgo").await;
+        assert!(
+            result.is_ok(),
+            "send_didclose_notification should succeed when using server_name 'tsgo': {:?}",
+            result.err()
+        );
+
+        // Verify connection is still Ready (not closed)
+        {
+            let connections = pool.connections.lock().await;
+            let handle = connections.get("tsgo").expect("Connection should exist");
+            assert_eq!(
+                handle.state(),
+                ConnectionState::Ready,
+                "Connection should remain Ready after didClose"
+            );
+        }
+    }
+
+    /// Test that close_single_virtual_doc routes didClose using server_name from OpenedVirtualDoc.
+    ///
+    /// When a document is tracked with server_name="tsgo" but language="typescript",
+    /// close_single_virtual_doc should use the stored server_name for didClose routing.
+    #[tokio::test]
+    async fn close_single_virtual_doc_uses_server_name_for_process_sharing() {
+        use super::super::protocol::VirtualDocumentUri;
+        use std::sync::Arc;
+
+        let pool = LanguageServerPool::new();
+        let host_uri = Url::parse("file:///project/doc.md").unwrap();
+
+        // Create a virtual document with language="typescript"
+        let virtual_uri =
+            VirtualDocumentUri::new(&url_to_uri(&host_uri), "typescript", TEST_ULID_LUA_0);
+
+        // Register the document with server_name="tsgo" (process-sharing scenario)
+        // This simulates what happens when a typescript block uses the tsgo server
+        let opened = pool
+            .should_send_didopen(&host_uri, &virtual_uri, "tsgo")
+            .await;
+        assert!(opened, "Document should be registered for opening");
+        pool.mark_document_opened(&virtual_uri);
+
+        // Insert a connection keyed by "tsgo" (NOT "typescript")
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+        pool.connections
+            .lock()
+            .await
+            .insert("tsgo".to_string(), Arc::clone(&handle));
+
+        // Close the host document - this triggers close_single_virtual_doc internally
+        let closed_docs = pool.close_host_document(&host_uri).await;
+
+        // Verify the document was closed
+        assert_eq!(closed_docs.len(), 1, "Should have closed 1 document");
+        assert_eq!(
+            closed_docs[0].virtual_uri.language(),
+            "typescript",
+            "Closed doc should have language 'typescript'"
+        );
+        assert_eq!(
+            closed_docs[0].server_name, "tsgo",
+            "Closed doc should have server_name 'tsgo'"
+        );
+
+        // Verify the document is no longer tracked
+        assert!(
+            !pool.is_document_opened(&virtual_uri),
+            "Document should no longer be marked as opened"
+        );
+
+        // Verify connection is still Ready (not closed)
+        {
+            let connections = pool.connections.lock().await;
+            let handle = connections.get("tsgo").expect("Connection should exist");
+            assert_eq!(
+                handle.state(),
+                ConnectionState::Ready,
+                "Connection should remain Ready after close_host_document"
+            );
+        }
     }
 }

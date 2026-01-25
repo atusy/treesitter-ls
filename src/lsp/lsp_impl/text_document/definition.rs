@@ -80,7 +80,7 @@ impl Kakehashi {
 
         // Get bridge server config for this language
         // The bridge filter is checked inside get_bridge_config_for_language
-        let Some(server_config) =
+        let Some(resolved_config) =
             self.get_bridge_config_for_language(&language_name, &resolved.injection_language)
         else {
             self.client
@@ -107,7 +107,8 @@ impl Kakehashi {
             .bridge
             .pool()
             .send_definition_request(
-                &server_config,
+                &resolved_config.server_name,
+                &resolved_config.config,
                 &uri,
                 position,
                 &resolved.injection_language,

@@ -20,6 +20,7 @@ mod text_document;
 
 // Re-export public types
 pub(crate) use coordinator::BridgeCoordinator;
+pub(crate) use coordinator::ResolvedServerConfig;
 pub use pool::LanguageServerPool;
 pub use pool::UpstreamId;
 
@@ -67,6 +68,7 @@ mod tests {
 
         let response = pool
             .send_hover_request(
+                "lua", // server_name
                 &server_config,
                 &host_uri,
                 host_position,
@@ -119,6 +121,7 @@ mod tests {
 
         let response = pool
             .send_completion_request(
+                "lua", // server_name
                 &server_config,
                 &host_uri,
                 host_position,
@@ -180,6 +183,7 @@ mod tests {
         // (unique IDs are generated internally)
         let response = pool
             .send_hover_request(
+                "lua", // server_name
                 &server_config,
                 &host_uri,
                 host_position,
@@ -251,6 +255,7 @@ mod tests {
         // (unique IDs are generated internally)
         let response = pool
             .send_completion_request(
+                "lua", // server_name
                 &server_config,
                 &host_uri,
                 host_position,
@@ -313,6 +318,7 @@ mod tests {
 
         let response = pool
             .send_document_link_request(
+                "lua", // server_name
                 &server_config,
                 &host_uri,
                 "lua",
@@ -339,6 +345,110 @@ mod tests {
             json_response.get("result").is_some() || json_response.get("error").is_some(),
             "Document link response should have result or error field: {:?}",
             json_response
+        );
+    }
+
+    /// Unit test: Different languages using the same server_name share a single connection.
+    ///
+    /// This test verifies the core server-name-based pooling behavior by inserting
+    /// a mock connection keyed by server_name, then checking that subsequent lookups
+    /// for the same server_name return the same connection.
+    ///
+    /// Real-world example: ts and tsx both using server "tsgo" should share one process.
+    #[tokio::test]
+    async fn same_server_different_languages_share_connection() {
+        use super::pool::ConnectionState;
+        use super::pool::test_helpers::create_handle_with_state;
+
+        let pool = std::sync::Arc::new(LanguageServerPool::new());
+
+        // Create and insert a Ready connection for server_name "tsgo"
+        let server_name = "tsgo";
+        let handle = create_handle_with_state(ConnectionState::Ready).await;
+        let inserted_ptr = std::sync::Arc::as_ptr(&handle);
+
+        pool.connections()
+            .await
+            .insert(server_name.to_string(), std::sync::Arc::clone(&handle));
+
+        // Verify only one connection exists
+        let connections = pool.connections().await;
+        assert_eq!(
+            connections.len(),
+            1,
+            "Only one connection should exist for server_name"
+        );
+        assert!(
+            connections.contains_key(server_name),
+            "Connection should be keyed by server_name"
+        );
+
+        // Verify the connection is the same one we inserted
+        let retrieved_ptr = std::sync::Arc::as_ptr(connections.get(server_name).unwrap());
+        assert_eq!(
+            inserted_ptr, retrieved_ptr,
+            "Connection should be the same instance we inserted"
+        );
+
+        // Both ts and tsx lookups should return the same connection
+        // (in the real system, coordinator resolves both languages to "tsgo")
+        let ts_lookup = connections.get("tsgo");
+        let tsx_lookup = connections.get("tsgo"); // Same key, same connection
+        assert!(ts_lookup.is_some(), "ts lookup should find connection");
+        assert!(tsx_lookup.is_some(), "tsx lookup should find connection");
+        assert!(
+            std::sync::Arc::ptr_eq(ts_lookup.unwrap(), tsx_lookup.unwrap()),
+            "Both lookups should return the same connection"
+        );
+    }
+
+    /// Unit test: Different server_names create separate connections.
+    ///
+    /// This test verifies that different server_names have separate connections,
+    /// even if they might handle similar languages.
+    ///
+    /// Real-world example: "tsgo" and "eslint" are separate servers even if both
+    /// handle TypeScript files.
+    #[tokio::test]
+    async fn different_servers_create_separate_connections() {
+        use super::pool::ConnectionState;
+        use super::pool::test_helpers::create_handle_with_state;
+
+        let pool = std::sync::Arc::new(LanguageServerPool::new());
+
+        // Create and insert two different connections with different server_names
+        let handle_tsgo = create_handle_with_state(ConnectionState::Ready).await;
+        let handle_eslint = create_handle_with_state(ConnectionState::Ready).await;
+
+        pool.connections()
+            .await
+            .insert("tsgo".to_string(), std::sync::Arc::clone(&handle_tsgo));
+        pool.connections()
+            .await
+            .insert("eslint".to_string(), std::sync::Arc::clone(&handle_eslint));
+
+        // Verify two separate connections exist
+        let connections = pool.connections().await;
+        assert_eq!(
+            connections.len(),
+            2,
+            "Two separate connections should exist for different server_names"
+        );
+        assert!(
+            connections.contains_key("tsgo"),
+            "Should have tsgo connection"
+        );
+        assert!(
+            connections.contains_key("eslint"),
+            "Should have eslint connection"
+        );
+
+        // Verify handles point to different connections
+        let tsgo_ptr = std::sync::Arc::as_ptr(connections.get("tsgo").unwrap());
+        let eslint_ptr = std::sync::Arc::as_ptr(connections.get("eslint").unwrap());
+        assert_ne!(
+            tsgo_ptr, eslint_ptr,
+            "Different server_names should have different connections"
         );
     }
 }

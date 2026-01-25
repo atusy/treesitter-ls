@@ -19,18 +19,23 @@ impl LanguageServerPool {
     /// sending - it remains available for other documents.
     ///
     /// Returns Ok(()) if the notification was sent successfully, or if no connection
-    /// exists for the language (nothing to do).
+    /// exists for the server (nothing to do).
+    ///
+    /// # Arguments
+    ///
+    /// * `virtual_uri` - The virtual document URI to close
+    /// * `server_name` - The server name for connection lookup (enables process sharing)
     pub(crate) async fn send_didclose_notification(
         &self,
         virtual_uri: &VirtualDocumentUri,
+        server_name: &str,
     ) -> io::Result<()> {
-        let language = virtual_uri.language();
         let uri_string = virtual_uri.to_uri_string();
 
-        // Get the connection for this language (if it exists and is Ready)
+        // Get the connection for this server (if it exists and is Ready)
         let connections = self.connections().await;
-        let Some(handle) = connections.get(language) else {
-            // No connection for this language - nothing to do
+        let Some(handle) = connections.get(server_name) else {
+            // No connection for this server - nothing to do
             return Ok(());
         };
 
@@ -55,14 +60,19 @@ impl LanguageServerPool {
     /// and `close_invalidated_docs`. Errors are logged but do not prevent
     /// cleanup of the document_versions tracking.
     async fn close_single_virtual_doc(&self, doc: &OpenedVirtualDoc) {
-        if let Err(e) = self.send_didclose_notification(&doc.virtual_uri).await {
+        if let Err(e) = self
+            .send_didclose_notification(&doc.virtual_uri, &doc.server_name)
+            .await
+        {
             log::warn!(
                 target: "kakehashi::bridge",
                 "Failed to send didClose for {}: {}",
                 doc.virtual_uri.to_uri_string(), e
             );
         }
-        self.untrack_document(&doc.virtual_uri).await;
+        // Use server_name from OpenedVirtualDoc for server-name-based tracking
+        self.untrack_document(&doc.virtual_uri, &doc.server_name)
+            .await;
     }
 
     /// Close all virtual documents associated with a host document.
