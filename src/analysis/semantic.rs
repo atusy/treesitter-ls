@@ -193,7 +193,14 @@ fn collect_host_tokens(
             let start_pos = node.start_position();
             let end_pos = node.end_position();
 
-            if start_pos.row == end_pos.row {
+            // Allow tokens that span to the next line at column 0 (trailing newline case).
+            // Some tree-sitter grammars (e.g., Rust) include trailing newlines in nodes like
+            // line_comment, making end_pos = (start_row + 1, 0). These are effectively
+            // single-line tokens and should not be filtered out.
+            let is_single_line = start_pos.row == end_pos.row;
+            let is_trailing_newline = end_pos.row == start_pos.row + 1 && end_pos.column == 0;
+
+            if is_single_line || is_trailing_newline {
                 let host_line = content_start_line + start_pos.row;
                 let host_line_text = host_lines.get(host_line).unwrap_or(&"");
 
@@ -204,7 +211,10 @@ fn collect_host_tokens(
                 };
                 let start_utf16 = byte_to_utf16_col(host_line_text, byte_offset_in_host);
 
-                let end_byte_offset_in_host = if start_pos.row == 0 {
+                // For trailing newline case, use the line length as end position
+                let end_byte_offset_in_host = if is_trailing_newline {
+                    host_line_text.len()
+                } else if start_pos.row == 0 {
                     content_start_col + end_pos.column
                 } else {
                     end_pos.column
@@ -2466,6 +2476,71 @@ fn main() {}
             found_fn_keyword,
             "Should find `fn` keyword at line 2 from nested Rust injection (Markdown -> Markdown -> Rust). \
              collect_injection_languages() must recursively discover nested languages."
+        );
+    }
+
+    #[test]
+    fn test_rust_doc_comment_full_token() {
+        // Rust doc comments (/// ...) include trailing newline in the tree-sitter node,
+        // which causes end_pos.row > start_pos.row. This test verifies that we still
+        // generate tokens for the full comment, not just the doc marker.
+        use tree_sitter::{Parser, Query};
+
+        let text = "// foo\n/// bar\n";
+
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let mut parser = Parser::new();
+        parser.set_language(&language).unwrap();
+
+        let tree = parser.parse(text, None).unwrap();
+
+        // Query similar to the installed Rust highlights.scm
+        let query_text = r#"
+            [(line_comment) (block_comment)] @comment
+            [(outer_doc_comment_marker) (inner_doc_comment_marker)] @comment.documentation
+            (line_comment (doc_comment)) @comment.documentation
+        "#;
+
+        let query = Query::new(&language, query_text).unwrap();
+
+        let result =
+            handle_semantic_tokens_full(text, &tree, &query, Some("rust"), None, None, None);
+
+        let tokens = result.expect("Should return tokens");
+        let SemanticTokensResult::Tokens(tokens) = tokens else {
+            panic!("Expected full tokens result");
+        };
+
+        // Should have tokens for both comments
+        // Token 1: "// foo" at (0,0) len=6
+        // Token 2: "/// bar" at (1,0) len=7 (without trailing newline)
+        // Token 3: "/" marker at (1,2) len=1 (may be deduped with token 2)
+
+        // Find the doc comment token at line 1, column 0
+        let mut abs_line = 0u32;
+        let mut abs_col = 0u32;
+        let mut found_doc_comment_full = false;
+
+        for token in &tokens.data {
+            abs_line += token.delta_line;
+            if token.delta_line > 0 {
+                abs_col = token.delta_start;
+            } else {
+                abs_col += token.delta_start;
+            }
+
+            // Line 1, col 0, should have length 7 ("/// bar" without newline)
+            if abs_line == 1 && abs_col == 0 && token.length == 7 {
+                found_doc_comment_full = true;
+                break;
+            }
+        }
+
+        assert!(
+            found_doc_comment_full,
+            "Should find full doc comment token at line 1, col 0 with length 7. \
+             Got tokens: {:?}",
+            tokens.data
         );
     }
 }
