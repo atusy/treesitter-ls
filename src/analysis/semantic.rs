@@ -150,6 +150,58 @@ const MAX_INJECTION_DEPTH: usize = 10;
 /// (line, column, length, capture_index, mapped_name)
 type RawToken = (usize, usize, usize, u32, String);
 
+/// Calculate byte offsets for a line within a multiline token.
+///
+/// This helper computes the start and end byte positions for a specific line (row)
+/// within a multiline token, handling both host document and injected content coordinates.
+///
+/// # Arguments
+/// * `row` - The current row being processed (relative to content)
+/// * `start_pos` - Token start position in content coordinates
+/// * `end_pos` - Token end position in content coordinates
+/// * `content_start_col` - Column offset where injection starts in host line (0 for host content)
+/// * `content_line_len` - Length of the content line at this row
+///
+/// # Returns
+/// Tuple of (line_start_byte, line_end_byte) in host document coordinates
+fn calculate_line_byte_offsets(
+    row: usize,
+    start_pos: tree_sitter::Point,
+    end_pos: tree_sitter::Point,
+    content_start_col: usize,
+    content_line_len: usize,
+) -> (usize, usize) {
+    // Calculate start byte offset for this line
+    let line_start = if row == start_pos.row {
+        if row == 0 {
+            content_start_col + start_pos.column
+        } else {
+            start_pos.column
+        }
+    } else {
+        // Continuation lines start at column 0
+        0
+    };
+
+    // Calculate end byte offset for this line
+    let line_end = if row == end_pos.row {
+        if row == 0 {
+            content_start_col + end_pos.column
+        } else {
+            end_pos.column
+        }
+    } else {
+        // Non-final lines: end at injected content's line end (not host line end)
+        if row == 0 {
+            content_start_col + content_line_len
+        } else {
+            content_line_len
+        }
+    };
+
+    (line_start, line_end)
+}
+
 /// Collect tokens from a single document's highlight query (no injection processing).
 ///
 /// This is the common logic shared by both pool-based and local-parser-based
@@ -283,33 +335,15 @@ fn collect_host_tokens(
                 for row in start_pos.row..=end_pos.row {
                     let host_row = content_start_line + row;
                     let line_text = host_lines.get(host_row).unwrap_or(&"");
+                    let content_line_len = content_lines.get(row).map(|l| l.len()).unwrap_or(0);
 
-                    let line_start = if row == start_pos.row {
-                        if row == 0 {
-                            content_start_col + start_pos.column
-                        } else {
-                            start_pos.column
-                        }
-                    } else {
-                        0
-                    };
-
-                    let line_end = if row == end_pos.row {
-                        if row == 0 {
-                            content_start_col + end_pos.column
-                        } else {
-                            end_pos.column
-                        }
-                    } else {
-                        // Non-final lines: end at injected content's line end (not host line end)
-                        // This is important for injections that start mid-line
-                        let content_line_len = content_lines.get(row).map(|l| l.len()).unwrap_or(0);
-                        if row == 0 {
-                            content_start_col + content_line_len
-                        } else {
-                            content_line_len
-                        }
-                    };
+                    let (line_start, line_end) = calculate_line_byte_offsets(
+                        row,
+                        start_pos,
+                        end_pos,
+                        content_start_col,
+                        content_line_len,
+                    );
 
                     let line_start_utf16 = byte_to_utf16_col(line_text, line_start);
                     let line_end_utf16 = byte_to_utf16_col(line_text, line_end);
@@ -340,36 +374,15 @@ fn collect_host_tokens(
                 for row in start_pos.row..=end_pos.row {
                     let host_row = content_start_line + row;
                     let host_line_text = host_lines.get(host_row).unwrap_or(&"");
-                    let content_line_text = content_lines.get(row).unwrap_or(&"");
+                    let content_line_len = content_lines.get(row).map(|l| l.len()).unwrap_or(0);
 
-                    // Calculate start column for this line
-                    let line_start_byte = if row == start_pos.row {
-                        if row == 0 {
-                            content_start_col + start_pos.column
-                        } else {
-                            start_pos.column
-                        }
-                    } else {
-                        // For continuation lines, start at column 0
-                        0
-                    };
-
-                    // Calculate end column for this line
-                    let line_end_byte = if row == end_pos.row {
-                        if row == 0 {
-                            content_start_col + end_pos.column
-                        } else {
-                            end_pos.column
-                        }
-                    } else {
-                        // Non-final lines: end at injected content's line end
-                        if row == 0 {
-                            // First row of injection: offset content line length by start column
-                            content_start_col + content_line_text.len()
-                        } else {
-                            content_line_text.len()
-                        }
-                    };
+                    let (line_start_byte, line_end_byte) = calculate_line_byte_offsets(
+                        row,
+                        start_pos,
+                        end_pos,
+                        content_start_col,
+                        content_line_len,
+                    );
 
                     let start_utf16 = byte_to_utf16_col(host_line_text, line_start_byte);
                     let end_utf16 = byte_to_utf16_col(host_line_text, line_end_byte);
