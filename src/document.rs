@@ -34,6 +34,8 @@ pub(crate) fn get_language_for_document(
         })
         .unwrap_or((None, String::new()));
 
-    // Use the full detection chain with alias resolution
-    language.detect_language(path, language_id.as_deref(), &content)
+    // ADR-0005: Unified detection chain with alias resolution at each step
+    // Priority: languageId → heuristics (first-line, filename) → extension
+    // Host document: token=None (no code fence identifier)
+    language.detect_language(path, &content, None, language_id.as_deref())
 }

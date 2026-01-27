@@ -295,9 +295,10 @@ impl Kakehashi {
         let mut events = Vec::new();
 
         // ADR-0005: Detection fallback chain via LanguageCoordinator
+        // Host document: token is None (no code fence identifier)
         let language_name = self
             .language
-            .detect_language(uri.path(), language_id, &text);
+            .detect_language(uri.path(), &text, None, language_id);
 
         if let Some(language_name) = language_name {
             // Check if this parser has previously crashed
@@ -689,11 +690,11 @@ impl Kakehashi {
 
         // Check each injected language and trigger auto-install if not loaded
         for lang in languages {
-            // ADR-0005: Try direct identifier first, then normalize alias
+            // ADR-0005: Try direct identifier first, then syntect token normalization
             // This ensures "py" -> "python" before auto-install
             let resolved_lang = if self.language.has_parser_available(&lang) {
                 lang.clone()
-            } else if let Some(normalized) = crate::language::alias::normalize_alias(&lang) {
+            } else if let Some(normalized) = crate::language::heuristic::detect_from_token(&lang) {
                 normalized
             } else {
                 lang.clone()

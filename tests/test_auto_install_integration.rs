@@ -586,7 +586,7 @@ fn test_reload_after_install_requires_ensure_language_loaded_sequence() {
     let content = "fn main() {}";
     let language_id = Some("rust");
 
-    let detected_before = coordinator.detect_language(path, language_id, content);
+    let detected_before = coordinator.detect_language(path, content, None, language_id);
     assert!(
         detected_before.is_none(),
         "Before ensure_language_loaded: detect_language returns None because \

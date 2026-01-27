@@ -26,87 +26,106 @@ This applies to both document-level language detection and injected language res
 2. **Injection-level**: Resolving embedded languages within a parsed document
 
 ```
-1. LSP languageId  →  Check if parser available  →  If yes: use it
-                                                 →  If no: continue
-2. Alias resolution →  Map to canonical name     →  Check if parser available  →  If yes: use it
-                                                                               →  If no: continue
-3. Heuristic       →  Check if parser available  →  If yes: use it
-                                                 →  If no: continue
-4. File extension  →  Check if parser available  →  If yes: use it
-                                                 →  If no: return None
+1. LSP languageId  →  Try direct  →  Try alias  →  If available: use it
+                                                →  If no: continue
+2. Token detection →  syntect     →  Try alias  →  If available: use it
+                  →  raw token   →  Try alias  →  If available: use it
+                                                →  If no: continue
+3. First line      →  Try direct  →  Try alias  →  If available: use it
+                                                →  If no: return None
 ```
 
 ### Priority Order Rationale
+
+Each detection method follows the **detect → alias resolution → availability check** pattern:
 
 1. **LSP languageId (highest priority)**
    - Client has full context: file path, content, user preferences, workspace settings
    - Already handles complex cases: `.tsx` vs `.ts`, polyglot files, user overrides
    - Trust the client—it knows best
 
-2. **Alias resolution (second priority)**
-   - Maps alternative languageId values to canonical parser names
-   - Configured via `aliases` field in language config:
-     ```toml
-     [languages.markdown]
-     aliases = ["rmd", "qmd"]
-     ```
-   - Handles cases where editors send non-standard languageIds that the user cannot control
-   - Example: Editor sends `rmd` for R Markdown files → alias maps to `markdown` parser
+2. **Token-based detection (middle priority)**
 
-3. **Heuristic analysis (middle priority)**
+   Tokens are extracted from either explicit identifiers (code fence markers) or file paths:
+   - **Explicit token**: Injection identifiers like `py`, `js`, `bash` from code fences
+   - **Path-derived token**: Extension (`file.rs` → `rs`) or basename (`Makefile` → `Makefile`)
+
+   Token resolution uses syntect's `find_syntax_by_token` for normalization:
+   - `py` → `python`, `js` → `javascript`, `rs` → `rust`
+   - `Makefile` → `make`, `.bashrc` → `bash`
+
+   If syntect doesn't recognize the token, it's tried directly as an alias candidate.
+   This handles extensions like `jsx`, `tsx` that syntect doesn't know but may be
+   configured as aliases (e.g., `jsx` → `javascript`).
+
+3. **First-line detection (lowest priority)**
    - Shebang detection: `#!/usr/bin/env python` → python
    - Magic comments: `# -*- mode: ruby -*-` → ruby
-   - File patterns: `Makefile` → make, `Dockerfile` → dockerfile
-   - Useful when client sends generic languageId (e.g., "plaintext")
-   - Candidate implementation: syntect's `find_syntax_for_file` (reads first line for shebang/magic)
+   - Implementation: syntect's `find_syntax_by_first_line`
+   - Fallback when token detection fails (e.g., extensionless files without special names)
 
-4. **File extension (lowest priority)**
-   - Strips the dot: `.rs` → `rs`, `.py` → `py`
-   - No mapping — uses extension directly as parser name candidate
-   - Fallback when above methods fail or return unavailable parsers
+### Alias Resolution as Sub-step
+
+Alias resolution is applied **after each detection method**, not as a separate step in the chain. This is configured via the `aliases` field in language config:
+
+```toml
+[languages.markdown]
+aliases = ["rmd", "qmd"]
+```
+
+This ensures:
+- **Consistent behavior**: All detection paths apply the same alias logic
+- **User control**: Users can define mappings that work at any detection level
+- **Alignment with injection**: Document-level and injection-level detection behave the same way
+
+Example scenarios:
+- Editor sends `languageId: "rmd"` → alias resolves to `markdown` → parser found
+- Token `py` (from code fence or `.py` extension) → syntect normalizes to `python` → parser found
+- Token `jsx` (from `.jsx` extension) → syntect unknown → direct alias to `javascript` → parser found
+- Shebang `#!/usr/bin/env python3` → syntect returns `python` → parser found
 
 ### Availability Check
 
-Each detection method returns a candidate language. Before accepting it:
+Each detection method tries direct match first, then alias resolution:
 
-```rust
-fn detect_language(&self, path: &str, language_id: Option<&str>, content: &str) -> Option<String> {
-    // 1. Try languageId directly
-    if let Some(lang_id) = language_id {
-        if self.has_parser_available(lang_id) {
-            return Some(lang_id.to_string());
-        }
+```
+detect_language(path, content, token, language_id):
+    // 1. Try languageId (skip "plaintext")
+    if language_id exists and != "plaintext":
+        if try_with_alias_fallback(language_id) succeeds:
+            return result
 
-        // 2. Try alias resolution (e.g., "rmd" → "markdown")
-        if let Some(canonical) = self.resolve_alias(lang_id) {
-            if self.has_parser_available(&canonical) {
-                return Some(canonical);
-            }
-        }
-    }
+    // 2. Token-based detection
+    effective_token = token OR extract_token_from_path(path)
+    if effective_token exists:
+        // Try syntect normalization (py → python, Makefile → make)
+        if syntect recognizes token:
+            if try_with_alias_fallback(normalized) succeeds:
+                return result
+        // Try raw token as alias (handles jsx, tsx that syntect doesn't know)
+        if try_with_alias_fallback(raw_token) succeeds:
+            return result
 
-    // 3. Try heuristics (shebang, etc.)
-    if let Some(candidate) = self.detect_from_heuristics(path, content) {
-        if self.has_parser_available(&candidate) {
-            return Some(candidate);
-        }
-    }
+    // 3. First-line detection (shebang, mode line)
+    if syntect detects from first line:
+        if try_with_alias_fallback(detected) succeeds:
+            return result
 
-    // 4. Try file extension
-    if let Some(candidate) = self.detect_from_extension(path) {
-        if self.has_parser_available(&candidate) {
-            return Some(candidate);
-        }
-    }
+    return None
 
-    None
-}
+try_with_alias_fallback(candidate):
+    if parser_available(candidate):
+        return candidate
+    if alias_configured(candidate) AND parser_available(alias):
+        return alias
+    return None
 ```
 
 This means:
 - If client sends `languageId: "rmd"` and alias maps `rmd` → `markdown`, use the markdown parser
-- If client sends `languageId: "typescript"` but only JavaScript parser is loaded, fall through to check if extension `.ts` maps to an available parser
-- If shebang says `python3` but Python parser isn't installed, continue to extension check
+- If token `py` is normalized by syntect to `python`, use the python parser
+- If token `jsx` is not recognized by syntect but alias maps `jsx` → `javascript`, use the javascript parser
+- If no match, continue to the next detection method
 
 ### Language Injection
 
@@ -120,14 +139,14 @@ Document (markdown) ──parse──▶ AST ──injection query──▶ "py"
 For example, a Markdown code fence with ` ```py ` provides the identifier `"py"`, which must be resolved to an available parser. This resolution follows a fallback pattern:
 
 1. **Try the identifier directly**: Check if a parser named `"py"` is available
-2. **Normalize and retry**: If not, map aliases (`py` → `python`, `js` → `javascript`, `sh` → `bash`) and check again
-   - Candidate implementation: syntect's `find_syntax_by_extension` provides alias mappings
-3. **Skip if unavailable**: If no parser matches, the region is skipped
+2. **Normalize via syntect**: Use `detect_from_token("py")` which returns `"python"`
+3. **Try config-based alias**: If syntect doesn't recognize it, check user-configured aliases
+4. **Skip if unavailable**: If no parser matches, the region is skipped
 
 This means:
 - Injected languages benefit from the same graceful degradation
 - A Markdown file can have some code blocks with semantic tokens and others without, depending on installed parsers
-- Alias normalization is needed for both document-level `languageId` and injection identifiers
+- Token normalization via syntect handles common aliases (`py`, `js`, `sh`) automatically
 
 ## Consequences
 
@@ -148,10 +167,11 @@ This means:
 
 ### Neutral
 
-- **Extension mapping still exists**: But as last resort, not primary method
+- **Token-based detection includes extensions**: Extensions are treated as tokens, not a separate detection step
 - **Parser availability matters**: Detection result depends on what's installed
 - **Auto-install interaction**: Detection completes first (returning None if no parser found); auto-install runs asynchronously afterward, making the parser available for subsequent requests
 - **Caching**: Detection result is stored per-document; cache invalidates on content change or `languageId` change from client
+- **syntect dependency**: Uses syntect's Sublime Text syntax definitions for token normalization and first-line detection
 
 ## Migration from ADR-0002
 
