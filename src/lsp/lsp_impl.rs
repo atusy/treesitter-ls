@@ -33,7 +33,7 @@ use tree_sitter::InputEdit;
 use url::Url;
 
 use crate::analysis::{LEGEND_MODIFIERS, LEGEND_TYPES};
-use crate::config::{TreeSitterSettings, WorkspaceSettings};
+use crate::config::WorkspaceSettings;
 use crate::document::DocumentStore;
 use crate::language::LanguageEvent;
 use crate::language::injection::{InjectionResolver, collect_all_injections};
@@ -794,10 +794,13 @@ impl LanguageServer for Kakehashi {
         self.report_settings_events(&settings_outcome.events).await;
 
         // Always apply settings (use defaults if none were loaded)
-        // This ensures auto_install=true and other defaults are active for zero-config experience
-        let settings = settings_outcome
-            .settings
-            .unwrap_or_else(|| WorkspaceSettings::from(TreeSitterSettings::default()));
+        // This ensures auto_install=true, default capture_mappings, and other defaults are active
+        // for zero-config experience. Use default_settings() instead of TreeSitterSettings::default()
+        // because the derived Default creates empty capture_mappings while default_settings() includes
+        // the full default capture_mappings (markup.strong → "", etc.)
+        let settings = settings_outcome.settings.unwrap_or_else(|| {
+            WorkspaceSettings::from(crate::config::defaults::default_settings())
+        });
         self.apply_settings(settings).await;
 
         self.notifier().log_info("server initialized!").await;
