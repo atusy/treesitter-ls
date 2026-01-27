@@ -57,8 +57,13 @@ impl CancelForwarder {
     ///
     /// Supports both numeric and string request IDs per LSP spec.
     ///
-    /// Returns `Ok(())` if the cancel was forwarded, or an error if the
-    /// upstream ID is not found in the registry.
+    /// # Returns
+    /// * `Ok(())` - Cancel was forwarded, or silently dropped if not forwardable
+    ///   (e.g., upstream ID not in registry, connection not ready)
+    /// * `Err(e)` - I/O error occurred while writing to the downstream server
+    ///
+    /// Per LSP spec, `$/cancelRequest` uses best-effort semantics, so most
+    /// "not forwardable" cases return `Ok(())` rather than an error.
     pub async fn forward_cancel(&self, upstream_id: UpstreamId) -> std::io::Result<()> {
         self.pool.forward_cancel_by_upstream_id(upstream_id).await
     }

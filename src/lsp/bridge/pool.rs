@@ -215,6 +215,14 @@ pub struct LanguageServerPool {
     upstream_request_registry: std::sync::Mutex<HashMap<UpstreamId, String>>,
     /// Metrics for cancel forwarding observability.
     cancel_metrics: CancelForwardingMetrics,
+    /// Tracks consecutive handshake task panics per server.
+    ///
+    /// When a handshake task panics (JoinError), we increment this counter.
+    /// When handshake succeeds, we reset it to 0.
+    /// If panic count reaches MAX_CONSECUTIVE_PANICS, we stop retrying.
+    ///
+    /// This prevents infinite retry loops when a server's handshake consistently panics.
+    consecutive_panic_counts: std::sync::Mutex<HashMap<String, u32>>,
 }
 
 impl Default for LanguageServerPool {
@@ -244,6 +252,7 @@ impl LanguageServerPool {
             document_tracker: DocumentTracker::new(),
             upstream_request_registry: std::sync::Mutex::new(HashMap::new()),
             cancel_metrics: CancelForwardingMetrics::default(),
+            consecutive_panic_counts: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -501,16 +510,35 @@ impl LanguageServerPool {
     ) -> io::Result<Arc<ConnectionHandle>> {
         let mut connections = self.connections.lock().await;
 
+        // Get consecutive panic count for this server
+        let panic_count = {
+            let counts = self
+                .consecutive_panic_counts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            counts.get(server_name).copied().unwrap_or(0)
+        };
+
         // Check if we already have a connection for this server
         // Use pure decision function for testability (ADR-0015 Operation Gating)
         let existing_state = connections.get(server_name).map(|h| h.state());
-        match decide_connection_action(existing_state) {
+        match decide_connection_action(existing_state, panic_count) {
             ConnectionAction::ReturnExisting => {
                 return Ok(Arc::clone(connections.get(server_name).expect(
                     "Invariant violation: Connection expected for ReturnExisting action",
                 )));
             }
             ConnectionAction::FailFast(msg) => {
+                // Log once when server is disabled due to repeated panics
+                if msg.contains("repeated handshake failures") {
+                    log::error!(
+                        target: "kakehashi::bridge::connection",
+                        "[{}] Server disabled after {} consecutive handshake panics (max: {})",
+                        server_name,
+                        panic_count,
+                        connection_action::MAX_CONSECUTIVE_PANICS
+                    );
+                }
                 return Err(io::Error::other(msg));
             }
             ConnectionAction::SpawnNew => {
@@ -559,36 +587,128 @@ impl LanguageServerPool {
         // Insert into pool immediately so concurrent requests see Initializing state
         connections.insert(server_name.to_string(), Arc::clone(&handle));
 
-        // Release lock before async initialization
+        // Release lock before spawning handshake task
         drop(connections);
 
-        // Perform LSP handshake with timeout
+        // Spawn handshake as a SEPARATE TASK that survives caller cancellation.
+        // This is critical: if the handshake is awaited inline, cancelling the caller
+        // (e.g., via $/cancelRequest) drops the entire future chain including
+        // init_response_rx, causing the initialize response to be lost.
+        //
+        // By spawning and then awaiting the JoinHandle:
+        // - The handshake runs in a separate task
+        // - If this function's caller is cancelled, only the JoinHandle await is dropped
+        // - The spawned handshake task continues to completion
         let init_options = server_config.initialization_options.clone();
-        let init_result = tokio::time::timeout(
-            timeout,
-            perform_lsp_handshake(&handle, init_request_id, init_response_rx, init_options),
-        )
-        .await;
+        let handle_for_handshake = Arc::clone(&handle);
+        let server_name_for_log = server_name.to_string();
+        let handshake_task = tokio::spawn(async move {
+            let init_result = tokio::time::timeout(
+                timeout,
+                perform_lsp_handshake(
+                    &handle_for_handshake,
+                    init_request_id,
+                    init_response_rx,
+                    init_options,
+                ),
+            )
+            .await;
 
-        // Handle initialization result - transition state
-        match init_result {
+            // Handle initialization result - transition state
+            match init_result {
+                Ok(Ok(())) => {
+                    // Init succeeded - transition to Ready
+                    log::info!(
+                        target: "kakehashi::bridge::init",
+                        "[{}] LSP handshake completed successfully",
+                        server_name_for_log
+                    );
+                    handle_for_handshake.set_state(ConnectionState::Ready);
+                    Ok(())
+                }
+                Ok(Err(e)) => {
+                    // Init failed with io::Error - transition to Failed
+                    // Preserve the original ErrorKind for proper error categorization
+                    log::error!(
+                        target: "kakehashi::bridge::init",
+                        "[{}] LSP handshake failed: {}",
+                        server_name_for_log,
+                        e
+                    );
+                    handle_for_handshake.set_state(ConnectionState::Failed);
+                    Err(io::Error::new(
+                        e.kind(),
+                        format!("bridge: handshake failed: {}", e),
+                    ))
+                }
+                Err(_elapsed) => {
+                    // Timeout occurred - transition to Failed
+                    log::error!(
+                        target: "kakehashi::bridge::init",
+                        "[{}] LSP handshake timed out",
+                        server_name_for_log
+                    );
+                    handle_for_handshake.set_state(ConnectionState::Failed);
+                    Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "bridge: initialize timeout",
+                    ))
+                }
+            }
+        });
+
+        // Wait for handshake to complete. If this await is cancelled (e.g., due to
+        // $/cancelRequest), the spawned task continues running to completion.
+        match handshake_task.await {
             Ok(Ok(())) => {
-                // Init succeeded - transition to Ready
-                handle.set_state(ConnectionState::Ready);
+                // Success - reset panic count for this server
+                let mut counts = self
+                    .consecutive_panic_counts
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                counts.remove(server_name);
                 Ok(handle)
             }
-            Ok(Err(e)) => {
-                // Init failed with io::Error - transition to Failed
+            Ok(Err(e)) => Err(e),
+            Err(join_err) => {
                 handle.set_state(ConnectionState::Failed);
-                Err(e)
-            }
-            Err(_elapsed) => {
-                // Timeout occurred - transition to Failed
-                handle.set_state(ConnectionState::Failed);
-                Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "bridge: initialize timeout",
-                ))
+
+                // Distinguish panic from cancellation - only panics should trip circuit breaker
+                if join_err.is_panic() {
+                    // Task panicked - track consecutive panic count to avoid infinite retry
+                    let new_count = {
+                        let mut counts = self
+                            .consecutive_panic_counts
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        let count = counts.entry(server_name.to_string()).or_insert(0);
+                        *count += 1;
+                        *count
+                    };
+                    log::error!(
+                        target: "kakehashi::bridge::init",
+                        "[{}] Handshake task panicked (consecutive count: {}): {}",
+                        server_name,
+                        new_count,
+                        join_err
+                    );
+                    Err(io::Error::other(format!(
+                        "bridge: handshake task panicked: {}",
+                        join_err
+                    )))
+                } else {
+                    // Task was cancelled (e.g., runtime shutdown) - don't increment panic count
+                    log::warn!(
+                        target: "kakehashi::bridge::init",
+                        "[{}] Handshake task cancelled: {}",
+                        server_name,
+                        join_err
+                    );
+                    Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "bridge: handshake task cancelled",
+                    ))
+                }
             }
         }
     }
@@ -606,8 +726,18 @@ impl LanguageServerPool {
     /// * `upstream_id` - The original request ID from the upstream client
     ///
     /// # Returns
-    /// * `Ok(())` if the cancel notification was sent
-    /// * `Err` if no connection exists or the upstream ID is not found
+    /// * `Ok(())` - Cancel was forwarded, or silently dropped if not forwardable
+    /// * `Err(e)` - I/O error occurred while writing to the downstream server
+    ///
+    /// # Silent Drop Cases (Best-Effort Semantics)
+    ///
+    /// Per LSP spec, `$/cancelRequest` is a notification with best-effort semantics.
+    /// The following cases are silently dropped (return `Ok(())`) rather than failing:
+    /// - No connection exists for the server
+    /// - Connection is not in Ready state (still initializing or failed)
+    /// - Upstream ID not found in router (request already completed)
+    ///
+    /// Actual I/O errors when writing to the downstream server are propagated as `Err`.
     pub(crate) async fn forward_cancel(
         &self,
         server_name: &str,
@@ -617,24 +747,31 @@ impl LanguageServerPool {
         let handle = {
             let connections = self.connections().await;
             let Some(handle) = connections.get(server_name) else {
+                // No connection - request may have completed or server never started.
+                // Silently drop per best-effort semantics.
                 self.cancel_metrics.record_no_connection();
                 log::debug!(
                     target: "kakehashi::bridge::cancel",
-                    "Cancel forward failed: no connection for server '{}'",
-                    server_name
+                    "Cancel dropped: no connection for server '{}' (upstream_id: {}, expected if request completed)",
+                    server_name,
+                    upstream_id
                 );
-                return Err(io::Error::other("bridge: no connection for server"));
+                return Ok(());
             };
 
             // Only forward if connection is Ready
             if handle.state() != ConnectionState::Ready {
+                // Connection still initializing or failed - can't forward cancels.
+                // Silently drop per best-effort semantics.
                 self.cancel_metrics.record_not_ready();
                 log::debug!(
                     target: "kakehashi::bridge::cancel",
-                    "Cancel forward failed: connection not ready for server '{}'",
-                    server_name
+                    "Cancel dropped: connection not ready for server '{}' (upstream_id: {}, state: {:?})",
+                    server_name,
+                    upstream_id,
+                    handle.state()
                 );
-                return Err(io::Error::other("bridge: connection not ready"));
+                return Ok(());
             }
 
             std::sync::Arc::clone(handle)
@@ -644,14 +781,16 @@ impl LanguageServerPool {
         let downstream_id = match handle.router().lookup_downstream_id(upstream_id) {
             Some(id) => id,
             None => {
+                // Request already completed or ID never registered.
+                // Silently drop per best-effort semantics.
                 self.cancel_metrics.record_unknown_id();
                 log::debug!(
                     target: "kakehashi::bridge::cancel",
-                    "Cancel forward failed: unknown upstream ID {} for server '{}'",
+                    "Cancel dropped: upstream ID {} not found for server '{}' (request may have completed)",
                     upstream_id,
                     server_name
                 );
-                return Err(io::Error::other("bridge: upstream request ID not found"));
+                return Ok(());
             }
         };
 
@@ -694,8 +833,18 @@ impl LanguageServerPool {
     /// * `upstream_id` - The request ID from the client's cancel notification
     ///
     /// # Returns
-    /// * `Ok(())` if the cancel was forwarded
-    /// * `Err` if the upstream ID is not found in the registry
+    /// * `Ok(())` - Cancel was forwarded, or silently dropped if not forwardable
+    ///
+    /// # Silent Drop Cases (Best-Effort Semantics)
+    ///
+    /// Per LSP spec, `$/cancelRequest` is a notification with best-effort semantics.
+    /// The following cases are silently dropped (return `Ok(())`) rather than failing:
+    /// - Upstream ID not in registry (request not yet registered or already completed)
+    /// - Connection still initializing (can't forward cancels during handshake)
+    /// - Downstream ID not found (request already completed)
+    ///
+    /// This prevents race conditions where canceling an in-flight request could
+    /// break server initialization.
     pub(crate) async fn forward_cancel_by_upstream_id(
         &self,
         upstream_id: UpstreamId,
@@ -710,15 +859,15 @@ impl LanguageServerPool {
         };
 
         let Some(server_name) = server_name else {
+            // Request not registered yet (still initializing) or already completed.
+            // This is expected - silently drop the cancel per best-effort semantics.
             self.cancel_metrics.record_not_in_registry();
             log::debug!(
                 target: "kakehashi::bridge::cancel",
-                "Cancel forward failed: upstream ID {} not in registry",
+                "Cancel dropped: upstream ID {} not in registry (expected during init or after completion)",
                 upstream_id
             );
-            return Err(io::Error::other(
-                "bridge: upstream request ID not found in registry",
-            ));
+            return Ok(());
         };
 
         self.forward_cancel(&server_name, &upstream_id).await
@@ -775,7 +924,7 @@ impl LanguageServerPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::bridge::actor::spawn_reader_task;
+    use crate::lsp::bridge::actor::{RouteResult, spawn_reader_task};
     use std::time::Duration;
     use test_helpers::*;
 
@@ -2209,30 +2358,25 @@ mod tests {
         );
     }
 
-    /// Test that forward_cancel returns error when no connection exists.
+    /// Test that forward_cancel silently drops when no connection exists (best-effort semantics).
     #[tokio::test]
-    async fn forward_cancel_returns_error_when_no_connection() {
+    async fn forward_cancel_silently_drops_when_no_connection() {
         let pool = LanguageServerPool::new();
 
         let result = pool
             .forward_cancel("nonexistent", &UpstreamId::Number(42))
             .await;
 
+        // Per best-effort semantics, this should succeed (silent drop)
         assert!(
-            result.is_err(),
-            "forward_cancel should return error for nonexistent connection"
-        );
-        let err = result.unwrap_err();
-        assert!(
-            err.to_string().contains("no connection"),
-            "Error should mention no connection: {}",
-            err
+            result.is_ok(),
+            "forward_cancel should silently drop for nonexistent connection"
         );
     }
 
-    /// Test that forward_cancel returns error when upstream ID not found.
+    /// Test that forward_cancel silently drops when upstream ID not found (best-effort semantics).
     #[tokio::test]
-    async fn forward_cancel_returns_error_when_upstream_id_not_found() {
+    async fn forward_cancel_silently_drops_when_upstream_id_not_found() {
         use std::sync::Arc;
 
         let pool = LanguageServerPool::new();
@@ -2246,15 +2390,10 @@ mod tests {
 
         let result = pool.forward_cancel("lua", &UpstreamId::Number(999)).await;
 
+        // Per best-effort semantics, this should succeed (silent drop)
         assert!(
-            result.is_err(),
-            "forward_cancel should return error for unknown upstream ID"
-        );
-        let err = result.unwrap_err();
-        assert!(
-            err.to_string().contains("not found"),
-            "Error should mention not found: {}",
-            err
+            result.is_ok(),
+            "forward_cancel should silently drop for unknown upstream ID"
         );
     }
 
@@ -2324,9 +2463,9 @@ mod tests {
         );
     }
 
-    /// Test that forward_cancel_by_upstream_id returns error when not in registry.
+    /// Test that forward_cancel_by_upstream_id silently drops when not in registry (best-effort semantics).
     #[tokio::test]
-    async fn forward_cancel_by_upstream_id_returns_error_when_not_in_registry() {
+    async fn forward_cancel_by_upstream_id_silently_drops_when_not_in_registry() {
         let pool = LanguageServerPool::new();
 
         // Don't register anything in the registry
@@ -2334,15 +2473,10 @@ mod tests {
             .forward_cancel_by_upstream_id(UpstreamId::Number(999))
             .await;
 
+        // Per best-effort semantics, this should succeed (silent drop)
         assert!(
-            result.is_err(),
-            "forward_cancel_by_upstream_id should return error for unknown ID"
-        );
-        let err = result.unwrap_err();
-        assert!(
-            err.to_string().contains("not found"),
-            "Error should mention not found: {}",
-            err
+            result.is_ok(),
+            "forward_cancel_by_upstream_id should silently drop for unknown ID"
         );
     }
 
@@ -2387,8 +2521,12 @@ mod tests {
         });
 
         // Route the response through the router
-        let delivered = handle.router().route(response.clone());
-        assert!(delivered, "response should be delivered even after cancel");
+        let result = handle.router().route(response.clone());
+        assert_eq!(
+            result,
+            RouteResult::Delivered,
+            "response should be delivered even after cancel"
+        );
 
         // The original requester should receive the response
         let received = response_rx
@@ -2452,8 +2590,12 @@ mod tests {
         });
 
         // Route the response through the router
-        let delivered = handle.router().route(response.clone());
-        assert!(delivered, "error response should be delivered after cancel");
+        let result = handle.router().route(response.clone());
+        assert_eq!(
+            result,
+            RouteResult::Delivered,
+            "error response should be delivered after cancel"
+        );
 
         // The original requester should receive the error response
         let received = response_rx.await.expect("should receive error response");

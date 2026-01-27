@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::super::connection::BridgeReader;
 use super::ResponseRouter;
+use super::response_router::RouteResult;
 
 /// Type alias for the pinned liveness timer future.
 type LivenessTimer = std::pin::Pin<Box<tokio::time::Sleep>>;
@@ -498,27 +499,35 @@ async fn reader_loop_with_liveness(
 /// Handle a single message from the downstream server.
 fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_prefix: &str) {
     // Check if it's a response (has "id" field)
-    if message.get("id").is_some() {
+    if let Some(id) = message.get("id").cloned() {
         // It's a response - route to waiter
-        let delivered = router.route(message);
-        if !delivered {
-            debug!(
-                target: "kakehashi::bridge::reader",
-                "{}Response for unknown request ID, dropping",
-                lang_prefix
-            );
-        }
-    } else {
-        // It's a notification - log and skip
-        if let Some(method) = message.get("method").and_then(|v| v.as_str()) {
-            debug!(
-                target: "kakehashi::bridge::reader",
-                "{}Received notification: {}, skipping",
-                lang_prefix,
-                method
-            );
+        match router.route(message) {
+            RouteResult::Delivered => {
+                // Response delivered successfully - no logging needed for normal case
+            }
+            RouteResult::ReceiverDropped => {
+                // ID was found but receiver was dropped (requester cancelled).
+                // This can legitimately happen when users cancel requests rapidly.
+                // Using debug! to avoid log spam; upgrade to warn! if investigation is needed.
+                debug!(
+                    target: "kakehashi::bridge::reader",
+                    "{}Response for id={} arrived but receiver was dropped (requester cancelled)",
+                    lang_prefix,
+                    id
+                );
+            }
+            RouteResult::NotFound => {
+                // Unknown request ID - could be a late response or protocol mismatch
+                debug!(
+                    target: "kakehashi::bridge::reader",
+                    "{}Response for unknown request id={}, dropping",
+                    lang_prefix,
+                    id
+                );
+            }
         }
     }
+    // Notifications are silently ignored (no logging needed)
 }
 
 #[cfg(test)]
