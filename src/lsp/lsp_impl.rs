@@ -538,25 +538,21 @@ impl Kakehashi {
         is_injection: bool,
     ) {
         // The installed files are at:
-        // - Parser: {data_dir}/parsers/{language}/libtree-sitter-{language}.so
+        // - Parser: {data_dir}/parser/{language}.{so|dylib}
         // - Queries: {data_dir}/queries/{language}/
+        //
+        // Both resolve_library_path and find_query_file expect the BASE directory
+        // and append "parser/" or "queries/" internally. So we add data_dir itself,
+        // not the subdirectories.
 
         // Update settings to include the new paths
         let current_settings = self.settings_manager.load_settings();
         let mut new_search_paths = current_settings.search_paths.clone();
 
-        // Add parser directory to search paths
-        let parser_dir = data_dir.join("parser");
-        let parser_dir_str = parser_dir.to_string_lossy().to_string();
-        if !new_search_paths.contains(&parser_dir_str) {
-            new_search_paths.push(parser_dir_str);
-        }
-
-        // Add queries directory to search paths
-        let queries_dir = data_dir.join("queries");
-        let queries_dir_str = queries_dir.to_string_lossy().to_string();
-        if !new_search_paths.contains(&queries_dir_str) {
-            new_search_paths.push(queries_dir_str);
+        // Add data_dir as a base search path (not subdirectories)
+        let data_dir_str = data_dir.to_string_lossy().to_string();
+        if !new_search_paths.contains(&data_dir_str) {
+            new_search_paths.push(data_dir_str);
         }
 
         // Create updated settings
