@@ -88,61 +88,37 @@ Example scenarios:
 
 Each detection method tries direct match first, then alias resolution:
 
-```rust
-fn detect_language(&self, path: &str, content: &str, token: Option<&str>, language_id: Option<&str>) -> Option<String> {
+```
+detect_language(path, content, token, language_id):
     // 1. Try languageId (skip "plaintext")
-    if let Some(lang_id) = language_id && lang_id != "plaintext" {
-        if let Some(result) = self.try_with_alias_fallback(lang_id) {
-            return Some(result);
-        }
-    }
+    if language_id exists and != "plaintext":
+        if try_with_alias_fallback(language_id) succeeds:
+            return result
 
-    // 2. Token-based detection (explicit token or path-derived)
-    let effective_token = token.or_else(|| extract_token_from_path(path));
-    if let Some(tok) = effective_token {
+    // 2. Token-based detection
+    effective_token = token OR extract_token_from_path(path)
+    if effective_token exists:
         // Try syntect normalization (py → python, Makefile → make)
-        if let Some(candidate) = detect_from_token(tok) {
-            if let Some(result) = self.try_with_alias_fallback(&candidate) {
-                return Some(result);
-            }
-        }
+        if syntect recognizes token:
+            if try_with_alias_fallback(normalized) succeeds:
+                return result
         // Try raw token as alias (handles jsx, tsx that syntect doesn't know)
-        if let Some(result) = self.try_with_alias_fallback(tok) {
-            return Some(result);
-        }
-    }
+        if try_with_alias_fallback(raw_token) succeeds:
+            return result
 
-    // 3. Try first-line detection (shebang, mode line)
-    if let Some(candidate) = detect_from_first_line(content) {
-        if let Some(result) = self.try_with_alias_fallback(&candidate) {
-            return Some(result);
-        }
-    }
+    // 3. First-line detection (shebang, mode line)
+    if syntect detects from first line:
+        if try_with_alias_fallback(detected) succeeds:
+            return result
 
-    None
-}
+    return None
 
-/// Extract token from path: extension or basename for special files
-fn extract_token_from_path(path: &str) -> Option<&str> {
-    let filename = Path::new(path).file_name()?.to_str()?;
-    // Extension if present, otherwise basename (Makefile, .bashrc)
-    path.extension().and_then(|e| e.to_str()).or(Some(filename))
-}
-
-/// Helper: Try candidate directly, then with config-based alias
-fn try_with_alias_fallback(&self, candidate: &str) -> Option<String> {
-    // Direct match
-    if self.has_parser_available(candidate) {
-        return Some(candidate.to_string());
-    }
-    // Config-based alias
-    if let Some(canonical) = self.resolve_alias(candidate) {
-        if self.has_parser_available(&canonical) {
-            return Some(canonical);
-        }
-    }
-    None
-}
+try_with_alias_fallback(candidate):
+    if parser_available(candidate):
+        return candidate
+    if alias_configured(candidate) AND parser_available(alias):
+        return alias
+    return None
 ```
 
 This means:
