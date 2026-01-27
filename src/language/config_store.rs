@@ -147,6 +147,8 @@ mod tests {
 
     #[test]
     fn test_config_store_language_configs() {
+        use crate::config::settings::{QueryItem, QueryKind};
+
         let store = ConfigStore::new();
 
         let mut configs = HashMap::new();
@@ -154,7 +156,10 @@ mod tests {
             "rust".to_string(),
             LanguageConfig {
                 parser: Some("/path/to/rust.so".to_string()),
-                highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
+                queries: Some(vec![QueryItem {
+                    path: "/path/to/highlights.scm".to_string(),
+                    kind: Some(QueryKind::Highlights),
+                }]),
                 ..Default::default()
             },
         );

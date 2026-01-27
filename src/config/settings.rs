@@ -117,15 +117,9 @@ pub fn infer_query_kind(path: &str) -> Option<QueryKind> {
 #[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
 pub struct LanguageConfig {
     pub parser: Option<String>,
-    /// Unified query file configuration (new format)
-    /// Each entry has a path and optional kind (inferred from filename if omitted)
+    /// Unified query file configuration.
+    /// Each entry has a path and optional kind (inferred from filename if omitted).
     pub queries: Option<Vec<QueryItem>>,
-    /// Query file paths for syntax highlighting (legacy field)
-    pub highlights: Option<Vec<String>>,
-    /// Query file paths for locals/definitions (legacy field)
-    pub locals: Option<Vec<String>>,
-    /// Query file paths for language injections (legacy field)
-    pub injections: Option<Vec<String>>,
     /// Languages to bridge for this host filetype (map format).
     /// - None (omitted): Bridge ALL configured languages (default behavior)
     /// - Some({}): Bridge NOTHING (disable bridging for this host)
@@ -320,16 +314,15 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_valid_configuration() {
-        // NEW FORMAT: highlights is a simple array of path strings
+    fn should_parse_valid_configuration_with_queries() {
+        // Configuration using unified queries field
         let config_json = r#"{
             "languages": {
                 "rust": {
                     "parser": "/path/to/rust.so",
-                    "filetypes": ["rs"],
-                    "highlights": [
-                        "/path/to/highlights.scm",
-                        "/path/to/custom.scm"
+                    "queries": [
+                        {"path": "/path/to/highlights.scm", "kind": "highlights"},
+                        {"path": "/path/to/custom.scm"}
                     ]
                 }
             }
@@ -343,23 +336,25 @@ mod tests {
             settings.languages["rust"].parser,
             Some("/path/to/rust.so".to_string())
         );
-        // filetypes field removed in PBI-061
 
-        let highlights = settings.languages["rust"].highlights.as_ref().unwrap();
-        assert_eq!(highlights.len(), 2);
-        assert_eq!(highlights[0], "/path/to/highlights.scm");
-        assert_eq!(highlights[1], "/path/to/custom.scm");
+        let queries = settings.languages["rust"].queries.as_ref().unwrap();
+        assert_eq!(queries.len(), 2);
+        assert_eq!(queries[0].path, "/path/to/highlights.scm");
+        assert_eq!(queries[0].kind, Some(QueryKind::Highlights));
+        assert_eq!(queries[1].path, "/path/to/custom.scm");
+        assert_eq!(queries[1].kind, None); // Kind not specified - will be inferred later
     }
 
     #[test]
-    fn should_parse_configuration_with_locals() {
-        // NEW FORMAT: both highlights and locals are simple path arrays
+    fn should_parse_configuration_with_locals_query() {
+        // Configuration using unified queries field with locals
         let config_json = r#"{
             "languages": {
                 "rust": {
-                    "filetypes": ["rs"],
-                    "highlights": ["/path/to/highlights.scm"],
-                    "locals": ["/path/to/locals.scm"]
+                    "queries": [
+                        {"path": "/path/to/highlights.scm", "kind": "highlights"},
+                        {"path": "/path/to/locals.scm", "kind": "locals"}
+                    ]
                 }
             }
         }"#;
@@ -369,14 +364,11 @@ mod tests {
         assert!(settings.languages.contains_key("rust"));
         let rust_config = &settings.languages["rust"];
 
-        // Verify locals configuration is parsed
-        assert!(
-            rust_config.locals.is_some(),
-            "Locals configuration should be present"
-        );
-        let locals = rust_config.locals.as_ref().unwrap();
-        assert_eq!(locals.len(), 1, "Should have one locals item");
-        assert_eq!(locals[0], "/path/to/locals.scm");
+        // Verify queries configuration is parsed
+        let queries = rust_config.queries.as_ref().unwrap();
+        assert_eq!(queries.len(), 2);
+        assert_eq!(queries[1].path, "/path/to/locals.scm");
+        assert_eq!(queries[1].kind, Some(QueryKind::Locals));
     }
 
     #[test]
@@ -452,8 +444,7 @@ mod tests {
             ],
             "languages": {
                 "rust": {
-                    "filetypes": ["rs"],
-                    "highlights": ["/path/to/highlights.scm"]
+                    "queries": [{"path": "/path/to/highlights.scm", "kind": "highlights"}]
                 }
             }
         }"#;
@@ -467,22 +458,19 @@ mod tests {
         );
         assert!(settings.languages.contains_key("rust"));
         assert_eq!(settings.languages["rust"].parser, None);
-        // filetypes field removed in PBI-061
     }
 
     #[test]
-    fn should_parse_mixed_configuration_with_searchpaths_and_explicit_library() {
+    fn should_parse_mixed_configuration_with_searchpaths_and_explicit_parser() {
         let config_json = r#"{
             "searchPaths": ["/usr/local/lib/tree-sitter"],
             "languages": {
                 "rust": {
                     "parser": "/custom/path/rust.so",
-                    "filetypes": ["rs"],
-                    "highlights": ["/path/to/highlights.scm"]
+                    "queries": [{"path": "/path/to/highlights.scm", "kind": "highlights"}]
                 },
                 "python": {
-                    "filetypes": ["py"],
-                    "highlights": ["/path/to/python.scm"]
+                    "queries": [{"path": "/path/to/python.scm", "kind": "highlights"}]
                 }
             }
         }"#;
@@ -495,7 +483,7 @@ mod tests {
             vec!["/usr/local/lib/tree-sitter"]
         );
 
-        // rust has explicit library path
+        // rust has explicit parser path
         assert_eq!(
             settings.languages["rust"].parser,
             Some("/custom/path/rust.so".to_string())
@@ -514,8 +502,7 @@ mod tests {
             ],
             "languages": {
                 "lua": {
-                    "filetypes": ["lua"],
-                    "highlights": ["/path/to/highlights.scm"]
+                    "queries": [{"path": "/path/to/highlights.scm", "kind": "highlights"}]
                 }
             }
         }"#;
@@ -533,7 +520,7 @@ mod tests {
     fn should_handle_malformed_json_gracefully() {
         let malformed_configs = vec![
             r#"{"languages": {"rust": {"parser": "/path"}"#, // Missing closing braces
-            r#"{"languages": {"rust": {"parser": "/path", "highlights": [}}"#, // Invalid array
+            r#"{"languages": {"rust": {"parser": "/path", "queries": [}}"#, // Invalid array
         ];
 
         for config in malformed_configs {
@@ -547,8 +534,7 @@ mod tests {
         let config_json = r#"{
             "languages": {
                 "rust": {
-                    "filetypes": ["rs"],
-                    "highlights": ["/path/to/highlights.scm"]
+                    "queries": [{"path": "/path/to/highlights.scm", "kind": "highlights"}]
                 }
             },
             "captureMappings": {
@@ -599,15 +585,15 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_highlights_as_vec_string() {
-        // NEW FORMAT: highlights is a simple array of path strings
+    fn should_parse_queries_as_vec_query_item() {
+        // Unified queries field with multiple entries
         let config_json = r#"{
             "languages": {
                 "lua": {
                     "parser": "/path/to/lua.so",
-                    "highlights": [
-                        "/path/to/highlights.scm",
-                        "/path/to/custom.scm"
+                    "queries": [
+                        {"path": "/path/to/highlights.scm", "kind": "highlights"},
+                        {"path": "/path/to/custom.scm"}
                     ]
                 }
             }
@@ -619,12 +605,12 @@ mod tests {
         let lua_config = &settings.languages["lua"];
         assert_eq!(lua_config.parser, Some("/path/to/lua.so".to_string()));
 
-        // NEW: highlights should be Vec<String>
-        assert!(lua_config.highlights.is_some());
-        let highlights = lua_config.highlights.as_ref().unwrap();
-        assert_eq!(highlights.len(), 2);
-        assert_eq!(highlights[0], "/path/to/highlights.scm");
-        assert_eq!(highlights[1], "/path/to/custom.scm");
+        let queries = lua_config.queries.as_ref().unwrap();
+        assert_eq!(queries.len(), 2);
+        assert_eq!(queries[0].path, "/path/to/highlights.scm");
+        assert_eq!(queries[0].kind, Some(QueryKind::Highlights));
+        assert_eq!(queries[1].path, "/path/to/custom.scm");
+        assert_eq!(queries[1].kind, None);
     }
 
     #[test]
@@ -671,7 +657,10 @@ mod tests {
                 lang.to_string(),
                 LanguageConfig {
                     parser: Some(format!("/usr/lib/libtree-sitter-{}.so", lang)),
-                    highlights: Some(vec![format!("/etc/tree-sitter/{}/highlights.scm", lang)]),
+                    queries: Some(vec![QueryItem {
+                        path: format!("/etc/tree-sitter/{}/highlights.scm", lang),
+                        kind: Some(QueryKind::Highlights),
+                    }]),
                     ..Default::default()
                 },
             );
@@ -686,20 +675,33 @@ mod tests {
     }
 
     #[test]
-    fn should_not_have_filetypes_field_in_language_config() {
-        // PBI-061: filetypes field should be removed from LanguageConfig
-        // Language detection now relies entirely on languageId from DidOpen
+    fn should_not_have_legacy_fields_in_language_config() {
+        // Legacy highlights/locals/injections fields have been removed from LanguageConfig
+        // All query configuration now uses the unified queries field
         let config = LanguageConfig {
             parser: Some("/path/to/parser.so".to_string()),
-            highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
+            queries: Some(vec![QueryItem {
+                path: "/path/to/highlights.scm".to_string(),
+                kind: Some(QueryKind::Highlights),
+            }]),
             ..Default::default()
         };
 
-        // Serialize and verify no filetypes in output
+        // Serialize and verify no legacy fields in output
         let json = serde_json::to_string(&config).unwrap();
         assert!(
-            !json.contains("filetypes"),
-            "LanguageConfig should not have filetypes field, but found in JSON: {}",
+            !json.contains("\"highlights\":"),
+            "LanguageConfig should not have highlights field, but found in JSON: {}",
+            json
+        );
+        assert!(
+            !json.contains("\"locals\":"),
+            "LanguageConfig should not have locals field, but found in JSON: {}",
+            json
+        );
+        assert!(
+            !json.contains("\"injections\":"),
+            "LanguageConfig should not have injections field, but found in JSON: {}",
             json
         );
     }
@@ -771,14 +773,15 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_configuration_with_injections() {
-        // Test that injections field can be parsed alongside highlights and locals
+    fn should_parse_configuration_with_injections_query() {
+        // Test that injection queries can be specified in the unified queries field
         let config_json = r#"{
             "languages": {
                 "markdown": {
-                    "filetypes": ["md"],
-                    "highlights": ["/path/to/highlights.scm"],
-                    "injections": ["/path/to/injections.scm"]
+                    "queries": [
+                        {"path": "/path/to/highlights.scm", "kind": "highlights"},
+                        {"path": "/path/to/injections.scm", "kind": "injections"}
+                    ]
                 }
             }
         }"#;
@@ -788,14 +791,11 @@ mod tests {
         assert!(settings.languages.contains_key("markdown"));
         let md_config = &settings.languages["markdown"];
 
-        // Verify injections configuration is parsed
-        assert!(
-            md_config.injections.is_some(),
-            "Injections configuration should be present"
-        );
-        let injections = md_config.injections.as_ref().unwrap();
-        assert_eq!(injections.len(), 1, "Should have one injections item");
-        assert_eq!(injections[0], "/path/to/injections.scm");
+        // Verify queries configuration is parsed
+        let queries = md_config.queries.as_ref().unwrap();
+        assert_eq!(queries.len(), 2);
+        assert_eq!(queries[1].path, "/path/to/injections.scm");
+        assert_eq!(queries[1].kind, Some(QueryKind::Injections));
     }
 
     #[test]
@@ -857,7 +857,7 @@ mod tests {
         // Example: bridge = { python = { enabled = true }, r = { enabled = true } }
         let config_json = r#"{
             "parser": "/path/to/parser.so",
-            "highlights": ["/path/to/highlights.scm"],
+            "queries": [{"path": "/path/to/highlights.scm", "kind": "highlights"}],
             "bridge": {
                 "python": { "enabled": true },
                 "r": { "enabled": true }
@@ -879,7 +879,7 @@ mod tests {
         // bridge: {} disables all bridging for that host filetype
         let config_json = r#"{
             "parser": "/path/to/parser.so",
-            "highlights": ["/path/to/highlights.scm"],
+            "queries": [{"path": "/path/to/highlights.scm", "kind": "highlights"}],
             "bridge": {}
         }"#;
 
@@ -899,7 +899,7 @@ mod tests {
         // AC3: bridge omitted or null bridges all configured languages
         let config_json = r#"{
             "parser": "/path/to/parser.so",
-            "highlights": ["/path/to/highlights.scm"]
+            "queries": [{"path": "/path/to/highlights.scm", "kind": "highlights"}]
         }"#;
 
         let config: LanguageConfig = serde_json::from_str(config_json).unwrap();
@@ -1102,7 +1102,7 @@ mod tests {
         // Example: bridge = { python = { enabled = true }, r = { enabled = false } }
         let config_json = r#"{
             "parser": "/path/to/parser.so",
-            "highlights": ["/path/to/highlights.scm"],
+            "queries": [{"path": "/path/to/highlights.scm", "kind": "highlights"}],
             "bridge": {
                 "python": { "enabled": true },
                 "r": { "enabled": false }
@@ -1283,9 +1283,12 @@ kind = "injections""#;
         // aliases allows mapping multiple languageId values to one parser
         // Example: markdown parser handles rmd, qmd, mdx files
         let config_toml = r#"
-            parser ="/path/to/markdown.so"
+            parser = "/path/to/markdown.so"
             aliases = ["rmd", "qmd", "mdx"]
-            highlights = ["/path/to/highlights.scm"]
+
+            [[queries]]
+            path = "/path/to/highlights.scm"
+            kind = "highlights"
         "#;
 
         let config: LanguageConfig = toml::from_str(config_toml).unwrap();
@@ -1302,8 +1305,11 @@ kind = "injections""#;
     fn should_parse_language_config_without_aliases() {
         // When aliases is omitted, it should be None
         let config_toml = r#"
-            parser ="/path/to/rust.so"
-            highlights = ["/path/to/highlights.scm"]
+            parser = "/path/to/rust.so"
+
+            [[queries]]
+            path = "/path/to/highlights.scm"
+            kind = "highlights"
         "#;
 
         let config: LanguageConfig = toml::from_str(config_toml).unwrap();

@@ -205,48 +205,9 @@ pub(crate) fn merge_settings(
 
 impl From<&LanguageConfig> for LanguageSettings {
     fn from(config: &LanguageConfig) -> Self {
-        // Convert from LanguageConfig to LanguageSettings
-        // Priority: unified queries field > legacy separate fields
-        let queries = if let Some(ref q) = config.queries {
-            Some(q.clone())
-        } else if config.highlights.is_some()
-            || config.locals.is_some()
-            || config.injections.is_some()
-        {
-            // Convert legacy fields to unified queries format
-            let mut queries = Vec::new();
-            if let Some(ref highlights) = config.highlights {
-                for path in highlights {
-                    queries.push(settings::QueryItem {
-                        path: path.clone(),
-                        kind: Some(settings::QueryKind::Highlights),
-                    });
-                }
-            }
-            if let Some(ref locals) = config.locals {
-                for path in locals {
-                    queries.push(settings::QueryItem {
-                        path: path.clone(),
-                        kind: Some(settings::QueryKind::Locals),
-                    });
-                }
-            }
-            if let Some(ref injections) = config.injections {
-                for path in injections {
-                    queries.push(settings::QueryItem {
-                        path: path.clone(),
-                        kind: Some(settings::QueryKind::Injections),
-                    });
-                }
-            }
-            Some(queries)
-        } else {
-            None
-        };
-
         LanguageSettings {
             parser: config.parser.clone(),
-            queries,
+            queries: config.queries.clone(),
             bridge: config.bridge.clone(),
             aliases: config.aliases.clone(),
         }
@@ -255,53 +216,9 @@ impl From<&LanguageConfig> for LanguageSettings {
 
 impl From<&LanguageSettings> for LanguageConfig {
     fn from(settings: &LanguageSettings) -> Self {
-        // Convert unified queries to separate fields for LanguageConfig
-        let mut highlights: Vec<String> = Vec::new();
-        let mut locals: Vec<String> = Vec::new();
-        let mut injections: Vec<String> = Vec::new();
-
-        if let Some(ref queries) = settings.queries {
-            for query in queries {
-                // Use explicit kind, or infer from filename, or skip if unrecognized
-                let effective_kind = query
-                    .kind
-                    .or_else(|| settings::infer_query_kind(&query.path));
-
-                match effective_kind {
-                    Some(settings::QueryKind::Highlights) => {
-                        highlights.push(query.path.clone());
-                    }
-                    Some(settings::QueryKind::Locals) => {
-                        locals.push(query.path.clone());
-                    }
-                    Some(settings::QueryKind::Injections) => {
-                        injections.push(query.path.clone());
-                    }
-                    None => {
-                        // Skip files with unrecognized patterns (no kind specified and cannot infer)
-                    }
-                }
-            }
-        }
-
         LanguageConfig {
             parser: settings.parser.clone(),
             queries: settings.queries.clone(),
-            highlights: if highlights.is_empty() {
-                None
-            } else {
-                Some(highlights)
-            },
-            locals: if locals.is_empty() {
-                None
-            } else {
-                Some(locals)
-            },
-            injections: if injections.is_empty() {
-                None
-            } else {
-                Some(injections)
-            },
             bridge: settings.bridge.clone(),
             aliases: settings.aliases.clone(),
         }
@@ -413,18 +330,6 @@ fn merge_languages(
                     .queries
                     .clone()
                     .or_else(|| base_config.queries.clone());
-                base_config.highlights = overlay_config
-                    .highlights
-                    .clone()
-                    .or_else(|| base_config.highlights.clone());
-                base_config.locals = overlay_config
-                    .locals
-                    .clone()
-                    .or_else(|| base_config.locals.clone());
-                base_config.injections = overlay_config
-                    .injections
-                    .clone()
-                    .or_else(|| base_config.injections.clone());
                 base_config.bridge = overlay_config
                     .bridge
                     .clone()
@@ -569,9 +474,6 @@ pub(crate) fn resolve_language_with_wildcard(
             Some(LanguageConfig {
                 parser: s.parser.clone().or_else(|| w.parser.clone()),
                 queries: s.queries.clone().or_else(|| w.queries.clone()),
-                highlights: s.highlights.clone().or_else(|| w.highlights.clone()),
-                locals: s.locals.clone().or_else(|| w.locals.clone()),
-                injections: s.injections.clone().or_else(|| w.injections.clone()),
                 // Deep merge bridge HashMaps: wildcard + specific
                 bridge: merge_bridge_maps(&w.bridge, &s.bridge),
                 // Aliases are not merged from wildcard - they're specific to each language
@@ -1096,24 +998,30 @@ mod tests {
     }
 
     #[test]
-    fn test_language_settings_from_config_preserves_injections() {
+    fn test_language_settings_from_config_preserves_queries() {
         let config = LanguageConfig {
             parser: Some("/path/to/parser.so".to_string()),
-            highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
-            injections: Some(vec!["/path/to/injections.scm".to_string()]),
+            queries: Some(vec![
+                settings::QueryItem {
+                    path: "/path/to/highlights.scm".to_string(),
+                    kind: Some(settings::QueryKind::Highlights),
+                },
+                settings::QueryItem {
+                    path: "/path/to/injections.scm".to_string(),
+                    kind: Some(settings::QueryKind::Injections),
+                },
+            ]),
             ..Default::default()
         };
 
         let settings: LanguageSettings = LanguageSettings::from(&config);
 
-        // Verify queries is populated with both highlights and injections
+        // Verify queries is preserved
         assert!(settings.queries.is_some());
         let queries = settings.queries.as_ref().unwrap();
         assert_eq!(queries.len(), 2);
-        // First query should be highlights (converted from legacy field)
         assert_eq!(queries[0].path, "/path/to/highlights.scm");
         assert_eq!(queries[0].kind, Some(settings::QueryKind::Highlights));
-        // Second query should be injections (converted from legacy field)
         assert_eq!(queries[1].path, "/path/to/injections.scm");
         assert_eq!(queries[1].kind, Some(settings::QueryKind::Injections));
     }
@@ -1134,8 +1042,16 @@ mod tests {
             "python".to_string(),
             LanguageConfig {
                 parser: Some("/usr/lib/python.so".to_string()),
-                highlights: Some(vec!["/usr/share/python/highlights.scm".to_string()]),
-                locals: Some(vec!["/usr/share/python/locals.scm".to_string()]),
+                queries: Some(vec![
+                    settings::QueryItem {
+                        path: "/usr/share/python/highlights.scm".to_string(),
+                        kind: Some(settings::QueryKind::Highlights),
+                    },
+                    settings::QueryItem {
+                        path: "/usr/share/python/locals.scm".to_string(),
+                        kind: Some(settings::QueryKind::Locals),
+                    },
+                ]),
                 bridge: Some(user_bridge),
                 ..Default::default()
             },
@@ -1149,14 +1065,16 @@ mod tests {
             language_servers: None,
         };
 
-        // Project only overrides highlights for python
+        // Project overrides queries for python
         let mut project_languages = HashMap::new();
         project_languages.insert(
             "python".to_string(),
             LanguageConfig {
                 // parser: None - Not specified - should inherit from user
-                highlights: Some(vec!["./queries/python-highlights.scm".to_string()]),
-                // locals: None - Not specified - should inherit from user
+                queries: Some(vec![settings::QueryItem {
+                    path: "./queries/python-highlights.scm".to_string(),
+                    kind: Some(settings::QueryKind::Highlights),
+                }]),
                 // bridge: None - Not specified - should inherit from user
                 ..Default::default()
             },
@@ -1181,17 +1099,10 @@ mod tests {
         // Library: inherited from user (project was None)
         assert_eq!(python.parser, Some("/usr/lib/python.so".to_string()));
 
-        // Highlights: overridden by project
-        assert_eq!(
-            python.highlights,
-            Some(vec!["./queries/python-highlights.scm".to_string()])
-        );
-
-        // Locals: inherited from user (project was None)
-        assert_eq!(
-            python.locals,
-            Some(vec!["/usr/share/python/locals.scm".to_string()])
-        );
+        // Queries: overridden by project (array replacement, not merge)
+        let queries = python.queries.as_ref().unwrap();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].path, "./queries/python-highlights.scm");
 
         // Bridge: inherited from user (project was None)
         assert!(python.bridge.is_some());
@@ -1747,7 +1658,10 @@ mod tests {
             "_".to_string(),
             LanguageConfig {
                 parser: Some("/default/path.so".to_string()),
-                highlights: Some(vec!["/default/highlights.scm".to_string()]),
+                queries: Some(vec![settings::QueryItem {
+                    path: "/default/highlights.scm".to_string(),
+                    kind: Some(settings::QueryKind::Highlights),
+                }]),
                 bridge: Some(wildcard_bridge),
                 ..Default::default()
             },
@@ -1795,7 +1709,10 @@ mod tests {
             "_".to_string(),
             LanguageConfig {
                 parser: Some("/default/path.so".to_string()),
-                highlights: Some(vec!["/default/highlights.scm".to_string()]),
+                queries: Some(vec![settings::QueryItem {
+                    path: "/default/highlights.scm".to_string(),
+                    kind: Some(settings::QueryKind::Highlights),
+                }]),
                 bridge: Some(wildcard_bridge),
                 ..Default::default()
             },
@@ -2499,7 +2416,10 @@ mod tests {
         languages.insert(
             "_".to_string(),
             LanguageConfig {
-                highlights: Some(vec!["/default/highlights.scm".to_string()]),
+                queries: Some(vec![settings::QueryItem {
+                    path: "/default/highlights.scm".to_string(),
+                    kind: Some(settings::QueryKind::Highlights),
+                }]),
                 bridge: Some(wildcard_bridge),
                 ..Default::default()
             },
@@ -2520,13 +2440,13 @@ mod tests {
         // Test 1: "markdown" should have its own bridge filter (not wildcard's)
         let markdown = resolve_language_with_wildcard(&languages, "markdown").unwrap();
         assert!(
-            markdown.highlights.is_some(),
-            "markdown should inherit highlights from wildcard"
+            markdown.queries.is_some(),
+            "markdown should inherit queries from wildcard"
         );
         assert_eq!(
-            markdown.highlights.as_ref().unwrap(),
-            &vec!["/default/highlights.scm".to_string()],
-            "markdown should inherit highlights from wildcard"
+            markdown.queries.as_ref().unwrap()[0].path,
+            "/default/highlights.scm",
+            "markdown should inherit queries from wildcard"
         );
         // Bridge should be markdown-specific, not inherited from wildcard
         let bridge = markdown.bridge.as_ref().unwrap();
@@ -2538,8 +2458,8 @@ mod tests {
         // Test 2: "quarto" (not defined) should get wildcard settings entirely
         let quarto = resolve_language_with_wildcard(&languages, "quarto").unwrap();
         assert!(
-            quarto.highlights.is_some(),
-            "quarto should inherit highlights from wildcard"
+            quarto.queries.is_some(),
+            "quarto should inherit queries from wildcard"
         );
         // Bridge should be wildcard's empty filter (disable all)
         let quarto_bridge = quarto.bridge.as_ref().unwrap();
@@ -2798,12 +2718,15 @@ mod tests {
             language_servers: None,
         };
 
-        // Project only adds highlights, doesn't set aliases
+        // Project only adds queries, doesn't set aliases
         let mut project_languages = HashMap::new();
         project_languages.insert(
             "markdown".to_string(),
             LanguageConfig {
-                highlights: Some(vec!["./queries/markdown-highlights.scm".to_string()]),
+                queries: Some(vec![settings::QueryItem {
+                    path: "./queries/markdown-highlights.scm".to_string(),
+                    kind: Some(settings::QueryKind::Highlights),
+                }]),
                 // aliases: None - should inherit from user
                 ..Default::default()
             },
@@ -2828,11 +2751,10 @@ mod tests {
         // Library: inherited from user
         assert_eq!(markdown.parser, Some("/usr/lib/markdown.so".to_string()));
 
-        // Highlights: overridden by project
-        assert_eq!(
-            markdown.highlights,
-            Some(vec!["./queries/markdown-highlights.scm".to_string()])
-        );
+        // Queries: overridden by project
+        let queries = markdown.queries.as_ref().unwrap();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].path, "./queries/markdown-highlights.scm");
 
         // Aliases: MUST be inherited from user (this was the bug)
         assert!(
