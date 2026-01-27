@@ -90,11 +90,7 @@ fn apply_capture_mapping(
             && let Some(mapped) = lang_mappings.highlights.get(capture_name)
         {
             // Explicit mapping to empty string means "filter this capture"
-            return if mapped.is_empty() {
-                None
-            } else {
-                Some(mapped.clone())
-            };
+            return (!mapped.is_empty()).then(|| mapped.clone());
         }
 
         // Try wildcard mapping
@@ -102,11 +98,7 @@ fn apply_capture_mapping(
             && let Some(mapped) = wildcard_mappings.highlights.get(capture_name)
         {
             // Explicit mapping to empty string means "filter this capture"
-            return if mapped.is_empty() {
-                None
-            } else {
-                Some(mapped.clone())
-            };
+            return (!mapped.is_empty()).then(|| mapped.clone());
         }
     }
 
@@ -371,12 +363,11 @@ fn finalize_tokens(mut all_tokens: Vec<RawToken>) -> Option<SemanticTokensResult
     let mut last_start = 0usize;
 
     for (line, start, length, _capture_index, mapped_name) in all_tokens {
-        // Skip tokens with unknown types (not in LEGEND_TYPES)
-        let Some((token_type, token_modifiers_bitset)) =
+        // Unknown types are already filtered at collection time (apply_capture_mapping returns None),
+        // so map_capture_to_token_type_and_modifiers should always return Some here.
+        let (token_type, token_modifiers_bitset) =
             map_capture_to_token_type_and_modifiers(&mapped_name)
-        else {
-            continue;
-        };
+                .expect("all tokens should have known types after apply_capture_mapping filtering");
 
         let delta_line = line - last_line;
         let delta_start = if delta_line == 0 {
@@ -1104,10 +1095,26 @@ mod tests {
         );
 
         // Unknown types return None - they should not produce semantic tokens
-        assert_eq!(map_capture_to_token_type_and_modifiers("unknown"), None);
-        assert_eq!(map_capture_to_token_type_and_modifiers("spell"), None);
-        assert_eq!(map_capture_to_token_type_and_modifiers("markup"), None);
-        assert_eq!(map_capture_to_token_type_and_modifiers(""), None);
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers("unknown"),
+            None,
+            "'unknown' is not in LEGEND_TYPES"
+        );
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers("spell"),
+            None,
+            "'spell' is a tree-sitter hint, not a semantic token type"
+        );
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers("markup"),
+            None,
+            "'markup' is not in LEGEND_TYPES"
+        );
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers(""),
+            None,
+            "empty string should return None"
+        );
 
         // Test with single modifier
         let (_, modifiers) = map_capture_to_token_type_and_modifiers("variable.readonly").unwrap();
@@ -2268,24 +2275,47 @@ let z = 42"#;
     fn test_apply_capture_mapping_returns_none_for_unknown_types() {
         // Unknown types (not in LEGEND_TYPES) should return None
         // This prevents unknown captures from being added to all_tokens
-        assert_eq!(apply_capture_mapping("spell", None, None), None);
-        assert_eq!(apply_capture_mapping("nospell", None, None), None);
-        assert_eq!(apply_capture_mapping("conceal", None, None), None);
-        assert_eq!(apply_capture_mapping("markup", None, None), None);
-        assert_eq!(apply_capture_mapping("unknown", None, None), None);
+        assert_eq!(
+            apply_capture_mapping("spell", None, None),
+            None,
+            "'spell' is a tree-sitter hint for spellcheck regions"
+        );
+        assert_eq!(
+            apply_capture_mapping("nospell", None, None),
+            None,
+            "'nospell' is a tree-sitter hint for no-spellcheck regions"
+        );
+        assert_eq!(
+            apply_capture_mapping("conceal", None, None),
+            None,
+            "'conceal' is a tree-sitter hint for concealable text"
+        );
+        assert_eq!(
+            apply_capture_mapping("markup", None, None),
+            None,
+            "'markup' is not in LEGEND_TYPES"
+        );
+        assert_eq!(
+            apply_capture_mapping("unknown", None, None),
+            None,
+            "'unknown' is not in LEGEND_TYPES"
+        );
 
         // Known types should return Some
         assert_eq!(
             apply_capture_mapping("comment", None, None),
-            Some("comment".to_string())
+            Some("comment".to_string()),
+            "'comment' is in LEGEND_TYPES"
         );
         assert_eq!(
             apply_capture_mapping("keyword", None, None),
-            Some("keyword".to_string())
+            Some("keyword".to_string()),
+            "'keyword' is in LEGEND_TYPES"
         );
         assert_eq!(
             apply_capture_mapping("variable.readonly", None, None),
-            Some("variable.readonly".to_string())
+            Some("variable.readonly".to_string()),
+            "'variable' base type is in LEGEND_TYPES"
         );
     }
 
