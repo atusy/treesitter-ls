@@ -18,6 +18,7 @@ use super::super::pool::UpstreamId;
 use super::super::protocol::RequestId;
 
 /// Result of attempting to route a response to a pending request.
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RouteResult {
     /// Response was successfully delivered to the waiting receiver.
@@ -311,7 +312,11 @@ mod tests {
         });
 
         let result = router.route(response.clone());
-        assert_eq!(result, RouteResult::Delivered, "route should return Delivered");
+        assert_eq!(
+            result,
+            RouteResult::Delivered,
+            "route should return Delivered"
+        );
 
         let received = rx.await.expect("receiver should get response");
         assert_eq!(received["id"], 42);
@@ -329,7 +334,11 @@ mod tests {
         });
 
         let result = router.route(response);
-        assert_eq!(result, RouteResult::NotFound, "route should return NotFound for unknown ID");
+        assert_eq!(
+            result,
+            RouteResult::NotFound,
+            "route should return NotFound for unknown ID"
+        );
     }
 
     #[test]
@@ -346,7 +355,11 @@ mod tests {
         });
 
         let result = router.route(notification);
-        assert_eq!(result, RouteResult::NotFound, "route should return NotFound for notifications");
+        assert_eq!(
+            result,
+            RouteResult::NotFound,
+            "route should return NotFound for notifications"
+        );
         assert_eq!(router.pending_count(), 1, "pending request should remain");
     }
 
