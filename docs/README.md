@@ -230,7 +230,9 @@ You can also use a `kakehashi.toml` file in your project root:
 "variable.builtin" = "variable.defaultLibrary"
 
 [languages.custom_lang]
-highlights = ["./queries/highlights.scm"]
+queries = [
+    { path = "./queries/highlights.scm", kind = "highlights" }
+]
 ```
 
 Project configuration is merged with LSP initialization options.
