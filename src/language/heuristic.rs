@@ -27,7 +27,7 @@ static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_
 /// Used for code fence language identifiers in Markdown/HTML.
 /// Uses syntect's find_syntax_by_token which searches extension list then name.
 /// Returns the syntax name in lowercase if found, None otherwise.
-pub fn detect_from_token(token: &str) -> Option<String> {
+pub(crate) fn detect_from_token(token: &str) -> Option<String> {
     let syntax = SYNTAX_SET.find_syntax_by_token(token)?;
     Some(normalize_syntax_name(&syntax.name))
 }
@@ -36,7 +36,7 @@ pub fn detect_from_token(token: &str) -> Option<String> {
 ///
 /// Uses syntect's regex-based detection from Sublime Text syntax definitions.
 /// Returns the syntax name in lowercase if found, None otherwise.
-pub fn detect_from_first_line(content: &str) -> Option<String> {
+pub(crate) fn detect_from_first_line(content: &str) -> Option<String> {
     let first_line = content.lines().next()?;
     let syntax = SYNTAX_SET.find_syntax_by_first_line(first_line)?;
     Some(normalize_syntax_name(&syntax.name))
