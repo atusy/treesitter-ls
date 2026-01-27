@@ -329,6 +329,7 @@ impl Kakehashi {
             }; // Lock released here
 
             // Step 3: Process tokens (no lock held)
+            let supports_multiline = self.supports_multiline_tokens();
             let result = handle_semantic_tokens_full_with_local_parsers(
                 &text,
                 &tree,
@@ -337,6 +338,7 @@ impl Kakehashi {
                 Some(&capture_mappings),
                 Some(&self.language),
                 &mut local_parsers,
+                supports_multiline,
             );
 
             // Step 4: Return parsers with brief lock
@@ -553,6 +555,7 @@ impl Kakehashi {
                 let old_absolute = decode_semantic_tokens(prev_tokens);
 
                 // Get new tokens via full computation (still needed for changed region)
+                let supports_multiline = self.supports_multiline_tokens();
                 let new_tokens_result = handle_semantic_tokens_full_delta(
                     &text,
                     &tree,
@@ -563,6 +566,7 @@ impl Kakehashi {
                     Some(&capture_mappings),
                     Some(&self.language),
                     Some(&mut pool),
+                    supports_multiline,
                 );
 
                 // Extract current tokens from the result
@@ -627,6 +631,7 @@ impl Kakehashi {
                 );
 
                 // Delegate to handler with injection support
+                let supports_multiline = self.supports_multiline_tokens();
                 handle_semantic_tokens_full_delta(
                     &text,
                     &tree,
@@ -637,6 +642,7 @@ impl Kakehashi {
                     Some(&capture_mappings),
                     Some(&self.language),
                     Some(&mut pool),
+                    supports_multiline,
                 )
             };
             (result, text)
@@ -733,6 +739,7 @@ impl Kakehashi {
 
         // Use injection-aware handler (works with or without injection support)
         let mut pool = self.parser_pool.lock().await;
+        let supports_multiline = self.supports_multiline_tokens();
         let result = crate::analysis::handle_semantic_tokens_range(
             text,
             tree,
@@ -742,6 +749,7 @@ impl Kakehashi {
             Some(&capture_mappings),
             Some(&self.language),
             Some(&mut pool),
+            supports_multiline,
         );
 
         // Convert to RangeResult, treating partial responses as empty for now

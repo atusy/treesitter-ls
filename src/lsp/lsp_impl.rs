@@ -196,6 +196,13 @@ impl Kakehashi {
         self.settings_manager.is_auto_install_enabled()
     }
 
+    /// Check if the client supports multiline semantic tokens.
+    ///
+    /// Delegates to SettingsManager for capability checking.
+    fn supports_multiline_tokens(&self) -> bool {
+        self.settings_manager.supports_multiline_tokens()
+    }
+
     /// Check if the given search paths include the default data directory.
     fn search_paths_include_default_data_dir(&self, search_paths: &[String]) -> bool {
         self.settings_manager
