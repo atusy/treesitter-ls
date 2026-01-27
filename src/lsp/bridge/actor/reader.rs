@@ -22,8 +22,8 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::super::connection::BridgeReader;
-use super::response_router::RouteResult;
 use super::ResponseRouter;
+use super::response_router::RouteResult;
 
 /// Type alias for the pinned liveness timer future.
 type LivenessTimer = std::pin::Pin<Box<tokio::time::Sleep>>;
@@ -507,8 +507,9 @@ fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_pref
             }
             RouteResult::ReceiverDropped => {
                 // ID was found but receiver was dropped (requester cancelled).
-                // This shouldn't happen after the handshake spawn fix, but log if it does.
-                warn!(
+                // This can legitimately happen when users cancel requests rapidly.
+                // Using debug! to avoid log spam; upgrade to warn! if investigation is needed.
+                debug!(
                     target: "kakehashi::bridge::reader",
                     "{}Response for id={} arrived but receiver was dropped (requester cancelled)",
                     lang_prefix,
