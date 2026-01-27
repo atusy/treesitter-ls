@@ -432,7 +432,9 @@ impl LanguageCoordinator {
     /// 1. Direct identifier (try to load as-is)
     /// 2. Syntect token normalization (py -> python, js -> javascript)
     /// 3. First-line detection (shebang, mode line)
-    /// 4. Config-based alias (rmd -> markdown)
+    ///
+    /// Config-based alias resolution (rmd -> markdown) is applied as a sub-step
+    /// after each detection method via `try_with_alias_fallback`.
     ///
     /// Visibility: Public - called by analysis layer (semantic.rs) for
     /// nested language injection support.
