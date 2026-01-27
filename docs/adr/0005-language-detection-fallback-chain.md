@@ -53,14 +53,14 @@ This applies to both document-level language detection and injected language res
    - Handles cases where editors send non-standard languageIds that the user cannot control
    - Example: Editor sends `rmd` for R Markdown files → alias maps to `markdown` parser
 
-4. **Heuristic analysis (middle priority)**
+3. **Heuristic analysis (middle priority)**
    - Shebang detection: `#!/usr/bin/env python` → python
    - Magic comments: `# -*- mode: ruby -*-` → ruby
    - File patterns: `Makefile` → make, `Dockerfile` → dockerfile
    - Useful when client sends generic languageId (e.g., "plaintext")
    - Candidate implementation: syntect's `find_syntax_for_file` (reads first line for shebang/magic)
 
-5. **File extension (lowest priority)**
+4. **File extension (lowest priority)**
    - Strips the dot: `.rs` → `rs`, `.py` → `py`
    - No mapping — uses extension directly as parser name candidate
    - Fallback when above methods fail or return unavailable parsers
