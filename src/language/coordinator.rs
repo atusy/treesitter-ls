@@ -314,89 +314,97 @@ impl LanguageCoordinator {
         token: Option<&str>,
         language_id: Option<&str>,
     ) -> Option<String> {
-        log::debug!(
-            target: "kakehashi::language_detection",
-            "Starting detection for path='{}', token={:?}, language_id={:?}",
-            path,
-            token,
-            language_id
-        );
+        let (result, method, candidate) =
+            self.detect_language_with_method(path, content, token, language_id);
+
+        match result {
+            Some(ref lang) => {
+                log::debug!(
+                    target: "kakehashi::language_detection",
+                    "Detected '{}' via {} for path='{}'",
+                    lang,
+                    method,
+                    path
+                );
+            }
+            None => {
+                if let Some(detected) = candidate {
+                    log::debug!(
+                        target: "kakehashi::language_detection",
+                        "Detected '{}' but no parser available for path='{}'",
+                        detected,
+                        path
+                    );
+                } else {
+                    log::debug!(
+                        target: "kakehashi::language_detection",
+                        "No language detected for path='{}'",
+                        path
+                    );
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Internal detection returning (result, method, last_candidate_without_parser).
+    ///
+    /// - `result`: The detected language with an available parser, if found
+    /// - `method`: Description of the detection method that succeeded
+    /// - `last_candidate`: The last detected candidate without a parser (for logging)
+    fn detect_language_with_method(
+        &self,
+        path: &str,
+        content: &str,
+        token: Option<&str>,
+        language_id: Option<&str>,
+    ) -> (Option<String>, &'static str, Option<String>) {
+        // Track last detected candidate without parser for logging
+        let mut last_candidate: Option<String> = None;
 
         // 1. Try languageId (with alias fallback)
         if let Some(lang_id) = language_id
             && lang_id != "plaintext"
-            && let Some(result) = self.try_with_alias_fallback(lang_id)
         {
-            log::debug!(
-                target: "kakehashi::language_detection",
-                "Detected '{}' via languageId '{}' for path='{}'",
-                result,
-                lang_id,
-                path
-            );
-            return Some(result);
+            if let Some(result) = self.try_with_alias_fallback(lang_id) {
+                return (Some(result), "languageId", None);
+            }
+            last_candidate = Some(lang_id.to_string());
         }
 
-        // 2. Try heuristic detection: token, first line (shebang, mode line), filename patterns
-        //    Uses syntect's Sublime Text syntax definitions for comprehensive coverage.
-        //    Uses helper macro to short-circuit on first successful match.
-        macro_rules! try_heuristic {
-            ($candidate:expr, $method:expr) => {
-                if let Some(candidate) = $candidate {
-                    if let Some(result) = self.try_with_alias_fallback(&candidate) {
-                        log::debug!(
-                            target: "kakehashi::language_detection",
-                            "Detected '{}' via heuristic '{}' ({}) for path='{}'",
-                            result,
-                            candidate,
-                            $method,
-                            path
-                        );
-                        return Some(result);
-                    } else {
-                        log::debug!(
-                            target: "kakehashi::language_detection",
-                            "Heuristic detected '{}' ({}) but no parser available, continuing fallback",
-                            candidate,
-                            $method
-                        );
-                    }
-                }
-            };
+        // 2. Try heuristic detection: token, first line (shebang), filename patterns
+        //    Short-circuits on first successful match.
+        if let Some(candidate) = token.and_then(super::heuristic::detect_from_token) {
+            if let Some(result) = self.try_with_alias_fallback(&candidate) {
+                return (Some(result), "token", None);
+            }
+            last_candidate = Some(candidate);
         }
-        try_heuristic!(token.and_then(super::heuristic::detect_from_token), "token");
-        try_heuristic!(
-            super::heuristic::detect_from_first_line(content),
-            "first-line"
-        );
-        try_heuristic!(super::heuristic::detect_from_filename(path), "filename");
+
+        if let Some(candidate) = super::heuristic::detect_from_first_line(content) {
+            if let Some(result) = self.try_with_alias_fallback(&candidate) {
+                return (Some(result), "first-line", None);
+            }
+            last_candidate = Some(candidate);
+        }
+
+        if let Some(candidate) = super::heuristic::detect_from_filename(path) {
+            if let Some(result) = self.try_with_alias_fallback(&candidate) {
+                return (Some(result), "filename", None);
+            }
+            last_candidate = Some(candidate);
+        }
 
         // 3. Try extension-based detection (with alias fallback)
-        if let Some(ext_lang) = super::extension::detect_from_extension(path) {
-            if let Some(result) = self.try_with_alias_fallback(&ext_lang) {
-                log::debug!(
-                    target: "kakehashi::language_detection",
-                    "Detected '{}' via extension '{}' for path='{}'",
-                    result,
-                    ext_lang,
-                    path
-                );
-                return Some(result);
-            } else {
-                log::debug!(
-                    target: "kakehashi::language_detection",
-                    "Extension detected '{}' but no parser available",
-                    ext_lang
-                );
+        if let Some(candidate) = super::extension::detect_from_extension(path) {
+            if let Some(result) = self.try_with_alias_fallback(&candidate) {
+                return (Some(result), "extension", None);
             }
+            last_candidate = Some(candidate);
         }
 
-        log::debug!(
-            target: "kakehashi::language_detection",
-            "No language detected for path='{}'",
-            path
-        );
-        None
+        (None, "none", last_candidate)
     }
 
     /// ADR-0005: Resolve injection language using unified detection heuristics.
