@@ -290,8 +290,13 @@ fn collect_injection_contexts<'a>(
     let mut contexts = Vec::with_capacity(injections.len());
 
     for injection in injections {
-        // Resolve injection language with alias fallback
-        let Some((resolved_lang, _)) = coordinator.resolve_injection_language(&injection.language)
+        // Extract injection content for first-line detection (shebang, mode line)
+        let injection_content =
+            &text[injection.content_node.start_byte()..injection.content_node.end_byte()];
+
+        // Resolve injection language with unified detection
+        let Some((resolved_lang, _)) =
+            coordinator.resolve_injection_language(&injection.language, injection_content)
         else {
             continue;
         };
@@ -463,8 +468,13 @@ fn collect_injection_languages_recursive(
     };
 
     for injection in injections {
+        // Extract injection content for first-line detection (shebang, mode line)
+        let injection_content =
+            &text[injection.content_node.start_byte()..injection.content_node.end_byte()];
+
         // Resolve the injection language
-        let Some((resolved_lang, _)) = coordinator.resolve_injection_language(&injection.language)
+        let Some((resolved_lang, _)) =
+            coordinator.resolve_injection_language(&injection.language, injection_content)
         else {
             continue;
         };

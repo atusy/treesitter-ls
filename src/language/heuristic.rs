@@ -1,6 +1,7 @@
 //! Heuristic-based language detection using syntect.
 //!
 //! This module provides language detection via:
+//! - Token matching (e.g., "py", "js", "bash" from code fences)
 //! - Shebang lines (e.g., `#!/usr/bin/env python`)
 //! - Emacs/Vim mode lines (e.g., `# -*- mode: ruby -*-`)
 //! - File name patterns (e.g., `Makefile`, `Dockerfile`)
@@ -14,6 +15,16 @@ use syntect::parsing::SyntaxSet;
 
 /// Lazily initialized syntax set with default syntaxes.
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+
+/// Detect language from a token (e.g., "py", "js", "bash").
+///
+/// Used for code fence language identifiers in Markdown/HTML.
+/// Uses syntect's find_syntax_by_token which searches extension list then name.
+/// Returns the syntax name in lowercase if found, None otherwise.
+pub fn detect_from_token(token: &str) -> Option<String> {
+    let syntax = SYNTAX_SET.find_syntax_by_token(token)?;
+    Some(normalize_syntax_name(&syntax.name))
+}
 
 /// Detect language from file content's first line (shebang, mode line).
 ///
@@ -82,6 +93,33 @@ fn normalize_syntax_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Token detection tests (for code fence identifiers)
+
+    #[test]
+    fn test_detect_token_py() {
+        assert_eq!(detect_from_token("py"), Some("python".to_string()));
+    }
+
+    #[test]
+    fn test_detect_token_js() {
+        assert_eq!(detect_from_token("js"), Some("javascript".to_string()));
+    }
+
+    #[test]
+    fn test_detect_token_bash() {
+        assert_eq!(detect_from_token("bash"), Some("bash".to_string()));
+    }
+
+    #[test]
+    fn test_detect_token_rust() {
+        assert_eq!(detect_from_token("rust"), Some("rust".to_string()));
+    }
+
+    #[test]
+    fn test_detect_token_unknown() {
+        assert_eq!(detect_from_token("unknown_language_xyz"), None);
+    }
 
     // Shebang detection tests
 

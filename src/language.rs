@@ -1,11 +1,10 @@
-pub mod alias;
 pub mod config_store;
 pub mod coordinator;
 pub mod events;
 pub mod extension;
 pub mod failed_parsers;
 pub mod filetypes;
-mod heuristic;
+pub mod heuristic;
 pub mod injection;
 pub mod loader;
 pub mod parser_pool;

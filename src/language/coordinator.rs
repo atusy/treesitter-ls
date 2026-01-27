@@ -289,28 +289,36 @@ impl LanguageCoordinator {
         self.language_registry.has_parser_available(language_name)
     }
 
-    /// ADR-0005: Detection fallback chain.
+    /// ADR-0005: Unified detection fallback chain for both host documents and injections.
     ///
     /// Returns the first language for which a parser is available.
     ///
     /// Priority order (ADR-0005):
     /// Each detection method follows: detect → alias resolution → availability check
     /// 1. LSP languageId (if not "plaintext")
-    /// 2. Heuristic detection (shebang, mode line, filename patterns via syntect)
+    /// 2. Heuristic detection:
+    ///    - Token matching (for injection identifiers like "py", "js")
+    ///    - First line (shebang, mode line)
+    ///    - Filename patterns (Makefile, Dockerfile)
     /// 3. Extension-based detection from path
     ///
-    /// Visibility: Public - called by LSP layer (lsp_impl) for document
-    /// language detection during text_document/didOpen.
+    /// Usage:
+    /// - Host document: `detect_language(path, content, None, language_id)`
+    /// - Injection: `detect_language(token, content, Some(token), Some(token))`
+    ///
+    /// Visibility: Public - called by LSP layer and injection resolution.
     pub fn detect_language(
         &self,
         path: &str,
-        language_id: Option<&str>,
         content: &str,
+        token: Option<&str>,
+        language_id: Option<&str>,
     ) -> Option<String> {
         log::debug!(
             target: "kakehashi::language_detection",
-            "Starting detection for path='{}', language_id={:?}",
+            "Starting detection for path='{}', token={:?}, language_id={:?}",
             path,
+            token,
             language_id
         );
 
@@ -329,9 +337,10 @@ impl LanguageCoordinator {
             return Some(result);
         }
 
-        // 2. Try heuristic detection: first line (shebang, mode line) and filename patterns
+        // 2. Try heuristic detection: token, first line (shebang, mode line), filename patterns
         //    Uses syntect's Sublime Text syntax definitions for comprehensive coverage.
         let heuristic_candidates = [
+            token.and_then(super::heuristic::detect_from_token),
             super::heuristic::detect_from_first_line(content),
             super::heuristic::detect_from_filename(path),
         ];
@@ -382,64 +391,116 @@ impl LanguageCoordinator {
         None
     }
 
-    /// ADR-0005: Resolve injection language with alias fallback.
+    /// ADR-0005: Resolve injection language using unified detection heuristics.
     ///
-    /// For injection regions, try direct identifier first, then normalize.
-    /// Returns the resolved language name and load result.
+    /// Unlike `detect_language` which gates on parser availability, this function
+    /// uses the same detection heuristics but attempts to LOAD the detected language.
+    /// This is needed because injection discovery happens before we know which parsers
+    /// are needed.
     ///
-    /// Priority order:
+    /// Detection chain (same order as `detect_language`):
     /// 1. Direct identifier (try to load as-is)
-    /// 2. Normalized alias (py -> python, js -> javascript, sh -> bash)
-    /// 3. Config-based alias (rmd -> markdown, qmd -> markdown)
+    /// 2. Syntect token normalization (py -> python, js -> javascript)
+    /// 3. First-line detection (shebang, mode line)
+    /// 4. Config-based alias (rmd -> markdown)
     ///
     /// Visibility: Public - called by analysis layer (semantic.rs) for
     /// nested language injection support.
     pub fn resolve_injection_language(
         &self,
         identifier: &str,
+        content: &str,
     ) -> Option<(String, LanguageLoadResult)> {
         log::debug!(
             target: "kakehashi::language_detection",
-            "Resolving injection language for identifier='{}'",
-            identifier
+            "Resolving injection language for identifier='{}', content_len={}",
+            identifier,
+            content.len()
         );
 
-        // 1. Try direct identifier first
-        let direct_result = self.ensure_language_loaded(identifier);
-        if direct_result.success {
-            log::debug!(
-                target: "kakehashi::language_detection",
-                "Resolved injection '{}' via direct identifier",
-                identifier
-            );
-            return Some((identifier.to_string(), direct_result));
-        }
-
-        // 2. Try normalized alias (hardcoded common abbreviations)
-        if let Some(normalized) = super::alias::normalize_alias(identifier) {
-            let alias_result = self.ensure_language_loaded(&normalized);
-            if alias_result.success {
+        // 1. Try direct identifier first (skip "plaintext")
+        if identifier != "plaintext" {
+            // Try direct match
+            let direct_result = self.ensure_language_loaded(identifier);
+            if direct_result.success {
                 log::debug!(
                     target: "kakehashi::language_detection",
-                    "Resolved injection '{}' -> '{}' via alias normalization",
-                    identifier,
-                    normalized
+                    "Resolved injection '{}' via direct identifier",
+                    identifier
                 );
-                return Some((normalized, alias_result));
+                return Some((identifier.to_string(), direct_result));
+            }
+
+            // Try config-based alias for direct identifier
+            if let Some(canonical) = self.resolve_alias(identifier) {
+                let alias_result = self.ensure_language_loaded(&canonical);
+                if alias_result.success {
+                    log::debug!(
+                        target: "kakehashi::language_detection",
+                        "Resolved injection '{}' -> '{}' via config alias",
+                        identifier,
+                        canonical
+                    );
+                    return Some((canonical, alias_result));
+                }
             }
         }
 
-        // 3. Try config-based alias (user-configured mappings)
-        if let Some(canonical) = self.resolve_alias(identifier) {
-            let alias_result = self.ensure_language_loaded(&canonical);
-            if alias_result.success {
+        // 2. Try syntect token normalization (handles py -> python, js -> javascript, etc.)
+        if let Some(normalized) = super::heuristic::detect_from_token(identifier) {
+            let token_result = self.ensure_language_loaded(&normalized);
+            if token_result.success {
                 log::debug!(
                     target: "kakehashi::language_detection",
-                    "Resolved injection '{}' -> '{}' via config alias",
+                    "Resolved injection '{}' -> '{}' via syntect token",
                     identifier,
-                    canonical
+                    normalized
                 );
-                return Some((canonical, alias_result));
+                return Some((normalized, token_result));
+            }
+
+            // Try config alias for the normalized name too
+            if let Some(canonical) = self.resolve_alias(&normalized) {
+                let alias_result = self.ensure_language_loaded(&canonical);
+                if alias_result.success {
+                    log::debug!(
+                        target: "kakehashi::language_detection",
+                        "Resolved injection '{}' -> '{}' -> '{}' via syntect + config alias",
+                        identifier,
+                        normalized,
+                        canonical
+                    );
+                    return Some((canonical, alias_result));
+                }
+            }
+        }
+
+        // 3. Try first-line detection (shebang, mode line)
+        if let Some(first_line_lang) = super::heuristic::detect_from_first_line(content) {
+            let first_line_result = self.ensure_language_loaded(&first_line_lang);
+            if first_line_result.success {
+                log::debug!(
+                    target: "kakehashi::language_detection",
+                    "Resolved injection '{}' -> '{}' via first-line detection",
+                    identifier,
+                    first_line_lang
+                );
+                return Some((first_line_lang, first_line_result));
+            }
+
+            // Try config alias for the first-line detected language
+            if let Some(canonical) = self.resolve_alias(&first_line_lang) {
+                let alias_result = self.ensure_language_loaded(&canonical);
+                if alias_result.success {
+                    log::debug!(
+                        target: "kakehashi::language_detection",
+                        "Resolved injection '{}' -> '{}' -> '{}' via first-line + config alias",
+                        identifier,
+                        first_line_lang,
+                        canonical
+                    );
+                    return Some((canonical, alias_result));
+                }
             }
         }
 
@@ -741,7 +802,7 @@ mod tests {
         coordinator.register_language_for_test("python", tree_sitter_rust::LANGUAGE.into());
 
         // Direct identifier "python" should work
-        let result = coordinator.resolve_injection_language("python");
+        let result = coordinator.resolve_injection_language("python", "print('hello')");
         assert!(result.is_some());
         let (resolved, load_result) = result.unwrap();
         assert_eq!(resolved, "python");
@@ -749,13 +810,13 @@ mod tests {
     }
 
     #[test]
-    fn test_injection_uses_alias_normalization() {
+    fn test_injection_uses_syntect_token() {
         let coordinator = LanguageCoordinator::new();
         // Register "python" parser (not "py")
         coordinator.register_language_for_test("python", tree_sitter_rust::LANGUAGE.into());
 
-        // Alias "py" should resolve to "python"
-        let result = coordinator.resolve_injection_language("py");
+        // Token "py" should resolve to "python" via syntect's detect_from_token
+        let result = coordinator.resolve_injection_language("py", "print('hello')");
         assert!(result.is_some());
         let (resolved, load_result) = result.unwrap();
         assert_eq!(resolved, "python");
@@ -768,11 +829,11 @@ mod tests {
         // No parsers registered
 
         // Unknown alias with no parser should return None
-        let result = coordinator.resolve_injection_language("unknown_lang");
+        let result = coordinator.resolve_injection_language("unknown_lang", "");
         assert!(result.is_none());
 
-        // Known alias but no parser should also return None
-        let result = coordinator.resolve_injection_language("py");
+        // Known token but no parser should also return None
+        let result = coordinator.resolve_injection_language("py", "");
         assert!(result.is_none());
     }
 
@@ -796,7 +857,7 @@ mod tests {
         coordinator.build_alias_map(&languages);
 
         // Injection "rmd" should resolve to "markdown" via config alias
-        let result = coordinator.resolve_injection_language("rmd");
+        let result = coordinator.resolve_injection_language("rmd", "");
         assert!(result.is_some(), "rmd should resolve via config alias");
         let (resolved, load_result) = result.unwrap();
         assert_eq!(resolved, "markdown");
@@ -811,7 +872,7 @@ mod tests {
         coordinator.register_language_for_test("javascript", tree_sitter_rust::LANGUAGE.into());
 
         // "js" should resolve to "js" (direct), not "javascript" (alias)
-        let result = coordinator.resolve_injection_language("js");
+        let result = coordinator.resolve_injection_language("js", "");
         assert!(result.is_some());
         let (resolved, _) = result.unwrap();
         assert_eq!(
@@ -899,7 +960,7 @@ mod tests {
         // Note: No parser loaded, so will return None (graceful degradation)
         // But the heuristic detection path is still exercised
         let content = "#!/usr/bin/env python\nprint('hello')";
-        let result = coordinator.detect_language("/script", Some("plaintext"), content);
+        let result = coordinator.detect_language("/script", content, None, Some("plaintext"));
 
         // No python parser loaded, so result is None
         // The important thing is that "plaintext" didn't short-circuit
@@ -916,7 +977,7 @@ mod tests {
         // Scenario: languageId is "rust" but no rust parser loaded
         // So it falls through to heuristic, but no python parser either
         let content = "#!/usr/bin/env python\nprint('hello')";
-        let result = coordinator.detect_language("/script", Some("rust"), content);
+        let result = coordinator.detect_language("/script", content, None, Some("rust"));
 
         // Neither rust nor python parser loaded
         assert_eq!(result, None);
@@ -931,7 +992,7 @@ mod tests {
         // When heuristic detection fails (no parser), extension fallback runs
         // File has .rs extension but content has python shebang
         let content = "#!/usr/bin/env python\nprint('hello')";
-        let result = coordinator.detect_language("/path/to/file.rs", None, content);
+        let result = coordinator.detect_language("/path/to/file.rs", content, None, None);
 
         // No parsers loaded, so result is None
         // But the chain tried: languageId (None) -> heuristic (python, no parser) -> extension (rs, no parser)
@@ -947,7 +1008,8 @@ mod tests {
 
         // languageId = "plaintext" (skipped), heuristic = python (no parser), extension = rs (no parser)
         let content = "#!/usr/bin/env python\nprint('hello')";
-        let result = coordinator.detect_language("/path/to/file.rs", Some("plaintext"), content);
+        let result =
+            coordinator.detect_language("/path/to/file.rs", content, None, Some("plaintext"));
 
         assert_eq!(result, None);
     }
@@ -957,8 +1019,12 @@ mod tests {
         let coordinator = LanguageCoordinator::new();
 
         // No languageId, no heuristic match, no extension -> None
-        let result =
-            coordinator.detect_language("/random_file", None, "random content without shebang");
+        let result = coordinator.detect_language(
+            "/random_file",
+            "random content without shebang",
+            None,
+            None,
+        );
 
         assert_eq!(result, None);
     }
@@ -969,7 +1035,7 @@ mod tests {
 
         // Makefile has no extension but should be detected by filename pattern
         // No parser loaded, so returns None (but heuristic path is exercised)
-        let result = coordinator.detect_language("/path/to/Makefile", None, "all: build");
+        let result = coordinator.detect_language("/path/to/Makefile", "all: build", None, None);
 
         // No make parser loaded
         assert_eq!(result, None);
@@ -1226,7 +1292,7 @@ mod tests {
         coordinator.build_alias_map(&languages);
 
         // Detection with languageId "rmd" should resolve to "markdown"
-        let result = coordinator.detect_language("/path/to/file.Rmd", Some("rmd"), "");
+        let result = coordinator.detect_language("/path/to/file.Rmd", "", None, Some("rmd"));
         assert_eq!(
             result,
             Some("markdown".to_string()),
@@ -1234,7 +1300,7 @@ mod tests {
         );
 
         // Also test qmd
-        let result = coordinator.detect_language("/path/to/file.qmd", Some("qmd"), "");
+        let result = coordinator.detect_language("/path/to/file.qmd", "", None, Some("qmd"));
         assert_eq!(
             result,
             Some("markdown".to_string()),
@@ -1263,7 +1329,7 @@ mod tests {
         coordinator.build_alias_map(&languages);
 
         // Detection with languageId "rmd" should use "rmd" directly (not alias)
-        let result = coordinator.detect_language("/path/to/file.Rmd", Some("rmd"), "");
+        let result = coordinator.detect_language("/path/to/file.Rmd", "", None, Some("rmd"));
         assert_eq!(
             result,
             Some("rmd".to_string()),
@@ -1290,7 +1356,7 @@ mod tests {
         coordinator.build_alias_map(&languages);
 
         // Detection should return None (alias found but no parser for "markdown")
-        let result = coordinator.detect_language("/path/to/file.Rmd", Some("rmd"), "");
+        let result = coordinator.detect_language("/path/to/file.Rmd", "", None, Some("rmd"));
         assert_eq!(
             result, None,
             "Should return None when alias target has no parser"
@@ -1366,7 +1432,7 @@ mod tests {
         coordinator.build_alias_map(&languages);
 
         // No languageId, no shebang, extension = jsx
-        let result = coordinator.detect_language("/path/to/component.jsx", None, "");
+        let result = coordinator.detect_language("/path/to/component.jsx", "", None, None);
 
         assert_eq!(
             result,
