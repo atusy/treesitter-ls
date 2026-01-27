@@ -28,9 +28,10 @@ This applies to both document-level language detection and injected language res
 ```
 1. LSP languageId  →  Try direct  →  Try alias  →  If available: use it
                                                 →  If no: continue
-2. Heuristic       →  Try direct  →  Try alias  →  If available: use it
+2. Token detection →  syntect     →  Try alias  →  If available: use it
+                  →  raw token   →  Try alias  →  If available: use it
                                                 →  If no: continue
-3. File extension  →  Try direct  →  Try alias  →  If available: use it
+3. First line      →  Try direct  →  Try alias  →  If available: use it
                                                 →  If no: return None
 ```
 
@@ -43,17 +44,25 @@ Each detection method follows the **detect → alias resolution → availability
    - Already handles complex cases: `.tsx` vs `.ts`, polyglot files, user overrides
    - Trust the client—it knows best
 
-2. **Heuristic analysis (middle priority)**
+2. **Token-based detection (middle priority)**
+
+   Tokens are extracted from either explicit identifiers (code fence markers) or file paths:
+   - **Explicit token**: Injection identifiers like `py`, `js`, `bash` from code fences
+   - **Path-derived token**: Extension (`file.rs` → `rs`) or basename (`Makefile` → `Makefile`)
+
+   Token resolution uses syntect's `find_syntax_by_token` for normalization:
+   - `py` → `python`, `js` → `javascript`, `rs` → `rust`
+   - `Makefile` → `make`, `.bashrc` → `bash`
+
+   If syntect doesn't recognize the token, it's tried directly as an alias candidate.
+   This handles extensions like `jsx`, `tsx` that syntect doesn't know but may be
+   configured as aliases (e.g., `jsx` → `javascript`).
+
+3. **First-line detection (lowest priority)**
    - Shebang detection: `#!/usr/bin/env python` → python
    - Magic comments: `# -*- mode: ruby -*-` → ruby
-   - File patterns: `Makefile` → make, `Dockerfile` → dockerfile
-   - Useful when client sends generic languageId (e.g., "plaintext")
-   - Candidate implementation: syntect's `find_syntax_for_file` (reads first line for shebang/magic)
-
-3. **File extension (lowest priority)**
-   - Strips the dot: `.rs` → `rs`, `.py` → `py`
-   - No mapping — uses extension directly as parser name candidate
-   - Fallback when above methods fail or return unavailable parsers
+   - Implementation: syntect's `find_syntax_by_first_line`
+   - Fallback when token detection fails (e.g., extensionless files without special names)
 
 ### Alias Resolution as Sub-step
 
@@ -71,37 +80,53 @@ This ensures:
 
 Example scenarios:
 - Editor sends `languageId: "rmd"` → alias resolves to `markdown` → parser found
-- Shebang returns `python3` → no parser → alias resolves to `python` → parser found
-- Extension `.jsx` → no parser → alias resolves to `javascript` → parser found
+- Token `py` (from code fence or `.py` extension) → syntect normalizes to `python` → parser found
+- Token `jsx` (from `.jsx` extension) → syntect unknown → direct alias to `javascript` → parser found
+- Shebang `#!/usr/bin/env python3` → syntect returns `python` → parser found
 
 ### Availability Check
 
 Each detection method tries direct match first, then alias resolution:
 
 ```rust
-fn detect_language(&self, path: &str, language_id: Option<&str>, content: &str) -> Option<String> {
-    // 1. Try languageId
-    if let Some(lang_id) = language_id {
+fn detect_language(&self, path: &str, content: &str, token: Option<&str>, language_id: Option<&str>) -> Option<String> {
+    // 1. Try languageId (skip "plaintext")
+    if let Some(lang_id) = language_id && lang_id != "plaintext" {
         if let Some(result) = self.try_with_alias_fallback(lang_id) {
             return Some(result);
         }
     }
 
-    // 2. Try heuristics (shebang, etc.)
-    if let Some(candidate) = self.detect_from_heuristics(path, content) {
-        if let Some(result) = self.try_with_alias_fallback(&candidate) {
+    // 2. Token-based detection (explicit token or path-derived)
+    let effective_token = token.or_else(|| extract_token_from_path(path));
+    if let Some(tok) = effective_token {
+        // Try syntect normalization (py → python, Makefile → make)
+        if let Some(candidate) = detect_from_token(tok) {
+            if let Some(result) = self.try_with_alias_fallback(&candidate) {
+                return Some(result);
+            }
+        }
+        // Try raw token as alias (handles jsx, tsx that syntect doesn't know)
+        if let Some(result) = self.try_with_alias_fallback(tok) {
             return Some(result);
         }
     }
 
-    // 3. Try file extension
-    if let Some(candidate) = self.detect_from_extension(path) {
+    // 3. Try first-line detection (shebang, mode line)
+    if let Some(candidate) = detect_from_first_line(content) {
         if let Some(result) = self.try_with_alias_fallback(&candidate) {
             return Some(result);
         }
     }
 
     None
+}
+
+/// Extract token from path: extension or basename for special files
+fn extract_token_from_path(path: &str) -> Option<&str> {
+    let filename = Path::new(path).file_name()?.to_str()?;
+    // Extension if present, otherwise basename (Makefile, .bashrc)
+    path.extension().and_then(|e| e.to_str()).or(Some(filename))
 }
 
 /// Helper: Try candidate directly, then with config-based alias
@@ -122,9 +147,9 @@ fn try_with_alias_fallback(&self, candidate: &str) -> Option<String> {
 
 This means:
 - If client sends `languageId: "rmd"` and alias maps `rmd` → `markdown`, use the markdown parser
-- If shebang says `python3` and alias maps `python3` → `python`, use the python parser
-- If extension is `.jsx` and alias maps `jsx` → `javascript`, use the javascript parser
-- If no alias matches, continue to the next detection method
+- If token `py` is normalized by syntect to `python`, use the python parser
+- If token `jsx` is not recognized by syntect but alias maps `jsx` → `javascript`, use the javascript parser
+- If no match, continue to the next detection method
 
 ### Language Injection
 
@@ -138,14 +163,14 @@ Document (markdown) ──parse──▶ AST ──injection query──▶ "py"
 For example, a Markdown code fence with ` ```py ` provides the identifier `"py"`, which must be resolved to an available parser. This resolution follows a fallback pattern:
 
 1. **Try the identifier directly**: Check if a parser named `"py"` is available
-2. **Normalize and retry**: If not, map aliases (`py` → `python`, `js` → `javascript`, `sh` → `bash`) and check again
-   - Candidate implementation: syntect's `find_syntax_by_extension` provides alias mappings
-3. **Skip if unavailable**: If no parser matches, the region is skipped
+2. **Normalize via syntect**: Use `detect_from_token("py")` which returns `"python"`
+3. **Try config-based alias**: If syntect doesn't recognize it, check user-configured aliases
+4. **Skip if unavailable**: If no parser matches, the region is skipped
 
 This means:
 - Injected languages benefit from the same graceful degradation
 - A Markdown file can have some code blocks with semantic tokens and others without, depending on installed parsers
-- Alias normalization is needed for both document-level `languageId` and injection identifiers
+- Token normalization via syntect handles common aliases (`py`, `js`, `sh`) automatically
 
 ## Consequences
 
@@ -166,10 +191,11 @@ This means:
 
 ### Neutral
 
-- **Extension mapping still exists**: But as last resort, not primary method
+- **Token-based detection includes extensions**: Extensions are treated as tokens, not a separate detection step
 - **Parser availability matters**: Detection result depends on what's installed
 - **Auto-install interaction**: Detection completes first (returning None if no parser found); auto-install runs asynchronously afterward, making the parser available for subsequent requests
 - **Caching**: Detection result is stored per-document; cache invalidates on content change or `languageId` change from client
+- **syntect dependency**: Uses syntect's Sublime Text syntax definitions for token normalization and first-line detection
 
 ## Migration from ADR-0002
 
