@@ -620,8 +620,15 @@ impl LanguageServerPool {
     /// * `upstream_id` - The original request ID from the upstream client
     ///
     /// # Returns
-    /// * `Ok(())` if the cancel notification was sent
-    /// * `Err` if no connection exists or the upstream ID is not found
+    /// * `Ok(())` - Cancel was forwarded, or silently dropped if not forwardable
+    ///
+    /// # Silent Drop Cases (Best-Effort Semantics)
+    ///
+    /// Per LSP spec, `$/cancelRequest` is a notification with best-effort semantics.
+    /// The following cases are silently dropped (return `Ok(())`) rather than failing:
+    /// - No connection exists for the server
+    /// - Connection is not in Ready state (still initializing or failed)
+    /// - Upstream ID not found in router (request already completed)
     pub(crate) async fn forward_cancel(
         &self,
         server_name: &str,
@@ -631,24 +638,29 @@ impl LanguageServerPool {
         let handle = {
             let connections = self.connections().await;
             let Some(handle) = connections.get(server_name) else {
+                // No connection - request may have completed or server never started.
+                // Silently drop per best-effort semantics.
                 self.cancel_metrics.record_no_connection();
                 log::debug!(
                     target: "kakehashi::bridge::cancel",
-                    "Cancel forward failed: no connection for server '{}'",
+                    "Cancel dropped: no connection for server '{}' (expected if request completed)",
                     server_name
                 );
-                return Err(io::Error::other("bridge: no connection for server"));
+                return Ok(());
             };
 
             // Only forward if connection is Ready
             if handle.state() != ConnectionState::Ready {
+                // Connection still initializing or failed - can't forward cancels.
+                // Silently drop per best-effort semantics.
                 self.cancel_metrics.record_not_ready();
                 log::debug!(
                     target: "kakehashi::bridge::cancel",
-                    "Cancel forward failed: connection not ready for server '{}'",
-                    server_name
+                    "Cancel dropped: connection not ready for server '{}' (state: {:?})",
+                    server_name,
+                    handle.state()
                 );
-                return Err(io::Error::other("bridge: connection not ready"));
+                return Ok(());
             }
 
             std::sync::Arc::clone(handle)
@@ -658,14 +670,16 @@ impl LanguageServerPool {
         let downstream_id = match handle.router().lookup_downstream_id(upstream_id) {
             Some(id) => id,
             None => {
+                // Request already completed or ID never registered.
+                // Silently drop per best-effort semantics.
                 self.cancel_metrics.record_unknown_id();
                 log::debug!(
                     target: "kakehashi::bridge::cancel",
-                    "Cancel forward failed: unknown upstream ID {} for server '{}'",
+                    "Cancel dropped: upstream ID {} not found for server '{}' (request may have completed)",
                     upstream_id,
                     server_name
                 );
-                return Err(io::Error::other("bridge: upstream request ID not found"));
+                return Ok(());
             }
         };
 
@@ -708,8 +722,18 @@ impl LanguageServerPool {
     /// * `upstream_id` - The request ID from the client's cancel notification
     ///
     /// # Returns
-    /// * `Ok(())` if the cancel was forwarded
-    /// * `Err` if the upstream ID is not found in the registry
+    /// * `Ok(())` - Cancel was forwarded, or silently dropped if not forwardable
+    ///
+    /// # Silent Drop Cases (Best-Effort Semantics)
+    ///
+    /// Per LSP spec, `$/cancelRequest` is a notification with best-effort semantics.
+    /// The following cases are silently dropped (return `Ok(())`) rather than failing:
+    /// - Upstream ID not in registry (request not yet registered or already completed)
+    /// - Connection still initializing (can't forward cancels during handshake)
+    /// - Downstream ID not found (request already completed)
+    ///
+    /// This prevents race conditions where canceling an in-flight request could
+    /// break server initialization.
     pub(crate) async fn forward_cancel_by_upstream_id(
         &self,
         upstream_id: UpstreamId,
@@ -724,15 +748,15 @@ impl LanguageServerPool {
         };
 
         let Some(server_name) = server_name else {
+            // Request not registered yet (still initializing) or already completed.
+            // This is expected - silently drop the cancel per best-effort semantics.
             self.cancel_metrics.record_not_in_registry();
             log::debug!(
                 target: "kakehashi::bridge::cancel",
-                "Cancel forward failed: upstream ID {} not in registry",
+                "Cancel dropped: upstream ID {} not in registry (expected during init or after completion)",
                 upstream_id
             );
-            return Err(io::Error::other(
-                "bridge: upstream request ID not found in registry",
-            ));
+            return Ok(());
         };
 
         self.forward_cancel(&server_name, &upstream_id).await
@@ -2223,30 +2247,25 @@ mod tests {
         );
     }
 
-    /// Test that forward_cancel returns error when no connection exists.
+    /// Test that forward_cancel silently drops when no connection exists (best-effort semantics).
     #[tokio::test]
-    async fn forward_cancel_returns_error_when_no_connection() {
+    async fn forward_cancel_silently_drops_when_no_connection() {
         let pool = LanguageServerPool::new();
 
         let result = pool
             .forward_cancel("nonexistent", &UpstreamId::Number(42))
             .await;
 
+        // Per best-effort semantics, this should succeed (silent drop)
         assert!(
-            result.is_err(),
-            "forward_cancel should return error for nonexistent connection"
-        );
-        let err = result.unwrap_err();
-        assert!(
-            err.to_string().contains("no connection"),
-            "Error should mention no connection: {}",
-            err
+            result.is_ok(),
+            "forward_cancel should silently drop for nonexistent connection"
         );
     }
 
-    /// Test that forward_cancel returns error when upstream ID not found.
+    /// Test that forward_cancel silently drops when upstream ID not found (best-effort semantics).
     #[tokio::test]
-    async fn forward_cancel_returns_error_when_upstream_id_not_found() {
+    async fn forward_cancel_silently_drops_when_upstream_id_not_found() {
         use std::sync::Arc;
 
         let pool = LanguageServerPool::new();
@@ -2260,15 +2279,10 @@ mod tests {
 
         let result = pool.forward_cancel("lua", &UpstreamId::Number(999)).await;
 
+        // Per best-effort semantics, this should succeed (silent drop)
         assert!(
-            result.is_err(),
-            "forward_cancel should return error for unknown upstream ID"
-        );
-        let err = result.unwrap_err();
-        assert!(
-            err.to_string().contains("not found"),
-            "Error should mention not found: {}",
-            err
+            result.is_ok(),
+            "forward_cancel should silently drop for unknown upstream ID"
         );
     }
 
@@ -2338,9 +2352,9 @@ mod tests {
         );
     }
 
-    /// Test that forward_cancel_by_upstream_id returns error when not in registry.
+    /// Test that forward_cancel_by_upstream_id silently drops when not in registry (best-effort semantics).
     #[tokio::test]
-    async fn forward_cancel_by_upstream_id_returns_error_when_not_in_registry() {
+    async fn forward_cancel_by_upstream_id_silently_drops_when_not_in_registry() {
         let pool = LanguageServerPool::new();
 
         // Don't register anything in the registry
@@ -2348,15 +2362,10 @@ mod tests {
             .forward_cancel_by_upstream_id(UpstreamId::Number(999))
             .await;
 
+        // Per best-effort semantics, this should succeed (silent drop)
         assert!(
-            result.is_err(),
-            "forward_cancel_by_upstream_id should return error for unknown ID"
-        );
-        let err = result.unwrap_err();
-        assert!(
-            err.to_string().contains("not found"),
-            "Error should mention not found: {}",
-            err
+            result.is_ok(),
+            "forward_cancel_by_upstream_id should silently drop for unknown ID"
         );
     }
 
