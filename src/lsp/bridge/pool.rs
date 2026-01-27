@@ -723,8 +723,9 @@ impl LanguageServerPool {
                 self.cancel_metrics.record_no_connection();
                 log::debug!(
                     target: "kakehashi::bridge::cancel",
-                    "Cancel dropped: no connection for server '{}' (expected if request completed)",
-                    server_name
+                    "Cancel dropped: no connection for server '{}' (upstream_id: {}, expected if request completed)",
+                    server_name,
+                    upstream_id
                 );
                 return Ok(());
             };
@@ -736,8 +737,9 @@ impl LanguageServerPool {
                 self.cancel_metrics.record_not_ready();
                 log::debug!(
                     target: "kakehashi::bridge::cancel",
-                    "Cancel dropped: connection not ready for server '{}' (state: {:?})",
+                    "Cancel dropped: connection not ready for server '{}' (upstream_id: {}, state: {:?})",
                     server_name,
+                    upstream_id,
                     handle.state()
                 );
                 return Ok(());

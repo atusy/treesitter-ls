@@ -47,6 +47,12 @@ pub(super) fn decide_connection_action(
 ) -> ConnectionAction {
     // Check for too many consecutive panics first
     if consecutive_panic_count >= MAX_CONSECUTIVE_PANICS {
+        log::error!(
+            target: "kakehashi::bridge::connection",
+            "Server disabled after {} consecutive handshake panics (max: {})",
+            consecutive_panic_count,
+            MAX_CONSECUTIVE_PANICS
+        );
         return ConnectionAction::FailFast(
             "bridge: server disabled after repeated handshake failures",
         );
