@@ -573,36 +573,85 @@ impl LanguageServerPool {
         // Insert into pool immediately so concurrent requests see Initializing state
         connections.insert(server_name.to_string(), Arc::clone(&handle));
 
-        // Release lock before async initialization
+        // Release lock before spawning handshake task
         drop(connections);
 
-        // Perform LSP handshake with timeout
+        // Spawn handshake as a SEPARATE TASK that survives caller cancellation.
+        // This is critical: if the handshake is awaited inline, cancelling the caller
+        // (e.g., via $/cancelRequest) drops the entire future chain including
+        // init_response_rx, causing the initialize response to be lost.
+        //
+        // By spawning and then awaiting the JoinHandle:
+        // - The handshake runs in a separate task
+        // - If this function's caller is cancelled, only the JoinHandle await is dropped
+        // - The spawned handshake task continues to completion
         let init_options = server_config.initialization_options.clone();
-        let init_result = tokio::time::timeout(
-            timeout,
-            perform_lsp_handshake(&handle, init_request_id, init_response_rx, init_options),
-        )
-        .await;
+        let handle_for_handshake = Arc::clone(&handle);
+        let server_name_for_log = server_name.to_string();
+        let handshake_task = tokio::spawn(async move {
+            let init_result = tokio::time::timeout(
+                timeout,
+                perform_lsp_handshake(
+                    &handle_for_handshake,
+                    init_request_id,
+                    init_response_rx,
+                    init_options,
+                ),
+            )
+            .await;
 
-        // Handle initialization result - transition state
-        match init_result {
-            Ok(Ok(())) => {
-                // Init succeeded - transition to Ready
-                handle.set_state(ConnectionState::Ready);
-                Ok(handle)
+            // Handle initialization result - transition state
+            match init_result {
+                Ok(Ok(())) => {
+                    // Init succeeded - transition to Ready
+                    log::info!(
+                        target: "kakehashi::bridge::init",
+                        "[{}] LSP handshake completed successfully",
+                        server_name_for_log
+                    );
+                    handle_for_handshake.set_state(ConnectionState::Ready);
+                    Ok(())
+                }
+                Ok(Err(e)) => {
+                    // Init failed with io::Error - transition to Failed
+                    let msg = e.to_string();
+                    log::error!(
+                        target: "kakehashi::bridge::init",
+                        "[{}] LSP handshake failed: {}",
+                        server_name_for_log,
+                        msg
+                    );
+                    handle_for_handshake.set_state(ConnectionState::Failed);
+                    Err(io::Error::other(format!("bridge: handshake failed: {}", msg)))
+                }
+                Err(_elapsed) => {
+                    // Timeout occurred - transition to Failed
+                    log::error!(
+                        target: "kakehashi::bridge::init",
+                        "[{}] LSP handshake timed out",
+                        server_name_for_log
+                    );
+                    handle_for_handshake.set_state(ConnectionState::Failed);
+                    Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "bridge: initialize timeout",
+                    ))
+                }
             }
-            Ok(Err(e)) => {
-                // Init failed with io::Error - transition to Failed
+        });
+
+        // Wait for handshake to complete. If this await is cancelled (e.g., due to
+        // $/cancelRequest), the spawned task continues running to completion.
+        match handshake_task.await {
+            Ok(Ok(())) => Ok(handle),
+            Ok(Err(e)) => Err(e),
+            Err(join_err) => {
+                // Task panicked - shouldn't happen but handle gracefully
                 handle.set_state(ConnectionState::Failed);
-                Err(e)
-            }
-            Err(_elapsed) => {
-                // Timeout occurred - transition to Failed
-                handle.set_state(ConnectionState::Failed);
-                Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "bridge: initialize timeout",
-                ))
+                Err(io::Error::other(format!(
+                    "bridge: handshake task panicked: {}",
+                    join_err
+                )))
             }
         }
     }
