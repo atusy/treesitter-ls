@@ -72,11 +72,12 @@ fn byte_to_utf16_col(line: &str, byte_col: usize) -> usize {
 ///
 /// # Arguments
 /// * `capture_name` - The original capture name from the tree-sitter query
-/// * `filetype` - The filetype of the document being processed  
+/// * `filetype` - The filetype of the document being processed
 /// * `capture_mappings` - The full capture mappings configuration
 ///
 /// # Returns
-/// The mapped capture name or the original if no mapping exists
+/// The mapped capture name, or empty string if the type is not in SemanticTokensLegend.
+/// Empty string causes the token to be filtered before deduplication.
 fn apply_capture_mapping(
     capture_name: &str,
     filetype: Option<&str>,
@@ -99,8 +100,16 @@ fn apply_capture_mapping(
         }
     }
 
-    // Return original if no mapping found
-    capture_name.to_string()
+    // No mapping found - check if the base type is in SemanticTokensLegend.
+    // If not, return empty string to filter the token before dedup.
+    // This prevents unknown captures (e.g., @spell) from blocking meaningful
+    // tokens at the same position during deduplication.
+    let base_type = capture_name.split('.').next().unwrap_or("");
+    if LEGEND_TYPES.iter().any(|t| t.as_str() == base_type) {
+        capture_name.to_string()
+    } else {
+        String::new()
+    }
 }
 
 /// Map capture names from tree-sitter queries to LSP semantic token types and modifiers
@@ -108,6 +117,8 @@ fn apply_capture_mapping(
 /// Capture names can be in the format "type.modifier1.modifier2" where:
 /// - The first part is the token type (e.g., "variable", "function")
 /// - Following parts are modifiers (e.g., "readonly", "defaultLibrary")
+///
+/// Unknown token types fall back to "variable". Unknown modifiers are ignored.
 fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
     let parts: Vec<&str> = capture_name.split('.').collect();
     let token_type_name = parts.first().copied().unwrap_or("variable");
@@ -115,7 +126,6 @@ fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
     let token_type_index = LEGEND_TYPES
         .iter()
         .position(|t| t.as_str() == token_type_name)
-        .or_else(|| LEGEND_TYPES.iter().position(|t| t.as_str() == "variable"))
         .unwrap_or(0) as u32;
 
     let mut modifiers_bitset = 0u32;
@@ -350,6 +360,7 @@ fn finalize_tokens(mut all_tokens: Vec<RawToken>) -> Option<SemanticTokensResult
     let mut last_start = 0usize;
 
     for (line, start, length, _capture_index, mapped_name) in all_tokens {
+        // Note: Empty mapped_name tokens already filtered in retain() above
         let (token_type, token_modifiers_bitset) =
             map_capture_to_token_type_and_modifiers(&mapped_name);
 
@@ -1065,7 +1076,12 @@ mod tests {
         assert_eq!(map_capture_to_token_type_and_modifiers("keyword"), (1, 0));
         assert_eq!(map_capture_to_token_type_and_modifiers("function"), (14, 0));
         assert_eq!(map_capture_to_token_type_and_modifiers("variable"), (17, 0));
-        assert_eq!(map_capture_to_token_type_and_modifiers("unknown"), (17, 0)); // Should default to variable
+
+        // Unknown types fall back to index 0 (comment)
+        // Note: These should be filtered earlier by apply_capture_mapping returning ""
+        assert_eq!(map_capture_to_token_type_and_modifiers("unknown"), (0, 0));
+        assert_eq!(map_capture_to_token_type_and_modifiers("spell"), (0, 0));
+        assert_eq!(map_capture_to_token_type_and_modifiers("markup"), (0, 0));
 
         // Test with single modifier
         let (_, modifiers) = map_capture_to_token_type_and_modifiers("variable.readonly");
