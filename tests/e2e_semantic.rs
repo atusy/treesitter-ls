@@ -538,11 +538,10 @@ fn test_semantic_tokens_markdown_inline_bold() {
     // The capture @markup.strong should be mapped (by default it's suppressed with "")
     let line2_tokens: Vec<_> = tokens.iter().filter(|t| t.line == 2).collect();
 
-    // We should have SOME tokens on line 2 if markdown_inline is working
+    // We must have tokens on line 2 for markdown_inline injection to be working
     assert!(
-        !line2_tokens.is_empty() || !tokens.is_empty(),
-        "Should have tokens in the document. If markdown_inline is working, \
-         we expect tokens on line 2 for **bold text**. \
+        !line2_tokens.is_empty(),
+        "Should have tokens on line 2 for **bold text** from markdown_inline injection. \
          All tokens: {:?}",
         token_info
     );
