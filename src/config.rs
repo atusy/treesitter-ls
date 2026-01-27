@@ -1729,7 +1729,7 @@ mod tests {
             "python".to_string(),
             LanguageConfig {
                 // parser: None - Should inherit from _
-                // highlights: None - Should inherit from _
+                // queries: None - Should inherit from _
                 bridge: Some(python_bridge),
                 ..Default::default()
             },
