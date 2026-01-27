@@ -339,29 +339,37 @@ impl LanguageCoordinator {
 
         // 2. Try heuristic detection: token, first line (shebang, mode line), filename patterns
         //    Uses syntect's Sublime Text syntax definitions for comprehensive coverage.
-        let heuristic_candidates = [
-            token.and_then(super::heuristic::detect_from_token),
-            super::heuristic::detect_from_first_line(content),
-            super::heuristic::detect_from_filename(path),
-        ];
-        for candidate in heuristic_candidates.into_iter().flatten() {
-            if let Some(result) = self.try_with_alias_fallback(&candidate) {
-                log::debug!(
-                    target: "kakehashi::language_detection",
-                    "Detected '{}' via heuristic '{}' for path='{}'",
-                    result,
-                    candidate,
-                    path
-                );
-                return Some(result);
-            } else {
-                log::debug!(
-                    target: "kakehashi::language_detection",
-                    "Heuristic detected '{}' but no parser available, continuing fallback",
-                    candidate
-                );
-            }
+        //    Uses helper macro to short-circuit on first successful match.
+        macro_rules! try_heuristic {
+            ($candidate:expr, $method:expr) => {
+                if let Some(candidate) = $candidate {
+                    if let Some(result) = self.try_with_alias_fallback(&candidate) {
+                        log::debug!(
+                            target: "kakehashi::language_detection",
+                            "Detected '{}' via heuristic '{}' ({}) for path='{}'",
+                            result,
+                            candidate,
+                            $method,
+                            path
+                        );
+                        return Some(result);
+                    } else {
+                        log::debug!(
+                            target: "kakehashi::language_detection",
+                            "Heuristic detected '{}' ({}) but no parser available, continuing fallback",
+                            candidate,
+                            $method
+                        );
+                    }
+                }
+            };
         }
+        try_heuristic!(token.and_then(super::heuristic::detect_from_token), "token");
+        try_heuristic!(
+            super::heuristic::detect_from_first_line(content),
+            "first-line"
+        );
+        try_heuristic!(super::heuristic::detect_from_filename(path), "filename");
 
         // 3. Try extension-based detection (with alias fallback)
         if let Some(ext_lang) = super::extension::detect_from_extension(path) {
