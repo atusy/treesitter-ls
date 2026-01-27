@@ -61,30 +61,6 @@ queries = [
 | `./python-highlights.scm`          | (skipped)       |
 | `./custom-queries.scm`             | (skipped)       |
 
-**Relationship with legacy fields:**
-
-The `queries` field coexists with the legacy `highlights`, `locals`, and `injections` fields during a transition period:
-
-- **Legacy format** (still supported):
-  ```toml
-  [languages.python]
-  highlights = ["./highlights.scm"]
-  locals = ["./locals.scm"]
-  injections = ["./injections.scm"]
-  ```
-
-- **New unified format**:
-  ```toml
-  [languages.python]
-  queries = [
-      { path = "./highlights.scm" },
-      { path = "./locals.scm", kind = "locals" },
-      { path = "./injections.scm", kind = "injections" }
-  ]
-  ```
-
-- **Merge behavior**: When both formats are present, the `queries` field takes complete precedence and legacy fields are ignored (see `src/coordinator.rs:388-395`)
-
 ### Configuration Sources (Lowest to Highest Precedence)
 
 1. **Programmed defaults** (lowest precedence)
@@ -131,7 +107,7 @@ This design allows adding new layers (e.g., workspace-level config) without chan
 **Languages HashMap** (`languages`):
 - **Deep merge at language level**: Keys from later sources override same keys from earlier sources
 - **Deep merge within each language**: Individual fields (`parser`, `queries`, `bridge`, etc.) are merged
-- The `queries` array is **replaced entirely**, not concatenated (same for legacy `highlights`, `locals`, `injections` fields)
+- The `queries` array is **replaced entirely**, not concatenated
 - Example:
   ```toml
   # user config
@@ -262,7 +238,6 @@ fn load_configuration(cli_config_path: Option<&Path>) -> Option<TreeSitterSettin
 - **Arrays replace, not merge**: `queries` arrays are replaced entirely, not concatenated; overriding one query type requires repeating all
 - **No "unset" mechanism**: Cannot explicitly remove a field inherited from earlier layers (would need `null` support)
 - **File I/O at startup**: Reading up to two config files adds latency (minimal in practice)
-- **Transition period**: Both `queries` and legacy fields (`highlights`, `locals`, `injections`) must be supported during migration
 - **Infrastructure-integration gap**: Phases 1-3 (Sprints 118-120) built infrastructure (schema, merging, user config loading) but delivered ZERO user value until Sprint 124 wired APIs into application. Lesson: infrastructure sprints must be followed by integration sprints within 1-2 sprints to realize value.
 
 ### Neutral
@@ -270,7 +245,6 @@ fn load_configuration(cli_config_path: Option<&Path>) -> Option<TreeSitterSettin
 - **TOML format**: Consistent with project config; JSON would work but TOML is more readable for humans
 - **XDG compliance**: Standard for Unix tools; Windows path handling needs separate consideration
 - **Future extensibility**: Additional layers (e.g., workspace-level) could be added with same merge rules
-- **Deprecation warnings**: `log_deprecation_warnings()` will fire for all layers that use deprecated fields
 
 ## Implementation Phases
 
@@ -281,8 +255,6 @@ fn load_configuration(cli_config_path: Option<&Path>) -> Option<TreeSitterSettin
 - [x] Add `queries: Option<Vec<QueryItem>>` field to `LanguageConfig`
 - [x] Implement `QueryKind` enum (`Highlights`, `Locals`, `Injections`) with default `Highlights`
 - [x] Implement type inference from exact filename (`highlights.scm`, `locals.scm`, `injections.scm`)
-- [x] Normalize `queries` + legacy fields into unified internal representation
-- [x] Emit deprecation warning when legacy `highlights`/`locals`/`injections` fields are used
 
 ### Phase 2: Core Merging (Completed - Sprint 119, PBI-150)
 - [x] Implement `merge_all()` function for layered config merging
@@ -330,48 +302,17 @@ fn load_configuration(cli_config_path: Option<&Path>) -> Option<TreeSitterSettin
 - Con: Not useful for complex settings like `languages` config
 - Decision: Deferred; could be added later for specific scalar settings like `autoInstall`
 
-### 5. Keep separate `highlights`, `locals`, `injections` fields (current implementation)
+### 5. Keep separate `highlights`, `locals`, `injections` fields
 - Pro: Explicit, no type inference needed
 - Pro: No new data structure to learn
 - Con: Verbose configuration—three separate arrays to manage
 - Con: Adding new query types (e.g., `folds`, `indents`) requires schema changes
-- Decision: **Introduce unified `queries` field** with type inference; legacy fields remain for backward compatibility during transition
+- Decision: **Rejected**; use unified `queries` field with type inference instead
 
 ### 6. Merge queries per-kind instead of replacing entire array
 - Pro: Override only highlights while inheriting locals from user config
 - Con: Significantly more complex merge logic
-- Con: Unintuitive when mixing `queries` field with legacy fields across layers
 - Decision: Keep simple array replacement; users can use ADR-0011 wildcard inheritance for shared queries
-
-## Migration Guide
-
-### From legacy fields to `queries`
-
-**Before (legacy):**
-```toml
-[languages.python]
-highlights = ["/path/to/highlights.scm", "/path/to/custom.scm"]
-locals = ["/path/to/locals.scm"]
-injections = ["/path/to/injections.scm"]
-```
-
-**After (unified):**
-```toml
-[languages.python]
-queries = [
-    { path = "/path/to/highlights.scm" },
-    { path = "/path/to/custom.scm" },           # kind inferred as "highlights"
-    { path = "/path/to/locals.scm", kind = "locals" },
-    { path = "/path/to/injections.scm", kind = "injections" }
-]
-```
-
-**Migration steps:**
-1. Replace each legacy array with `queries` entries
-2. Add explicit `kind` for `locals` and `injections` (highlights is the default)
-3. If filenames are exactly `highlights.scm`, `locals.scm`, or `injections.scm`, `kind` can be omitted
-4. Test configuration with `kakehashi --check-config` (future feature)
-5. Remove legacy fields once satisfied
 
 ## Related Decisions
 
