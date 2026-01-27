@@ -293,14 +293,13 @@ impl LanguageCoordinator {
     ///
     /// Returns the first language for which a parser is available.
     ///
-    /// Priority order (ADR-0005):
-    /// Each detection method follows: detect → alias resolution → availability check
+    /// Priority order (ADR-0005), two stages:
+    /// Each stage follows: detect → alias resolution → availability check
     /// 1. LSP languageId (if not "plaintext")
     /// 2. Heuristic detection:
-    ///    - Token matching (for injection identifiers like "py", "js")
-    ///    - First line (shebang, mode line)
-    ///    - Filename patterns (Makefile, Dockerfile)
-    /// 3. Extension-based detection from path
+    ///    - Explicit token (for injections, e.g., "py", "js")
+    ///    - Path-derived token (extension/basename via `extract_token_from_path`)
+    ///    - First-line content (shebang, mode line, Emacs markers)
     ///
     /// Usage:
     /// - Host document: `detect_language(path, content, None, language_id)`
