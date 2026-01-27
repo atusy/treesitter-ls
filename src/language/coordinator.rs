@@ -98,13 +98,22 @@ impl LanguageCoordinator {
         for (lang_name, config) in languages {
             if let Some(aliases) = &config.aliases {
                 for alias in aliases {
-                    alias_map.insert(alias.clone(), lang_name.clone());
-                    log::debug!(
-                        target: "kakehashi::language_detection",
-                        "Registered alias '{}' → '{}'",
-                        alias,
-                        lang_name
-                    );
+                    if let Some(previous) = alias_map.insert(alias.clone(), lang_name.clone()) {
+                        log::warn!(
+                            target: "kakehashi::language_detection",
+                            "Alias '{}' collision: was '{}', now '{}' (last-wins)",
+                            alias,
+                            previous,
+                            lang_name
+                        );
+                    } else {
+                        log::debug!(
+                            target: "kakehashi::language_detection",
+                            "Registered alias '{}' → '{}'",
+                            alias,
+                            lang_name
+                        );
+                    }
                 }
             }
         }
