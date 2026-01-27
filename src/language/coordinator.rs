@@ -223,28 +223,70 @@ impl LanguageCoordinator {
         language_id: Option<&str>,
         content: &str,
     ) -> Option<String> {
+        log::debug!(
+            target: "kakehashi::language_detection",
+            "Starting detection for path='{}', language_id={:?}",
+            path,
+            language_id
+        );
+
         // 1. Try languageId if parser is available (and not "plaintext")
         if let Some(lang_id) = language_id
             && lang_id != "plaintext"
             && self.has_parser_available(lang_id)
         {
+            log::debug!(
+                target: "kakehashi::language_detection",
+                "Detected '{}' via languageId for path='{}'",
+                lang_id,
+                path
+            );
             return Some(lang_id.to_string());
         }
 
         // 2. Try shebang detection (lazy I/O: only runs if step 1 failed)
-        if let Some(shebang_lang) = super::shebang::detect_from_shebang(content)
-            && self.has_parser_available(&shebang_lang)
-        {
-            return Some(shebang_lang);
+        if let Some(shebang_lang) = super::shebang::detect_from_shebang(content) {
+            if self.has_parser_available(&shebang_lang) {
+                log::debug!(
+                    target: "kakehashi::language_detection",
+                    "Detected '{}' via shebang for path='{}'",
+                    shebang_lang,
+                    path
+                );
+                return Some(shebang_lang);
+            } else {
+                log::debug!(
+                    target: "kakehashi::language_detection",
+                    "Shebang detected '{}' but no parser available, continuing fallback",
+                    shebang_lang
+                );
+            }
         }
 
         // 3. Fall back to extension-based detection (ADR-0005: strip dot, use as parser name)
-        if let Some(ext_lang) = super::extension::detect_from_extension(path)
-            && self.has_parser_available(&ext_lang)
-        {
-            return Some(ext_lang);
+        if let Some(ext_lang) = super::extension::detect_from_extension(path) {
+            if self.has_parser_available(&ext_lang) {
+                log::debug!(
+                    target: "kakehashi::language_detection",
+                    "Detected '{}' via extension for path='{}'",
+                    ext_lang,
+                    path
+                );
+                return Some(ext_lang);
+            } else {
+                log::debug!(
+                    target: "kakehashi::language_detection",
+                    "Extension detected '{}' but no parser available",
+                    ext_lang
+                );
+            }
         }
 
+        log::debug!(
+            target: "kakehashi::language_detection",
+            "No language detected for path='{}'",
+            path
+        );
         None
     }
 
@@ -263,9 +305,20 @@ impl LanguageCoordinator {
         &self,
         identifier: &str,
     ) -> Option<(String, LanguageLoadResult)> {
+        log::debug!(
+            target: "kakehashi::language_detection",
+            "Resolving injection language for identifier='{}'",
+            identifier
+        );
+
         // 1. Try direct identifier first
         let direct_result = self.ensure_language_loaded(identifier);
         if direct_result.success {
+            log::debug!(
+                target: "kakehashi::language_detection",
+                "Resolved injection '{}' via direct identifier",
+                identifier
+            );
             return Some((identifier.to_string(), direct_result));
         }
 
@@ -273,10 +326,21 @@ impl LanguageCoordinator {
         if let Some(normalized) = super::alias::normalize_alias(identifier) {
             let alias_result = self.ensure_language_loaded(&normalized);
             if alias_result.success {
+                log::debug!(
+                    target: "kakehashi::language_detection",
+                    "Resolved injection '{}' -> '{}' via alias normalization",
+                    identifier,
+                    normalized
+                );
                 return Some((normalized, alias_result));
             }
         }
 
+        log::debug!(
+            target: "kakehashi::language_detection",
+            "Failed to resolve injection language for identifier='{}'",
+            identifier
+        );
         None
     }
 
