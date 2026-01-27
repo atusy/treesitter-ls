@@ -171,6 +171,10 @@ pub struct LanguageSettings {
     /// - Some({}): Bridge NOTHING (disable bridging for this host)
     /// - Some({ python: { enabled: true } }): Bridge only enabled languages
     pub bridge: Option<HashMap<String, BridgeLanguageConfig>>,
+    /// Alternative languageId values that should use this parser.
+    /// E.g., `aliases = ["rmd", "qmd"]` for markdown allows editors sending
+    /// "rmd" or "qmd" as languageId to use the markdown parser.
+    pub aliases: Option<Vec<String>>,
 }
 
 impl LanguageSettings {
@@ -179,6 +183,7 @@ impl LanguageSettings {
             parser,
             queries,
             bridge: None,
+            aliases: None,
         }
     }
 
@@ -192,6 +197,7 @@ impl LanguageSettings {
             parser,
             queries,
             bridge,
+            aliases: None,
         }
     }
 

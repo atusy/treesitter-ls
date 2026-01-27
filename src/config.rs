@@ -135,6 +135,8 @@ pub(crate) fn resolve_language_settings_with_wildcard(
                 queries: s.queries.clone().or_else(|| w.queries.clone()),
                 // Deep merge bridge HashMaps: wildcard + specific
                 bridge: merge_bridge_maps(&w.bridge, &s.bridge),
+                // Aliases are not inherited from wildcard - they're specific to each language
+                aliases: s.aliases.clone(),
             })
         }
         (Some(w), None) => Some(w.clone()),
@@ -242,7 +244,12 @@ impl From<&LanguageConfig> for LanguageSettings {
             None
         };
 
-        LanguageSettings::with_bridge(config.library.clone(), queries, config.bridge.clone())
+        LanguageSettings {
+            parser: config.library.clone(),
+            queries,
+            bridge: config.bridge.clone(),
+            aliases: config.aliases.clone(),
+        }
     }
 }
 
@@ -296,7 +303,7 @@ impl From<&LanguageSettings> for LanguageConfig {
                 Some(injections)
             },
             bridge: settings.bridge.clone(),
-            ..Default::default()
+            aliases: settings.aliases.clone(),
         }
     }
 }
