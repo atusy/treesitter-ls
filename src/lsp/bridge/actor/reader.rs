@@ -501,25 +501,13 @@ fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_pref
     // Check if it's a response (has "id" field)
     if let Some(id) = message.get("id").cloned() {
         // It's a response - route to waiter
-        debug!(
-            target: "kakehashi::bridge::reader",
-            "{}Routing response id={:?} via router={:p}",
-            lang_prefix,
-            id,
-            router as *const _
-        );
         match router.route(message) {
             RouteResult::Delivered => {
-                debug!(
-                    target: "kakehashi::bridge::reader",
-                    "{}Response delivered successfully",
-                    lang_prefix
-                );
+                // Response delivered successfully - no logging needed for normal case
             }
             RouteResult::ReceiverDropped => {
-                // This is the key case: ID was found but receiver was dropped.
-                // This happens when the requester (e.g., handshake future) was cancelled
-                // before the response arrived.
+                // ID was found but receiver was dropped (requester cancelled).
+                // This shouldn't happen after the handshake spawn fix, but log if it does.
                 warn!(
                     target: "kakehashi::bridge::reader",
                     "{}Response for id={} arrived but receiver was dropped (requester cancelled)",
@@ -528,6 +516,7 @@ fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_pref
                 );
             }
             RouteResult::NotFound => {
+                // Unknown request ID - could be a late response or protocol mismatch
                 debug!(
                     target: "kakehashi::bridge::reader",
                     "{}Response for unknown request id={}, dropping",
@@ -536,17 +525,8 @@ fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_pref
                 );
             }
         }
-    } else {
-        // It's a notification - log and skip
-        if let Some(method) = message.get("method").and_then(|v| v.as_str()) {
-            debug!(
-                target: "kakehashi::bridge::reader",
-                "{}Received notification: {}, skipping",
-                lang_prefix,
-                method
-            );
-        }
     }
+    // Notifications are silently ignored (no logging needed)
 }
 
 #[cfg(test)]

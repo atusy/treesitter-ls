@@ -533,23 +533,9 @@ impl LanguageServerPool {
         // respond before register_request() is called, causing the response to be
         // dropped as "unknown request ID".
         let init_request_id = super::protocol::RequestId::new(1);
-        log::debug!(
-            target: "kakehashi::bridge::init",
-            "[{}] Pre-registering init request ID={} (router={:p})",
-            server_name,
-            init_request_id.as_i64(),
-            Arc::as_ptr(&router)
-        );
         let init_response_rx = router
             .register(init_request_id)
             .expect("fresh router cannot have duplicate IDs");
-        log::debug!(
-            target: "kakehashi::bridge::init",
-            "[{}] Init request ID={} registered, pending_count={}",
-            server_name,
-            init_request_id.as_i64(),
-            router.pending_count()
-        );
 
         // Now spawn reader task with liveness timeout - it can route the initialize response immediately
         // Liveness timeout is configured via LivenessTimeout::default() (60s per ADR-0018 Tier 2)

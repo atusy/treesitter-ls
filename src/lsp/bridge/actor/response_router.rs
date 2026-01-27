@@ -117,23 +117,10 @@ impl ResponseRouter {
 
         // Prevent duplicate registration
         if state.pending.contains_key(&downstream_id) {
-            log::debug!(
-                target: "kakehashi::bridge::router",
-                "register_with_upstream: duplicate ID={}, rejecting",
-                downstream_id.as_i64()
-            );
             return None;
         }
 
         state.pending.insert(downstream_id, tx);
-
-        // Diagnostic logging: confirm registration succeeded
-        log::debug!(
-            target: "kakehashi::bridge::router",
-            "register_with_upstream: registered ID={}, pending_count={}",
-            downstream_id.as_i64(),
-            state.pending.len()
-        );
 
         // Store bidirectional mapping if upstream_id is provided
         if let Some(upstream) = upstream_id {
@@ -175,15 +162,6 @@ impl ResponseRouter {
         };
 
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-
-        // Diagnostic logging: show what IDs are pending when routing
-        log::debug!(
-            target: "kakehashi::bridge::router",
-            "route() called: response_id={}, pending_ids={:?}",
-            id.as_i64(),
-            state.pending.keys().map(|k| k.as_i64()).collect::<Vec<_>>()
-        );
-
         let tx = state.pending.remove(&id);
 
         // Clean up bidirectional cancel map entries in O(1)
