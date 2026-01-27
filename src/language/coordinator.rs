@@ -135,6 +135,24 @@ impl LanguageCoordinator {
         alias_map.get(language_id).cloned()
     }
 
+    /// ADR-0005: Try candidate directly, then with config-based alias.
+    ///
+    /// Returns the language name if a parser is available (either directly or via alias).
+    /// This is applied as a sub-step after each detection method.
+    fn try_with_alias_fallback(&self, candidate: &str) -> Option<String> {
+        // Direct match
+        if self.has_parser_available(candidate) {
+            return Some(candidate.to_string());
+        }
+        // Config-based alias
+        if let Some(canonical) = self.resolve_alias(candidate)
+            && self.has_parser_available(&canonical)
+        {
+            return Some(canonical);
+        }
+        None
+    }
+
     /// Try to dynamically load a language by ID from configured search paths
     ///
     /// Visibility: Internal only - called by ensure_language_loaded.
@@ -275,11 +293,11 @@ impl LanguageCoordinator {
     ///
     /// Returns the first language for which a parser is available.
     ///
-    /// Priority order:
-    /// 1. languageId directly (if parser available and not "plaintext")
-    /// 2. languageId via configured alias (if alias maps to language with parser)
-    /// 3. Shebang detection from content
-    /// 4. Extension-based detection from path
+    /// Priority order (ADR-0005):
+    /// Each detection method follows: detect → alias resolution → availability check
+    /// 1. LSP languageId (if not "plaintext")
+    /// 2. Shebang detection from content
+    /// 3. Extension-based detection from path
     ///
     /// Visibility: Public - called by LSP layer (lsp_impl) for document
     /// language detection during text_document/didOpen.
@@ -296,53 +314,32 @@ impl LanguageCoordinator {
             language_id
         );
 
-        // 1. Try languageId directly if parser is available (and not "plaintext")
+        // 1. Try languageId (with alias fallback)
         if let Some(lang_id) = language_id
             && lang_id != "plaintext"
+            && let Some(result) = self.try_with_alias_fallback(lang_id)
         {
-            if self.has_parser_available(lang_id) {
-                log::debug!(
-                    target: "kakehashi::language_detection",
-                    "Detected '{}' via languageId for path='{}'",
-                    lang_id,
-                    path
-                );
-                return Some(lang_id.to_string());
-            }
-
-            // 2. Try configured alias resolution (e.g., "rmd" → "markdown")
-            if let Some(canonical) = self.resolve_alias(lang_id) {
-                if self.has_parser_available(&canonical) {
-                    log::debug!(
-                        target: "kakehashi::language_detection",
-                        "Detected '{}' via alias '{}' → '{}' for path='{}'",
-                        canonical,
-                        lang_id,
-                        canonical,
-                        path
-                    );
-                    return Some(canonical);
-                } else {
-                    log::debug!(
-                        target: "kakehashi::language_detection",
-                        "Alias '{}' → '{}' found but no parser available",
-                        lang_id,
-                        canonical
-                    );
-                }
-            }
+            log::debug!(
+                target: "kakehashi::language_detection",
+                "Detected '{}' via languageId '{}' for path='{}'",
+                result,
+                lang_id,
+                path
+            );
+            return Some(result);
         }
 
-        // 3. Try shebang detection (lazy I/O: only runs if above steps failed)
+        // 2. Try shebang detection (with alias fallback)
         if let Some(shebang_lang) = super::shebang::detect_from_shebang(content) {
-            if self.has_parser_available(&shebang_lang) {
+            if let Some(result) = self.try_with_alias_fallback(&shebang_lang) {
                 log::debug!(
                     target: "kakehashi::language_detection",
-                    "Detected '{}' via shebang for path='{}'",
+                    "Detected '{}' via shebang '{}' for path='{}'",
+                    result,
                     shebang_lang,
                     path
                 );
-                return Some(shebang_lang);
+                return Some(result);
             } else {
                 log::debug!(
                     target: "kakehashi::language_detection",
@@ -352,16 +349,17 @@ impl LanguageCoordinator {
             }
         }
 
-        // 4. Fall back to extension-based detection (ADR-0005: strip dot, use as parser name)
+        // 3. Try extension-based detection (with alias fallback)
         if let Some(ext_lang) = super::extension::detect_from_extension(path) {
-            if self.has_parser_available(&ext_lang) {
+            if let Some(result) = self.try_with_alias_fallback(&ext_lang) {
                 log::debug!(
                     target: "kakehashi::language_detection",
-                    "Detected '{}' via extension for path='{}'",
+                    "Detected '{}' via extension '{}' for path='{}'",
+                    result,
                     ext_lang,
                     path
                 );
-                return Some(ext_lang);
+                return Some(result);
             } else {
                 log::debug!(
                     target: "kakehashi::language_detection",
@@ -1325,6 +1323,38 @@ mod tests {
         assert_eq!(
             coordinator.resolve_alias("jsx"),
             Some("javascript".to_string())
+        );
+    }
+
+    // ADR-0005: Alias resolution as sub-step for extension detection
+
+    #[test]
+    fn test_extension_detection_with_alias_fallback() {
+        // When extension is "jsx" and alias maps "jsx" → "javascript",
+        // detect_language should return "javascript"
+        let coordinator = LanguageCoordinator::new();
+
+        // Register "javascript" parser (using rust as a stand-in)
+        coordinator.register_language_for_test("javascript", tree_sitter_rust::LANGUAGE.into());
+
+        // Build alias map: "jsx" → "javascript"
+        let mut languages = HashMap::new();
+        languages.insert(
+            "javascript".to_string(),
+            crate::config::settings::LanguageConfig {
+                aliases: Some(vec!["jsx".to_string(), "mjs".to_string()]),
+                ..Default::default()
+            },
+        );
+        coordinator.build_alias_map(&languages);
+
+        // No languageId, no shebang, extension = jsx
+        let result = coordinator.detect_language("/path/to/component.jsx", None, "");
+
+        assert_eq!(
+            result,
+            Some("javascript".to_string()),
+            "jsx extension should resolve to javascript via alias"
         );
     }
 }
