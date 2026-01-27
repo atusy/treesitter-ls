@@ -72,35 +72,46 @@ fn byte_to_utf16_col(line: &str, byte_col: usize) -> usize {
 ///
 /// # Arguments
 /// * `capture_name` - The original capture name from the tree-sitter query
-/// * `filetype` - The filetype of the document being processed  
+/// * `filetype` - The filetype of the document being processed
 /// * `capture_mappings` - The full capture mappings configuration
 ///
 /// # Returns
-/// The mapped capture name or the original if no mapping exists
+/// `Some(mapped_name)` for known token types, `None` for unknown types.
+/// Unknown types (not in LEGEND_TYPES) should not produce semantic tokens.
 fn apply_capture_mapping(
     capture_name: &str,
     filetype: Option<&str>,
     capture_mappings: Option<&CaptureMappings>,
-) -> String {
+) -> Option<String> {
     if let Some(mappings) = capture_mappings {
         // Try filetype-specific mapping first
         if let Some(ft) = filetype
             && let Some(lang_mappings) = mappings.get(ft)
             && let Some(mapped) = lang_mappings.highlights.get(capture_name)
         {
-            return mapped.clone();
+            // Explicit mapping to empty string means "filter this capture"
+            return (!mapped.is_empty()).then(|| mapped.clone());
         }
 
         // Try wildcard mapping
         if let Some(wildcard_mappings) = mappings.get(WILDCARD_KEY)
             && let Some(mapped) = wildcard_mappings.highlights.get(capture_name)
         {
-            return mapped.clone();
+            // Explicit mapping to empty string means "filter this capture"
+            return (!mapped.is_empty()).then(|| mapped.clone());
         }
     }
 
-    // Return original if no mapping found
-    capture_name.to_string()
+    // No mapping found - check if the base type is in SemanticTokensLegend.
+    // If not, return None to skip adding to all_tokens.
+    // This prevents unknown captures (e.g., @spell) from blocking meaningful
+    // tokens at the same position during deduplication.
+    let base_type = capture_name.split('.').next().unwrap_or("");
+    if LEGEND_TYPES.iter().any(|t| t.as_str() == base_type) {
+        Some(capture_name.to_string())
+    } else {
+        None
+    }
 }
 
 /// Map capture names from tree-sitter queries to LSP semantic token types and modifiers
@@ -108,15 +119,16 @@ fn apply_capture_mapping(
 /// Capture names can be in the format "type.modifier1.modifier2" where:
 /// - The first part is the token type (e.g., "variable", "function")
 /// - Following parts are modifiers (e.g., "readonly", "defaultLibrary")
-fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
+///
+/// Returns `None` for unknown token types (not in LEGEND_TYPES).
+/// Unknown modifiers are ignored.
+fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> Option<(u32, u32)> {
     let parts: Vec<&str> = capture_name.split('.').collect();
-    let token_type_name = parts.first().copied().unwrap_or("variable");
+    let token_type_name = parts.first().copied().filter(|s| !s.is_empty())?;
 
     let token_type_index = LEGEND_TYPES
         .iter()
-        .position(|t| t.as_str() == token_type_name)
-        .or_else(|| LEGEND_TYPES.iter().position(|t| t.as_str() == "variable"))
-        .unwrap_or(0) as u32;
+        .position(|t| t.as_str() == token_type_name)? as u32;
 
     let mut modifiers_bitset = 0u32;
     for modifier_name in &parts[1..] {
@@ -128,7 +140,7 @@ fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
         }
     }
 
-    (token_type_index, modifiers_bitset)
+    Some((token_type_index, modifiers_bitset))
 }
 
 /// Maximum recursion depth for nested injections to prevent stack overflow
@@ -222,15 +234,18 @@ fn collect_host_tokens(
                 let end_utf16 = byte_to_utf16_col(host_line_text, end_byte_offset_in_host);
 
                 let capture_name = &query.capture_names()[c.index as usize];
-                let mapped_name = apply_capture_mapping(capture_name, filetype, capture_mappings);
-
-                all_tokens.push((
-                    host_line,
-                    start_utf16,
-                    end_utf16 - start_utf16,
-                    c.index,
-                    mapped_name,
-                ));
+                // Skip unknown captures (None) - don't add them to all_tokens
+                if let Some(mapped_name) =
+                    apply_capture_mapping(capture_name, filetype, capture_mappings)
+                {
+                    all_tokens.push((
+                        host_line,
+                        start_utf16,
+                        end_utf16 - start_utf16,
+                        c.index,
+                        mapped_name,
+                    ));
+                }
             }
         }
     }
@@ -328,11 +343,9 @@ fn collect_injection_contexts<'a>(
 /// 3. Deduplicates tokens at same position
 /// 4. Delta-encodes for LSP protocol
 fn finalize_tokens(mut all_tokens: Vec<RawToken>) -> Option<SemanticTokensResult> {
-    // Filter out zero-length tokens and empty-mapped tokens BEFORE dedup.
-    // Empty-mapped tokens (e.g., @spell, @nospell, @conceal) must be filtered first
-    // so they don't take the position slot during dedup and block meaningful tokens
-    // from injected languages (e.g., markdown's @spell vs markdown_inline's @markup.strong).
-    all_tokens.retain(|(_, _, length, _, mapped_name)| *length > 0 && !mapped_name.is_empty());
+    // Filter out zero-length tokens BEFORE dedup.
+    // Unknown captures are already filtered at collection time (apply_capture_mapping returns None).
+    all_tokens.retain(|(_, _, length, _, _)| *length > 0);
 
     // Sort by position
     all_tokens.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
@@ -350,8 +363,11 @@ fn finalize_tokens(mut all_tokens: Vec<RawToken>) -> Option<SemanticTokensResult
     let mut last_start = 0usize;
 
     for (line, start, length, _capture_index, mapped_name) in all_tokens {
+        // Unknown types are already filtered at collection time (apply_capture_mapping returns None),
+        // so map_capture_to_token_type_and_modifiers should always return Some here.
         let (token_type, token_modifiers_bitset) =
-            map_capture_to_token_type_and_modifiers(&mapped_name);
+            map_capture_to_token_type_and_modifiers(&mapped_name)
+                .expect("all tokens should have known types after apply_capture_mapping filtering");
 
         let delta_line = line - last_line;
         let delta_start = if delta_line == 0 {
@@ -1061,29 +1077,62 @@ mod tests {
     #[test]
     fn test_map_capture_to_token_type_and_modifiers() {
         // Test basic token types without modifiers
-        assert_eq!(map_capture_to_token_type_and_modifiers("comment"), (0, 0));
-        assert_eq!(map_capture_to_token_type_and_modifiers("keyword"), (1, 0));
-        assert_eq!(map_capture_to_token_type_and_modifiers("function"), (14, 0));
-        assert_eq!(map_capture_to_token_type_and_modifiers("variable"), (17, 0));
-        assert_eq!(map_capture_to_token_type_and_modifiers("unknown"), (17, 0)); // Should default to variable
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers("comment"),
+            Some((0, 0))
+        );
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers("keyword"),
+            Some((1, 0))
+        );
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers("function"),
+            Some((14, 0))
+        );
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers("variable"),
+            Some((17, 0))
+        );
+
+        // Unknown types return None - they should not produce semantic tokens
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers("unknown"),
+            None,
+            "'unknown' is not in LEGEND_TYPES"
+        );
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers("spell"),
+            None,
+            "'spell' is a tree-sitter hint, not a semantic token type"
+        );
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers("markup"),
+            None,
+            "'markup' is not in LEGEND_TYPES"
+        );
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers(""),
+            None,
+            "empty string should return None"
+        );
 
         // Test with single modifier
-        let (_, modifiers) = map_capture_to_token_type_and_modifiers("variable.readonly");
+        let (_, modifiers) = map_capture_to_token_type_and_modifiers("variable.readonly").unwrap();
         assert_eq!(modifiers & (1 << 2), 1 << 2); // readonly is at index 2
 
-        let (_, modifiers) = map_capture_to_token_type_and_modifiers("function.async");
+        let (_, modifiers) = map_capture_to_token_type_and_modifiers("function.async").unwrap();
         assert_eq!(modifiers & (1 << 6), 1 << 6); // async is at index 6
 
         // Test with multiple modifiers
         let (token_type, modifiers) =
-            map_capture_to_token_type_and_modifiers("variable.readonly.defaultLibrary");
+            map_capture_to_token_type_and_modifiers("variable.readonly.defaultLibrary").unwrap();
         assert_eq!(token_type, 17); // variable
         assert_eq!(modifiers & (1 << 2), 1 << 2); // readonly
         assert_eq!(modifiers & (1 << 9), 1 << 9); // defaultLibrary
 
         // Test unknown modifiers are ignored
         let (token_type, modifiers) =
-            map_capture_to_token_type_and_modifiers("function.unknownModifier.async");
+            map_capture_to_token_type_and_modifiers("function.unknownModifier.async").unwrap();
         assert_eq!(token_type, 14); // function
         assert_eq!(modifiers & (1 << 6), 1 << 6); // async should still be set
     }
@@ -2200,22 +2249,73 @@ let z = 42"#;
         // Test: "variable" should be inherited from wildcard for "rust"
         let result = apply_capture_mapping("variable", Some("rust"), Some(&mappings));
         assert_eq!(
-            result, "variable",
+            result,
+            Some("variable".to_string()),
             "Should inherit 'variable' mapping from wildcard for 'rust'"
         );
 
         // Test: "type.builtin" should use rust-specific mapping
         let result = apply_capture_mapping("type.builtin", Some("rust"), Some(&mappings));
         assert_eq!(
-            result, "type.defaultLibrary",
+            result,
+            Some("type.defaultLibrary".to_string()),
             "Should use rust-specific 'type.builtin' mapping"
         );
 
         // Test: "function" should be inherited from wildcard for "rust"
         let result = apply_capture_mapping("function", Some("rust"), Some(&mappings));
         assert_eq!(
-            result, "function",
+            result,
+            Some("function".to_string()),
             "Should inherit 'function' mapping from wildcard for 'rust'"
+        );
+    }
+
+    #[test]
+    fn test_apply_capture_mapping_returns_none_for_unknown_types() {
+        // Unknown types (not in LEGEND_TYPES) should return None
+        // This prevents unknown captures from being added to all_tokens
+        assert_eq!(
+            apply_capture_mapping("spell", None, None),
+            None,
+            "'spell' is a tree-sitter hint for spellcheck regions"
+        );
+        assert_eq!(
+            apply_capture_mapping("nospell", None, None),
+            None,
+            "'nospell' is a tree-sitter hint for no-spellcheck regions"
+        );
+        assert_eq!(
+            apply_capture_mapping("conceal", None, None),
+            None,
+            "'conceal' is a tree-sitter hint for concealable text"
+        );
+        assert_eq!(
+            apply_capture_mapping("markup", None, None),
+            None,
+            "'markup' is not in LEGEND_TYPES"
+        );
+        assert_eq!(
+            apply_capture_mapping("unknown", None, None),
+            None,
+            "'unknown' is not in LEGEND_TYPES"
+        );
+
+        // Known types should return Some
+        assert_eq!(
+            apply_capture_mapping("comment", None, None),
+            Some("comment".to_string()),
+            "'comment' is in LEGEND_TYPES"
+        );
+        assert_eq!(
+            apply_capture_mapping("keyword", None, None),
+            Some("keyword".to_string()),
+            "'keyword' is in LEGEND_TYPES"
+        );
+        assert_eq!(
+            apply_capture_mapping("variable.readonly", None, None),
+            Some("variable.readonly".to_string()),
+            "'variable' base type is in LEGEND_TYPES"
         );
     }
 

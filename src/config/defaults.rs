@@ -137,10 +137,6 @@ fn default_highlight_mappings() -> CaptureMapping {
         ("markup.list", ""),
         ("markup.list.checked", ""),
         ("markup.list.unchecked", ""),
-        // Special captures (suppress - these are hints for editor features, not highlighting)
-        ("spell", ""),   // @spell - indicates spellcheck regions
-        ("nospell", ""), // @nospell - indicates no-spellcheck regions
-        ("conceal", ""), // @conceal - indicates concealable text
         // Diff
         ("diff.plus", ""),
         ("diff.minus", ""),
