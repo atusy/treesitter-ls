@@ -58,15 +58,16 @@ impl LspClient {
         }
     }
 
-    /// Read and return all available stderr output (single read, non-blocking).
-    /// Useful for debugging server behavior.
+    /// Read stderr output (single read, up to 4KB).
+    ///
+    /// Note: This may block if no data is available. Call after the server
+    /// has had time to produce output. Useful for debugging server behavior.
     pub fn drain_stderr(&mut self) -> String {
         use std::io::Read;
         let Some(stderr) = self.stderr.as_mut() else {
             return String::new();
         };
 
-        // Single read to avoid blocking - just grab what's available
         let mut buf = [0u8; 4096];
         match stderr.read(&mut buf) {
             Ok(0) => String::new(),
