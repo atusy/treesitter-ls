@@ -301,20 +301,18 @@ vim.lsp.config.kakehashi = {
   init_options = {
     autoInstall = true,
     -- LSP Bridge configuration (optional)
-    bridge = {
-      servers = {
-        ["rust-analyzer"] = {
-          cmd = { "rust-analyzer" },
-          languages = { "rust" },
-        },
-        pyright = {
-          cmd = { "pyright-langserver", "--stdio" },
-          languages = { "python" },
-        },
+    languageServers = {
+      ["rust-analyzer"] = {
+        cmd = { "rust-analyzer" },
+        languages = { "rust" },
+      },
+      pyright = {
+        cmd = { "pyright-langserver", "--stdio" },
+        languages = { "python" },
       },
     },
     languages = {
-      markdown = { bridge = { "rust", "python" } },
+      markdown = { bridge = { rust = { enabled = true }, python = { enabled = true } } },
     },
   },
 }
