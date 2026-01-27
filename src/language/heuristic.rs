@@ -27,11 +27,24 @@ pub fn detect_from_first_line(content: &str) -> Option<String> {
 
 /// Detect language from file name pattern (e.g., `Makefile`, `Dockerfile`).
 ///
-/// Uses syntect's extension-based detection which also handles special file names.
+/// Tries two strategies:
+/// 1. Full filename as token (for special files like Makefile, Gemfile, Dockerfile)
+/// 2. File extension only (for regular files like file.rs, script.py)
+///
 /// Returns the syntax name in lowercase if found, None otherwise.
 pub fn detect_from_filename(path: &str) -> Option<String> {
-    let filename = Path::new(path).file_name()?.to_str()?;
-    let syntax = SYNTAX_SET.find_syntax_by_extension(filename)?;
+    let path = Path::new(path);
+    let filename = path.file_name()?.to_str()?;
+
+    // 1. Try full filename (handles Makefile, Gemfile, Dockerfile, etc.)
+    //    find_syntax_by_token searches: extension list first, then syntax name
+    if let Some(syntax) = SYNTAX_SET.find_syntax_by_token(filename) {
+        return Some(normalize_syntax_name(&syntax.name));
+    }
+
+    // 2. Try file extension only (handles file.rs, script.py, etc.)
+    let extension = path.extension()?.to_str()?;
+    let syntax = SYNTAX_SET.find_syntax_by_extension(extension)?;
     Some(normalize_syntax_name(&syntax.name))
 }
 
@@ -152,5 +165,31 @@ mod tests {
     #[test]
     fn test_detect_unknown_filename() {
         assert_eq!(detect_from_filename("/path/to/random_file"), None);
+    }
+
+    // Extension-based detection tests
+
+    #[test]
+    fn test_detect_rust_by_extension() {
+        assert_eq!(
+            detect_from_filename("/path/to/main.rs"),
+            Some("rust".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_python_by_extension() {
+        assert_eq!(
+            detect_from_filename("/path/to/script.py"),
+            Some("python".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_javascript_by_extension() {
+        assert_eq!(
+            detect_from_filename("/path/to/app.js"),
+            Some("javascript".to_string())
+        );
     }
 }
