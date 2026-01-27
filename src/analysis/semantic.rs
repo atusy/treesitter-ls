@@ -328,8 +328,11 @@ fn collect_injection_contexts<'a>(
 /// 3. Deduplicates tokens at same position
 /// 4. Delta-encodes for LSP protocol
 fn finalize_tokens(mut all_tokens: Vec<RawToken>) -> Option<SemanticTokensResult> {
-    // Filter out zero-length tokens
-    all_tokens.retain(|(_, _, length, _, _)| *length > 0);
+    // Filter out zero-length tokens and empty-mapped tokens BEFORE dedup.
+    // Empty-mapped tokens (e.g., @spell, @nospell, @conceal) must be filtered first
+    // so they don't take the position slot during dedup and block meaningful tokens
+    // from injected languages (e.g., markdown's @spell vs markdown_inline's @markup.strong).
+    all_tokens.retain(|(_, _, length, _, mapped_name)| *length > 0 && !mapped_name.is_empty());
 
     // Sort by position
     all_tokens.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
