@@ -28,9 +28,11 @@ This applies to both document-level language detection and injected language res
 ```
 1. LSP languageId  →  Check if parser available  →  If yes: use it
                                                  →  If no: continue
-2. Heuristic       →  Check if parser available  →  If yes: use it
+2. Alias resolution →  Map to canonical name     →  Check if parser available  →  If yes: use it
+                                                                               →  If no: continue
+3. Heuristic       →  Check if parser available  →  If yes: use it
                                                  →  If no: continue
-3. File extension  →  Check if parser available  →  If yes: use it
+4. File extension  →  Check if parser available  →  If yes: use it
                                                  →  If no: return None
 ```
 
@@ -41,14 +43,24 @@ This applies to both document-level language detection and injected language res
    - Already handles complex cases: `.tsx` vs `.ts`, polyglot files, user overrides
    - Trust the client—it knows best
 
-2. **Heuristic analysis (middle priority)**
+2. **Alias resolution (second priority)**
+   - Maps alternative languageId values to canonical parser names
+   - Configured via `aliases` field in language config:
+     ```toml
+     [languages.markdown]
+     aliases = ["rmd", "qmd"]
+     ```
+   - Handles cases where editors send non-standard languageIds that the user cannot control
+   - Example: Editor sends `rmd` for R Markdown files → alias maps to `markdown` parser
+
+4. **Heuristic analysis (middle priority)**
    - Shebang detection: `#!/usr/bin/env python` → python
    - Magic comments: `# -*- mode: ruby -*-` → ruby
    - File patterns: `Makefile` → make, `Dockerfile` → dockerfile
    - Useful when client sends generic languageId (e.g., "plaintext")
    - Candidate implementation: syntect's `find_syntax_for_file` (reads first line for shebang/magic)
 
-3. **File extension (lowest priority)**
+5. **File extension (lowest priority)**
    - Strips the dot: `.rs` → `rs`, `.py` → `py`
    - No mapping — uses extension directly as parser name candidate
    - Fallback when above methods fail or return unavailable parsers
@@ -58,22 +70,41 @@ This applies to both document-level language detection and injected language res
 Each detection method returns a candidate language. Before accepting it:
 
 ```rust
-fn try_detect_language(&self, uri: &Url, language_id: Option<&str>) -> Option<String> {
-    // Try each method in order
-    for candidate in [
-        language_id.map(String::from),
-        self.detect_from_heuristics(uri),
-        self.detect_from_extension(uri),
-    ].into_iter().flatten() {
+fn detect_language(&self, path: &str, language_id: Option<&str>, content: &str) -> Option<String> {
+    // 1. Try languageId directly
+    if let Some(lang_id) = language_id {
+        if self.has_parser_available(lang_id) {
+            return Some(lang_id.to_string());
+        }
+
+        // 2. Try alias resolution (e.g., "rmd" → "markdown")
+        if let Some(canonical) = self.resolve_alias(lang_id) {
+            if self.has_parser_available(&canonical) {
+                return Some(canonical);
+            }
+        }
+    }
+
+    // 3. Try heuristics (shebang, etc.)
+    if let Some(candidate) = self.detect_from_heuristics(path, content) {
         if self.has_parser_available(&candidate) {
             return Some(candidate);
         }
     }
+
+    // 4. Try file extension
+    if let Some(candidate) = self.detect_from_extension(path) {
+        if self.has_parser_available(&candidate) {
+            return Some(candidate);
+        }
+    }
+
     None
 }
 ```
 
 This means:
+- If client sends `languageId: "rmd"` and alias maps `rmd` → `markdown`, use the markdown parser
 - If client sends `languageId: "typescript"` but only JavaScript parser is loaded, fall through to check if extension `.ts` maps to an available parser
 - If shebang says `python3` but Python parser isn't installed, continue to extension check
 
