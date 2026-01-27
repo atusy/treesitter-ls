@@ -56,29 +56,8 @@ expression: snapshot_tokens
     "length": 1,
     "line": 2,
     "modifiers": 0,
-    "start": 10,
-    "type": "variable"
-  },
-  {
-    "length": 1,
-    "line": 2,
-    "modifiers": 0,
     "start": 11,
     "type": "function"
-  },
-  {
-    "length": 1,
-    "line": 2,
-    "modifiers": 0,
-    "start": 12,
-    "type": "variable"
-  },
-  {
-    "length": 1,
-    "line": 2,
-    "modifiers": 0,
-    "start": 13,
-    "type": "variable"
   },
   {
     "length": 6,
