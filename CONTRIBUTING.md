@@ -355,7 +355,7 @@ mod tests {
   "languages": {
     "my_lang": {
       "filetypes": ["ml", "mli"],
-      "library": "/path/to/my_lang.so"
+      "parser": "/path/to/my_lang.so"
     }
   }
 }

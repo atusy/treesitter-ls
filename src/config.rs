@@ -1647,7 +1647,7 @@ mod tests {
         // we should get the wildcard's settings
         let mut languages: HashMap<String, LanguageConfig> = HashMap::new();
 
-        // Wildcard has library and bridge settings
+        // Wildcard has parser and bridge settings
         let mut wildcard_bridge = HashMap::new();
         wildcard_bridge.insert(
             "rust".to_string(),
@@ -1675,7 +1675,7 @@ mod tests {
         assert_eq!(
             resolved.parser,
             Some("/default/path.so".to_string()),
-            "Should inherit library from wildcard"
+            "Should inherit parser from wildcard"
         );
         assert!(
             resolved.bridge.is_some(),
@@ -1718,7 +1718,7 @@ mod tests {
             },
         );
 
-        // Python-specific: disable bridging to JavaScript, but inherit _ for library
+        // Python-specific: disable bridging to JavaScript, but inherit _ for parser
         let mut python_bridge = HashMap::new();
         python_bridge.insert(
             "javascript".to_string(),
@@ -1740,11 +1740,11 @@ mod tests {
         assert!(resolved_lang.is_some(), "Should resolve python language");
         let lang_config = resolved_lang.unwrap();
 
-        // Library should be inherited from wildcard
+        // Parser should be inherited from wildcard
         assert_eq!(
             lang_config.parser,
             Some("/default/path.so".to_string()),
-            "Python should inherit library from wildcard"
+            "Python should inherit parser from wildcard"
         );
 
         // Bridge should be deep merged: wildcard + python-specific
@@ -1933,11 +1933,11 @@ mod tests {
         assert!(resolved.is_some());
         let lang_config = resolved.unwrap();
 
-        // Library should be inherited from wildcard
+        // Parser should be inherited from wildcard
         assert_eq!(
             lang_config.parser,
             Some("/default/path.so".to_string()),
-            "Python should inherit library from wildcard"
+            "Python should inherit parser from wildcard"
         );
 
         // Bridge should be deep merged

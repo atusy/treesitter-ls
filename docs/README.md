@@ -104,12 +104,10 @@ Configuration is provided via LSP `initializationOptions`. All options are optio
   "languages": {
     "lua": {
       "parser": "/path/to/lua.so",
-      "highlights": [
-        "/path/to/highlights.scm",
-        "/path/to/custom.scm"
-      ],
-      "injections": [
-        "/path/to/injections.scm"
+      "queries": [
+        {"path": "/path/to/highlights.scm", "kind": "highlights"},
+        {"path": "/path/to/custom.scm", "kind": "highlights"},
+        {"path": "/path/to/injections.scm", "kind": "injections"}
       ]
     }
   },
@@ -149,8 +147,7 @@ Per-language configuration. Usually not needed as kakehashi auto-detects languag
 | Field | Description |
 |-------|-------------|
 | `parser` | Explicit path to the parser library (`.so`, `.dylib`, `.dll`) |
-| `highlights` | Array of paths to highlight query files (`.scm`) |
-| `injections` | Array of paths to injection query files (for embedded languages) |
+| `queries` | Array of query configurations with `path` and `kind` (highlights, locals, injections) |
 
 #### `captureMappings`
 
