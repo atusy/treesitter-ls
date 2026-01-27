@@ -33,7 +33,7 @@ use tree_sitter::InputEdit;
 use url::Url;
 
 use crate::analysis::{LEGEND_MODIFIERS, LEGEND_TYPES};
-use crate::config::{TreeSitterSettings, WorkspaceSettings};
+use crate::config::WorkspaceSettings;
 use crate::document::DocumentStore;
 use crate::language::LanguageEvent;
 use crate::language::injection::{InjectionResolver, collect_all_injections};
@@ -538,25 +538,21 @@ impl Kakehashi {
         is_injection: bool,
     ) {
         // The installed files are at:
-        // - Parser: {data_dir}/parsers/{language}/libtree-sitter-{language}.so
+        // - Parser: {data_dir}/parser/{language}.{so|dylib}
         // - Queries: {data_dir}/queries/{language}/
+        //
+        // Both resolve_library_path and find_query_file expect the BASE directory
+        // and append "parser/" or "queries/" internally. So we add data_dir itself,
+        // not the subdirectories.
 
         // Update settings to include the new paths
         let current_settings = self.settings_manager.load_settings();
         let mut new_search_paths = current_settings.search_paths.clone();
 
-        // Add parser directory to search paths
-        let parser_dir = data_dir.join("parser");
-        let parser_dir_str = parser_dir.to_string_lossy().to_string();
-        if !new_search_paths.contains(&parser_dir_str) {
-            new_search_paths.push(parser_dir_str);
-        }
-
-        // Add queries directory to search paths
-        let queries_dir = data_dir.join("queries");
-        let queries_dir_str = queries_dir.to_string_lossy().to_string();
-        if !new_search_paths.contains(&queries_dir_str) {
-            new_search_paths.push(queries_dir_str);
+        // Add data_dir as a base search path (not subdirectories)
+        let data_dir_str = data_dir.to_string_lossy().to_string();
+        if !new_search_paths.contains(&data_dir_str) {
+            new_search_paths.push(data_dir_str);
         }
 
         // Create updated settings
@@ -798,10 +794,13 @@ impl LanguageServer for Kakehashi {
         self.report_settings_events(&settings_outcome.events).await;
 
         // Always apply settings (use defaults if none were loaded)
-        // This ensures auto_install=true and other defaults are active for zero-config experience
-        let settings = settings_outcome
-            .settings
-            .unwrap_or_else(|| WorkspaceSettings::from(TreeSitterSettings::default()));
+        // This ensures auto_install=true, default capture_mappings, and other defaults are active
+        // for zero-config experience. Use default_settings() instead of TreeSitterSettings::default()
+        // because the derived Default creates empty capture_mappings while default_settings() includes
+        // the full default capture_mappings (markup.strong → "", etc.)
+        let settings = settings_outcome.settings.unwrap_or_else(|| {
+            WorkspaceSettings::from(crate::config::defaults::default_settings())
+        });
         self.apply_settings(settings).await;
 
         self.notifier().log_info("server initialized!").await;

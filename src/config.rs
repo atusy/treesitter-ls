@@ -2819,4 +2819,57 @@ mod tests {
         assert!(aliases.contains(&"mdx".to_string()));
         assert!(!aliases.contains(&"rmd".to_string())); // User's alias should be gone
     }
+
+    #[test]
+    fn test_user_config_overrides_default_empty_string_mapping() {
+        use crate::config::defaults::default_settings;
+
+        // This tests the real-world scenario from issue investigation:
+        // Default has markup.strong = "" (suppress)
+        // User config has markup.strong = "keyword"
+        // After merge, markup.strong should be "keyword"
+
+        // User config from TOML (like ~/.config/kakehashi/kakehashi.toml)
+        let user_config_content = r#"
+            [captureMappings._.highlights]
+            "markup.strong" = "keyword"
+            "markup.heading.1" = "class"
+        "#;
+
+        let user_settings: TreeSitterSettings =
+            toml::from_str(user_config_content).expect("should parse user config");
+
+        // Get defaults (which have markup.strong = "")
+        let defaults = default_settings();
+
+        // Verify defaults have empty string for markup.strong
+        assert_eq!(
+            defaults.capture_mappings[WILDCARD_KEY].highlights["markup.strong"], "",
+            "Defaults should suppress markup.strong with empty string"
+        );
+
+        // Merge: defaults < user (user overrides defaults)
+        let merged = merge_all(&[Some(defaults), Some(user_settings)]);
+        assert!(merged.is_some());
+        let merged = merged.unwrap();
+
+        // After merge, user's "keyword" should override default's ""
+        assert_eq!(
+            merged.capture_mappings[WILDCARD_KEY].highlights["markup.strong"], "keyword",
+            "User's markup.strong = 'keyword' should override default's ''"
+        );
+
+        // Also verify other user mappings are present
+        assert_eq!(
+            merged.capture_mappings[WILDCARD_KEY].highlights["markup.heading.1"], "class",
+            "User's markup.heading.1 mapping should be present"
+        );
+
+        // Verify other defaults are still present
+        assert_eq!(
+            merged.capture_mappings[WILDCARD_KEY].highlights["variable.builtin"],
+            "variable.defaultLibrary",
+            "Default variable.builtin mapping should be inherited"
+        );
+    }
 }

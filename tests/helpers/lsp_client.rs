@@ -20,29 +20,59 @@ pub struct LspClient {
     child: Child,
     stdin: Option<ChildStdin>,
     stdout: BufReader<ChildStdout>,
+    stderr: Option<std::process::ChildStderr>,
     request_id: i64,
 }
 
 impl LspClient {
     /// Spawn the kakehashi binary and create a new LSP client.
     pub fn new() -> Self {
+        Self::with_debug(false)
+    }
+
+    /// Spawn the kakehashi binary with optional debug logging.
+    pub fn with_debug(debug: bool) -> Self {
         // `CARGO_BIN_EXE_kakehashi` is set by Cargo's test harness for integration tests
         // and points to the built `kakehashi` binary, so we don't hardcode its path here.
-        let mut child = Command::new(env!("CARGO_BIN_EXE_kakehashi"))
-            .stdin(Stdio::piped())
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_kakehashi"));
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("Failed to spawn kakehashi binary");
+            .stderr(Stdio::piped());
+
+        if debug {
+            cmd.env("RUST_LOG", "debug");
+        }
+
+        let mut child = cmd.spawn().expect("Failed to spawn kakehashi binary");
 
         let stdin = child.stdin.take().expect("Failed to get stdin");
         let stdout = BufReader::new(child.stdout.take().expect("Failed to get stdout"));
+        let stderr = child.stderr.take();
 
         Self {
             child,
             stdin: Some(stdin),
             stdout,
+            stderr,
             request_id: 0,
+        }
+    }
+
+    /// Read stderr output (single read, up to 4KB).
+    ///
+    /// Note: This may block if no data is available. Call after the server
+    /// has had time to produce output. Useful for debugging server behavior.
+    pub fn drain_stderr(&mut self) -> String {
+        use std::io::Read;
+        let Some(stderr) = self.stderr.as_mut() else {
+            return String::new();
+        };
+
+        let mut buf = [0u8; 4096];
+        match stderr.read(&mut buf) {
+            Ok(0) => String::new(),
+            Ok(n) => String::from_utf8_lossy(&buf[..n]).to_string(),
+            Err(_) => String::new(),
         }
     }
 
