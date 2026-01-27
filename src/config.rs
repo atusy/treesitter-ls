@@ -2748,7 +2748,7 @@ mod tests {
         assert!(result.languages.contains_key("markdown"));
         let markdown = &result.languages["markdown"];
 
-        // Library: inherited from user
+        // Parser: inherited from user
         assert_eq!(markdown.parser, Some("/usr/lib/markdown.so".to_string()));
 
         // Queries: overridden by project
