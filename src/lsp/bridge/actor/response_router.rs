@@ -17,6 +17,17 @@ use tokio::sync::oneshot;
 use super::super::pool::UpstreamId;
 use super::super::protocol::RequestId;
 
+/// Result of attempting to route a response to a pending request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RouteResult {
+    /// Response was successfully delivered to the waiting receiver.
+    Delivered,
+    /// Request ID was found but the receiver was dropped (requester gave up).
+    ReceiverDropped,
+    /// No pending request found for this ID.
+    NotFound,
+}
+
 /// Routes responses to pending requests via oneshot channels.
 ///
 /// Thread-safe router that tracks in-flight requests and delivers responses
@@ -106,10 +117,23 @@ impl ResponseRouter {
 
         // Prevent duplicate registration
         if state.pending.contains_key(&downstream_id) {
+            log::debug!(
+                target: "kakehashi::bridge::router",
+                "register_with_upstream: duplicate ID={}, rejecting",
+                downstream_id.as_i64()
+            );
             return None;
         }
 
         state.pending.insert(downstream_id, tx);
+
+        // Diagnostic logging: confirm registration succeeded
+        log::debug!(
+            target: "kakehashi::bridge::router",
+            "register_with_upstream: registered ID={}, pending_count={}",
+            downstream_id.as_i64(),
+            state.pending.len()
+        );
 
         // Store bidirectional mapping if upstream_id is provided
         if let Some(upstream) = upstream_id {
@@ -136,19 +160,29 @@ impl ResponseRouter {
     /// Route a response to its pending request.
     ///
     /// Extracts the request ID from the response and sends it to the
-    /// corresponding waiter. If no waiter exists (response for unknown
-    /// request), the response is dropped.
+    /// corresponding waiter. Returns a `RouteResult` indicating what happened.
     ///
     /// Also cleans up the bidirectional cancel map entries for this request ID in O(1).
     ///
-    /// Returns `true` if the response was delivered, `false` otherwise.
-    pub(crate) fn route(&self, response: serde_json::Value) -> bool {
+    /// # Returns
+    /// - `RouteResult::Delivered` - Response was delivered to the waiting receiver
+    /// - `RouteResult::ReceiverDropped` - ID was found but receiver was dropped (requester cancelled)
+    /// - `RouteResult::NotFound` - No pending request for this ID
+    pub(crate) fn route(&self, response: serde_json::Value) -> RouteResult {
         let id = match RequestId::from_json(&response) {
             Some(id) => id,
-            None => return false, // Not a response (notification), skip
+            None => return RouteResult::NotFound, // Not a response (notification), skip
         };
 
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Diagnostic logging: show what IDs are pending when routing
+        log::debug!(
+            target: "kakehashi::bridge::router",
+            "route() called: response_id={}, pending_ids={:?}",
+            id.as_i64(),
+            state.pending.keys().map(|k| k.as_i64()).collect::<Vec<_>>()
+        );
 
         let tx = state.pending.remove(&id);
 
@@ -156,8 +190,14 @@ impl ResponseRouter {
         Self::remove_cancel_mapping_inner(&mut state, id);
 
         match tx {
-            Some(sender) => sender.send(response).is_ok(),
-            None => false, // No waiter for this ID
+            Some(sender) => {
+                if sender.send(response).is_ok() {
+                    RouteResult::Delivered
+                } else {
+                    RouteResult::ReceiverDropped
+                }
+            }
+            None => RouteResult::NotFound,
         }
     }
 
@@ -292,8 +332,8 @@ mod tests {
             "result": { "contents": "Hello" }
         });
 
-        let delivered = router.route(response.clone());
-        assert!(delivered, "route should return true when delivered");
+        let result = router.route(response.clone());
+        assert_eq!(result, RouteResult::Delivered, "route should return Delivered");
 
         let received = rx.await.expect("receiver should get response");
         assert_eq!(received["id"], 42);
@@ -301,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn route_returns_false_for_unknown_id() {
+    fn route_returns_not_found_for_unknown_id() {
         let router = ResponseRouter::new();
 
         let response = json!({
@@ -310,12 +350,12 @@ mod tests {
             "result": null
         });
 
-        let delivered = router.route(response);
-        assert!(!delivered, "route should return false for unknown ID");
+        let result = router.route(response);
+        assert_eq!(result, RouteResult::NotFound, "route should return NotFound for unknown ID");
     }
 
     #[test]
-    fn route_returns_false_for_notification() {
+    fn route_returns_not_found_for_notification() {
         let router = ResponseRouter::new();
         let id = RequestId::new(1);
         let _rx = router.register(id);
@@ -327,8 +367,8 @@ mod tests {
             "params": {}
         });
 
-        let delivered = router.route(notification);
-        assert!(!delivered, "route should return false for notifications");
+        let result = router.route(notification);
+        assert_eq!(result, RouteResult::NotFound, "route should return NotFound for notifications");
         assert_eq!(router.pending_count(), 1, "pending request should remain");
     }
 
@@ -354,7 +394,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn route_after_receiver_dropped_returns_false() {
+    async fn route_after_receiver_dropped_returns_receiver_dropped() {
         let router = ResponseRouter::new();
         let id = RequestId::new(1);
 
@@ -367,10 +407,11 @@ mod tests {
             "result": null
         });
 
-        let delivered = router.route(response);
-        assert!(
-            !delivered,
-            "route should return false when receiver dropped"
+        let result = router.route(response);
+        assert_eq!(
+            result,
+            RouteResult::ReceiverDropped,
+            "route should return ReceiverDropped when receiver dropped"
         );
         assert_eq!(router.pending_count(), 0, "pending should be cleared");
     }
@@ -473,8 +514,8 @@ mod tests {
             "id": 42,
             "result": null
         });
-        let delivered = router.route(response);
-        assert!(delivered, "route should succeed");
+        let result = router.route(response);
+        assert_eq!(result, RouteResult::Delivered, "route should succeed");
 
         // Verify mapping is removed after route
         assert_eq!(
@@ -594,9 +635,10 @@ mod tests {
             "id": 42,
             "result": { "cancelled_but_still_responded": true }
         });
-        let delivered = router.route(response);
-        assert!(
-            delivered,
+        let result = router.route(response);
+        assert_eq!(
+            result,
+            RouteResult::Delivered,
             "should still be able to route response after cancel lookup"
         );
 

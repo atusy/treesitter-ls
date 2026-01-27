@@ -22,6 +22,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::super::connection::BridgeReader;
+use super::response_router::RouteResult;
 use super::ResponseRouter;
 
 /// Type alias for the pinned liveness timer future.
@@ -498,15 +499,42 @@ async fn reader_loop_with_liveness(
 /// Handle a single message from the downstream server.
 fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_prefix: &str) {
     // Check if it's a response (has "id" field)
-    if message.get("id").is_some() {
+    if let Some(id) = message.get("id").cloned() {
         // It's a response - route to waiter
-        let delivered = router.route(message);
-        if !delivered {
-            debug!(
-                target: "kakehashi::bridge::reader",
-                "{}Response for unknown request ID, dropping",
-                lang_prefix
-            );
+        debug!(
+            target: "kakehashi::bridge::reader",
+            "{}Routing response id={:?} via router={:p}",
+            lang_prefix,
+            id,
+            router as *const _
+        );
+        match router.route(message) {
+            RouteResult::Delivered => {
+                debug!(
+                    target: "kakehashi::bridge::reader",
+                    "{}Response delivered successfully",
+                    lang_prefix
+                );
+            }
+            RouteResult::ReceiverDropped => {
+                // This is the key case: ID was found but receiver was dropped.
+                // This happens when the requester (e.g., handshake future) was cancelled
+                // before the response arrived.
+                warn!(
+                    target: "kakehashi::bridge::reader",
+                    "{}Response for id={} arrived but receiver was dropped (requester cancelled)",
+                    lang_prefix,
+                    id
+                );
+            }
+            RouteResult::NotFound => {
+                debug!(
+                    target: "kakehashi::bridge::reader",
+                    "{}Response for unknown request id={}, dropping",
+                    lang_prefix,
+                    id
+                );
+            }
         }
     } else {
         // It's a notification - log and skip
