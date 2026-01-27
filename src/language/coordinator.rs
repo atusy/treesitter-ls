@@ -387,6 +387,7 @@ impl LanguageCoordinator {
     /// Priority order:
     /// 1. Direct identifier (try to load as-is)
     /// 2. Normalized alias (py -> python, js -> javascript, sh -> bash)
+    /// 3. Config-based alias (rmd -> markdown, qmd -> markdown)
     ///
     /// Visibility: Public - called by analysis layer (semantic.rs) for
     /// nested language injection support.
@@ -411,7 +412,7 @@ impl LanguageCoordinator {
             return Some((identifier.to_string(), direct_result));
         }
 
-        // 2. Try normalized alias
+        // 2. Try normalized alias (hardcoded common abbreviations)
         if let Some(normalized) = super::alias::normalize_alias(identifier) {
             let alias_result = self.ensure_language_loaded(&normalized);
             if alias_result.success {
@@ -422,6 +423,20 @@ impl LanguageCoordinator {
                     normalized
                 );
                 return Some((normalized, alias_result));
+            }
+        }
+
+        // 3. Try config-based alias (user-configured mappings)
+        if let Some(canonical) = self.resolve_alias(identifier) {
+            let alias_result = self.ensure_language_loaded(&canonical);
+            if alias_result.success {
+                log::debug!(
+                    target: "kakehashi::language_detection",
+                    "Resolved injection '{}' -> '{}' via config alias",
+                    identifier,
+                    canonical
+                );
+                return Some((canonical, alias_result));
             }
         }
 
@@ -756,6 +771,33 @@ mod tests {
         // Known alias but no parser should also return None
         let result = coordinator.resolve_injection_language("py");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_injection_uses_config_alias() {
+        // When config has "rmd" → "markdown" alias, injection resolution should use it
+        let coordinator = LanguageCoordinator::new();
+
+        // Register "markdown" parser (not "rmd")
+        coordinator.register_language_for_test("markdown", tree_sitter_rust::LANGUAGE.into());
+
+        // Build config-based alias map: "rmd" → "markdown"
+        let mut languages = HashMap::new();
+        languages.insert(
+            "markdown".to_string(),
+            crate::config::settings::LanguageConfig {
+                aliases: Some(vec!["rmd".to_string()]),
+                ..Default::default()
+            },
+        );
+        coordinator.build_alias_map(&languages);
+
+        // Injection "rmd" should resolve to "markdown" via config alias
+        let result = coordinator.resolve_injection_language("rmd");
+        assert!(result.is_some(), "rmd should resolve via config alias");
+        let (resolved, load_result) = result.unwrap();
+        assert_eq!(resolved, "markdown");
+        assert!(load_result.success);
     }
 
     #[test]
