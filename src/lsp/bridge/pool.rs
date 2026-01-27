@@ -215,6 +215,14 @@ pub struct LanguageServerPool {
     upstream_request_registry: std::sync::Mutex<HashMap<UpstreamId, String>>,
     /// Metrics for cancel forwarding observability.
     cancel_metrics: CancelForwardingMetrics,
+    /// Tracks consecutive handshake task panics per server.
+    ///
+    /// When a handshake task panics (JoinError), we increment this counter.
+    /// When handshake succeeds, we reset it to 0.
+    /// If panic count exceeds MAX_CONSECUTIVE_PANICS, we stop retrying.
+    ///
+    /// This prevents infinite retry loops when a server's handshake consistently panics.
+    consecutive_panic_counts: std::sync::Mutex<HashMap<String, u32>>,
 }
 
 impl Default for LanguageServerPool {
@@ -244,6 +252,7 @@ impl LanguageServerPool {
             document_tracker: DocumentTracker::new(),
             upstream_request_registry: std::sync::Mutex::new(HashMap::new()),
             cancel_metrics: CancelForwardingMetrics::default(),
+            consecutive_panic_counts: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -501,10 +510,19 @@ impl LanguageServerPool {
     ) -> io::Result<Arc<ConnectionHandle>> {
         let mut connections = self.connections.lock().await;
 
+        // Get consecutive panic count for this server
+        let panic_count = {
+            let counts = self
+                .consecutive_panic_counts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            counts.get(server_name).copied().unwrap_or(0)
+        };
+
         // Check if we already have a connection for this server
         // Use pure decision function for testability (ADR-0015 Operation Gating)
         let existing_state = connections.get(server_name).map(|h| h.state());
-        match decide_connection_action(existing_state) {
+        match decide_connection_action(existing_state, panic_count) {
             ConnectionAction::ReturnExisting => {
                 return Ok(Arc::clone(connections.get(server_name).expect(
                     "Invariant violation: Connection expected for ReturnExisting action",
@@ -608,7 +626,10 @@ impl LanguageServerPool {
                         msg
                     );
                     handle_for_handshake.set_state(ConnectionState::Failed);
-                    Err(io::Error::other(format!("bridge: handshake failed: {}", msg)))
+                    Err(io::Error::other(format!(
+                        "bridge: handshake failed: {}",
+                        msg
+                    )))
                 }
                 Err(_elapsed) => {
                     // Timeout occurred - transition to Failed
@@ -629,10 +650,34 @@ impl LanguageServerPool {
         // Wait for handshake to complete. If this await is cancelled (e.g., due to
         // $/cancelRequest), the spawned task continues running to completion.
         match handshake_task.await {
-            Ok(Ok(())) => Ok(handle),
+            Ok(Ok(())) => {
+                // Success - reset panic count for this server
+                let mut counts = self
+                    .consecutive_panic_counts
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                counts.remove(server_name);
+                Ok(handle)
+            }
             Ok(Err(e)) => Err(e),
             Err(join_err) => {
-                // Task panicked - shouldn't happen but handle gracefully
+                // Task panicked - track consecutive panic count to avoid infinite retry
+                let new_count = {
+                    let mut counts = self
+                        .consecutive_panic_counts
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    let count = counts.entry(server_name.to_string()).or_insert(0);
+                    *count += 1;
+                    *count
+                };
+                log::error!(
+                    target: "kakehashi::bridge::init",
+                    "[{}] Handshake task panicked (consecutive count: {}): {}",
+                    server_name,
+                    new_count,
+                    join_err
+                );
                 handle.set_state(ConnectionState::Failed);
                 Err(io::Error::other(format!(
                     "bridge: handshake task panicked: {}",
@@ -848,7 +893,7 @@ impl LanguageServerPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::bridge::actor::{spawn_reader_task, RouteResult};
+    use crate::lsp::bridge::actor::{RouteResult, spawn_reader_task};
     use std::time::Duration;
     use test_helpers::*;
 
