@@ -67,6 +67,7 @@ impl Kakehashi {
         };
 
         let Some(resolved) = InjectionResolver::resolve_at_byte_offset(
+            &self.language,
             self.bridge.region_id_tracker(),
             &uri,
             snapshot.tree(),
