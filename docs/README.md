@@ -103,13 +103,11 @@ Configuration is provided via LSP `initializationOptions`. All options are optio
   "autoInstall": true,
   "languages": {
     "lua": {
-      "library": "/path/to/lua.so",
-      "highlights": [
-        "/path/to/highlights.scm",
-        "/path/to/custom.scm"
-      ],
-      "injections": [
-        "/path/to/injections.scm"
+      "parser": "/path/to/lua.so",
+      "queries": [
+        {"path": "/path/to/highlights.scm", "kind": "highlights"},
+        {"path": "/path/to/custom.scm", "kind": "highlights"},
+        {"path": "/path/to/injections.scm", "kind": "injections"}
       ]
     }
   },
@@ -148,9 +146,8 @@ Per-language configuration. Usually not needed as kakehashi auto-detects languag
 
 | Field | Description |
 |-------|-------------|
-| `library` | Explicit path to the parser library (`.so`, `.dylib`, `.dll`) |
-| `highlights` | Array of paths to highlight query files (`.scm`) |
-| `injections` | Array of paths to injection query files (for embedded languages) |
+| `parser` | Explicit path to the parser library (`.so`, `.dylib`, `.dll`) |
+| `queries` | Array of query configurations with `path` and `kind` (highlights, locals, injections) |
 
 #### `captureMappings`
 
@@ -233,7 +230,9 @@ You can also use a `kakehashi.toml` file in your project root:
 "variable.builtin" = "variable.defaultLibrary"
 
 [languages.custom_lang]
-highlights = ["./queries/highlights.scm"]
+queries = [
+    { path = "./queries/highlights.scm", kind = "highlights" }
+]
 ```
 
 Project configuration is merged with LSP initialization options.
@@ -304,20 +303,18 @@ vim.lsp.config.kakehashi = {
   init_options = {
     autoInstall = true,
     -- LSP Bridge configuration (optional)
-    bridge = {
-      servers = {
-        ["rust-analyzer"] = {
-          cmd = { "rust-analyzer" },
-          languages = { "rust" },
-        },
-        pyright = {
-          cmd = { "pyright-langserver", "--stdio" },
-          languages = { "python" },
-        },
+    languageServers = {
+      ["rust-analyzer"] = {
+        cmd = { "rust-analyzer" },
+        languages = { "rust" },
+      },
+      pyright = {
+        cmd = { "pyright-langserver", "--stdio" },
+        languages = { "python" },
       },
     },
     languages = {
-      markdown = { bridge = { "rust", "python" } },
+      markdown = { bridge = { rust = { enabled = true }, python = { enabled = true } } },
     },
   },
 }
