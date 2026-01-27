@@ -118,15 +118,15 @@ fn apply_capture_mapping(
 /// - The first part is the token type (e.g., "variable", "function")
 /// - Following parts are modifiers (e.g., "readonly", "defaultLibrary")
 ///
-/// Unknown token types fall back to "variable". Unknown modifiers are ignored.
-fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
+/// Returns `None` for unknown token types (not in LEGEND_TYPES).
+/// Unknown modifiers are ignored.
+fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> Option<(u32, u32)> {
     let parts: Vec<&str> = capture_name.split('.').collect();
-    let token_type_name = parts.first().copied().unwrap_or("variable");
+    let token_type_name = parts.first().copied().filter(|s| !s.is_empty())?;
 
     let token_type_index = LEGEND_TYPES
         .iter()
-        .position(|t| t.as_str() == token_type_name)
-        .unwrap_or(0) as u32;
+        .position(|t| t.as_str() == token_type_name)? as u32;
 
     let mut modifiers_bitset = 0u32;
     for modifier_name in &parts[1..] {
@@ -138,7 +138,7 @@ fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> (u32, u32) {
         }
     }
 
-    (token_type_index, modifiers_bitset)
+    Some((token_type_index, modifiers_bitset))
 }
 
 /// Maximum recursion depth for nested injections to prevent stack overflow
@@ -360,9 +360,12 @@ fn finalize_tokens(mut all_tokens: Vec<RawToken>) -> Option<SemanticTokensResult
     let mut last_start = 0usize;
 
     for (line, start, length, _capture_index, mapped_name) in all_tokens {
-        // Note: Empty mapped_name tokens already filtered in retain() above
-        let (token_type, token_modifiers_bitset) =
-            map_capture_to_token_type_and_modifiers(&mapped_name);
+        // Skip tokens with unknown types (not in LEGEND_TYPES)
+        let Some((token_type, token_modifiers_bitset)) =
+            map_capture_to_token_type_and_modifiers(&mapped_name)
+        else {
+            continue;
+        };
 
         let delta_line = line - last_line;
         let delta_start = if delta_line == 0 {
@@ -1072,34 +1075,46 @@ mod tests {
     #[test]
     fn test_map_capture_to_token_type_and_modifiers() {
         // Test basic token types without modifiers
-        assert_eq!(map_capture_to_token_type_and_modifiers("comment"), (0, 0));
-        assert_eq!(map_capture_to_token_type_and_modifiers("keyword"), (1, 0));
-        assert_eq!(map_capture_to_token_type_and_modifiers("function"), (14, 0));
-        assert_eq!(map_capture_to_token_type_and_modifiers("variable"), (17, 0));
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers("comment"),
+            Some((0, 0))
+        );
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers("keyword"),
+            Some((1, 0))
+        );
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers("function"),
+            Some((14, 0))
+        );
+        assert_eq!(
+            map_capture_to_token_type_and_modifiers("variable"),
+            Some((17, 0))
+        );
 
-        // Unknown types fall back to index 0 (comment)
-        // Note: These should be filtered earlier by apply_capture_mapping returning ""
-        assert_eq!(map_capture_to_token_type_and_modifiers("unknown"), (0, 0));
-        assert_eq!(map_capture_to_token_type_and_modifiers("spell"), (0, 0));
-        assert_eq!(map_capture_to_token_type_and_modifiers("markup"), (0, 0));
+        // Unknown types return None - they should not produce semantic tokens
+        assert_eq!(map_capture_to_token_type_and_modifiers("unknown"), None);
+        assert_eq!(map_capture_to_token_type_and_modifiers("spell"), None);
+        assert_eq!(map_capture_to_token_type_and_modifiers("markup"), None);
+        assert_eq!(map_capture_to_token_type_and_modifiers(""), None);
 
         // Test with single modifier
-        let (_, modifiers) = map_capture_to_token_type_and_modifiers("variable.readonly");
+        let (_, modifiers) = map_capture_to_token_type_and_modifiers("variable.readonly").unwrap();
         assert_eq!(modifiers & (1 << 2), 1 << 2); // readonly is at index 2
 
-        let (_, modifiers) = map_capture_to_token_type_and_modifiers("function.async");
+        let (_, modifiers) = map_capture_to_token_type_and_modifiers("function.async").unwrap();
         assert_eq!(modifiers & (1 << 6), 1 << 6); // async is at index 6
 
         // Test with multiple modifiers
         let (token_type, modifiers) =
-            map_capture_to_token_type_and_modifiers("variable.readonly.defaultLibrary");
+            map_capture_to_token_type_and_modifiers("variable.readonly.defaultLibrary").unwrap();
         assert_eq!(token_type, 17); // variable
         assert_eq!(modifiers & (1 << 2), 1 << 2); // readonly
         assert_eq!(modifiers & (1 << 9), 1 << 9); // defaultLibrary
 
         // Test unknown modifiers are ignored
         let (token_type, modifiers) =
-            map_capture_to_token_type_and_modifiers("function.unknownModifier.async");
+            map_capture_to_token_type_and_modifiers("function.unknownModifier.async").unwrap();
         assert_eq!(token_type, 14); // function
         assert_eq!(modifiers & (1 << 6), 1 << 6); // async should still be set
     }
