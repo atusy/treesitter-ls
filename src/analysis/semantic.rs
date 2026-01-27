@@ -1012,6 +1012,7 @@ fn collect_injection_tokens_recursive_with_local_parsers(
 /// * `capture_mappings` - The capture mappings to apply
 /// * `coordinator` - Language coordinator for loading injected language parsers (None = no injection)
 /// * `parser_pool` - Parser pool for efficient parser reuse (None = no injection)
+/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
 ///
 /// # Returns
 /// Semantic tokens for the specified range including injected content (if coordinator/parser_pool provided)
@@ -1025,9 +1026,10 @@ pub fn handle_semantic_tokens_range(
     capture_mappings: Option<&crate::config::CaptureMappings>,
     coordinator: Option<&crate::language::LanguageCoordinator>,
     parser_pool: Option<&mut crate::language::DocumentParserPool>,
+    supports_multiline: bool,
 ) -> Option<SemanticTokensResult> {
-    // Get all tokens using the full handler
-    let full_result = handle_semantic_tokens_full(
+    // Get all tokens using the full handler with multiline support
+    let full_result = handle_semantic_tokens_full_with_multiline(
         text,
         tree,
         query,
@@ -1035,6 +1037,7 @@ pub fn handle_semantic_tokens_range(
         capture_mappings,
         coordinator,
         parser_pool,
+        supports_multiline,
     )?;
 
     // Extract tokens from result
@@ -1133,6 +1136,7 @@ pub fn handle_semantic_tokens_range(
 /// * `capture_mappings` - The capture mappings to apply
 /// * `coordinator` - Language coordinator for loading injected language parsers (None = no injection)
 /// * `parser_pool` - Parser pool for efficient parser reuse (None = no injection)
+/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
 ///
 /// # Returns
 /// Either a delta or full semantic tokens for the document
@@ -1147,9 +1151,10 @@ pub fn handle_semantic_tokens_full_delta(
     capture_mappings: Option<&CaptureMappings>,
     coordinator: Option<&crate::language::LanguageCoordinator>,
     parser_pool: Option<&mut crate::language::DocumentParserPool>,
+    supports_multiline: bool,
 ) -> Option<SemanticTokensFullDeltaResult> {
-    // Get current tokens with injection support
-    let current_result = handle_semantic_tokens_full(
+    // Get current tokens with injection support and multiline handling
+    let current_result = handle_semantic_tokens_full_with_multiline(
         text,
         tree,
         query,
@@ -1157,6 +1162,7 @@ pub fn handle_semantic_tokens_full_delta(
         capture_mappings,
         coordinator,
         parser_pool,
+        supports_multiline,
     )?;
     let current_tokens = match current_result {
         SemanticTokensResult::Tokens(tokens) => tokens,
@@ -2306,9 +2312,10 @@ let z = 42"#;
             &query,
             &range,
             Some("rust"),
-            None, // capture_mappings
-            None, // coordinator (None = no injection support)
-            None, // parser_pool (None = no injection support)
+            None,  // capture_mappings
+            None,  // coordinator (None = no injection support)
+            None,  // parser_pool (None = no injection support)
+            false, // supports_multiline
         );
 
         assert!(result.is_some());
@@ -2386,6 +2393,7 @@ let z = 42"#;
             None, // capture_mappings
             Some(&coordinator),
             Some(&mut parser_pool),
+            false, // supports_multiline
         );
 
         // Should return full tokens result
