@@ -245,7 +245,7 @@ impl From<&LanguageConfig> for LanguageSettings {
         };
 
         LanguageSettings {
-            parser: config.library.clone(),
+            parser: config.parser.clone(),
             queries,
             bridge: config.bridge.clone(),
             aliases: config.aliases.clone(),
@@ -285,7 +285,7 @@ impl From<&LanguageSettings> for LanguageConfig {
         }
 
         LanguageConfig {
-            library: settings.parser.clone(),
+            parser: settings.parser.clone(),
             queries: settings.queries.clone(),
             highlights: if highlights.is_empty() {
                 None
@@ -405,10 +405,10 @@ fn merge_languages(
         base.entry(key)
             .and_modify(|base_config| {
                 // For each field: use overlay if Some, otherwise keep base
-                base_config.library = overlay_config
-                    .library
+                base_config.parser = overlay_config
+                    .parser
                     .clone()
-                    .or_else(|| base_config.library.clone());
+                    .or_else(|| base_config.parser.clone());
                 base_config.queries = overlay_config
                     .queries
                     .clone()
@@ -567,7 +567,7 @@ pub(crate) fn resolve_language_with_wildcard(
         (Some(w), Some(s)) => {
             // Merge: start with wildcard, override with specific
             Some(LanguageConfig {
-                library: s.library.clone().or_else(|| w.library.clone()),
+                parser: s.parser.clone().or_else(|| w.parser.clone()),
                 queries: s.queries.clone().or_else(|| w.queries.clone()),
                 highlights: s.highlights.clone().or_else(|| w.highlights.clone()),
                 locals: s.locals.clone().or_else(|| w.locals.clone()),
@@ -658,7 +658,7 @@ mod tests {
         fallback_languages.insert(
             "rust".to_string(),
             LanguageConfig {
-                library: Some("/fallback/rust.so".to_string()),
+                parser: Some("/fallback/rust.so".to_string()),
                 ..Default::default()
             },
         );
@@ -675,7 +675,7 @@ mod tests {
         primary_languages.insert(
             "rust".to_string(),
             LanguageConfig {
-                library: Some("/primary/rust.so".to_string()),
+                parser: Some("/primary/rust.so".to_string()),
                 ..Default::default()
             },
         );
@@ -698,7 +698,7 @@ mod tests {
 
         // Primary language config should override fallback
         assert_eq!(
-            result.languages["rust"].library,
+            result.languages["rust"].parser,
             Some("/primary/rust.so".to_string())
         );
     }
@@ -1098,7 +1098,7 @@ mod tests {
     #[test]
     fn test_language_settings_from_config_preserves_injections() {
         let config = LanguageConfig {
-            library: Some("/path/to/parser.so".to_string()),
+            parser: Some("/path/to/parser.so".to_string()),
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
             injections: Some(vec!["/path/to/injections.scm".to_string()]),
             ..Default::default()
@@ -1133,7 +1133,7 @@ mod tests {
         user_languages.insert(
             "python".to_string(),
             LanguageConfig {
-                library: Some("/usr/lib/python.so".to_string()),
+                parser: Some("/usr/lib/python.so".to_string()),
                 highlights: Some(vec!["/usr/share/python/highlights.scm".to_string()]),
                 locals: Some(vec!["/usr/share/python/locals.scm".to_string()]),
                 bridge: Some(user_bridge),
@@ -1154,7 +1154,7 @@ mod tests {
         project_languages.insert(
             "python".to_string(),
             LanguageConfig {
-                // library: None - Not specified - should inherit from user
+                // parser: None - Not specified - should inherit from user
                 highlights: Some(vec!["./queries/python-highlights.scm".to_string()]),
                 // locals: None - Not specified - should inherit from user
                 // bridge: None - Not specified - should inherit from user
@@ -1179,7 +1179,7 @@ mod tests {
         let python = &result.languages["python"];
 
         // Library: inherited from user (project was None)
-        assert_eq!(python.library, Some("/usr/lib/python.so".to_string()));
+        assert_eq!(python.parser, Some("/usr/lib/python.so".to_string()));
 
         // Highlights: overridden by project
         assert_eq!(
@@ -1206,7 +1206,7 @@ mod tests {
         user_languages.insert(
             "python".to_string(),
             LanguageConfig {
-                library: Some("/usr/lib/python.so".to_string()),
+                parser: Some("/usr/lib/python.so".to_string()),
                 ..Default::default()
             },
         );
@@ -1223,7 +1223,7 @@ mod tests {
         project_languages.insert(
             "rust".to_string(),
             LanguageConfig {
-                library: Some("/project/rust.so".to_string()),
+                parser: Some("/project/rust.so".to_string()),
                 ..Default::default()
             },
         );
@@ -1246,13 +1246,13 @@ mod tests {
 
         // Python from user
         assert_eq!(
-            result.languages["python"].library,
+            result.languages["python"].parser,
             Some("/usr/lib/python.so".to_string())
         );
 
         // Rust from project
         assert_eq!(
-            result.languages["rust"].library,
+            result.languages["rust"].parser,
             Some("/project/rust.so".to_string())
         );
     }
@@ -1746,7 +1746,7 @@ mod tests {
         languages.insert(
             "_".to_string(),
             LanguageConfig {
-                library: Some("/default/path.so".to_string()),
+                parser: Some("/default/path.so".to_string()),
                 highlights: Some(vec!["/default/highlights.scm".to_string()]),
                 bridge: Some(wildcard_bridge),
                 ..Default::default()
@@ -1759,7 +1759,7 @@ mod tests {
         assert!(result.is_some(), "Should return Some when wildcard exists");
         let resolved = result.unwrap();
         assert_eq!(
-            resolved.library,
+            resolved.parser,
             Some("/default/path.so".to_string()),
             "Should inherit library from wildcard"
         );
@@ -1794,7 +1794,7 @@ mod tests {
         languages.insert(
             "_".to_string(),
             LanguageConfig {
-                library: Some("/default/path.so".to_string()),
+                parser: Some("/default/path.so".to_string()),
                 highlights: Some(vec!["/default/highlights.scm".to_string()]),
                 bridge: Some(wildcard_bridge),
                 ..Default::default()
@@ -1811,7 +1811,7 @@ mod tests {
         languages.insert(
             "python".to_string(),
             LanguageConfig {
-                // library: None - Should inherit from _
+                // parser: None - Should inherit from _
                 // highlights: None - Should inherit from _
                 bridge: Some(python_bridge),
                 ..Default::default()
@@ -1825,7 +1825,7 @@ mod tests {
 
         // Library should be inherited from wildcard
         assert_eq!(
-            lang_config.library,
+            lang_config.parser,
             Some("/default/path.so".to_string()),
             "Python should inherit library from wildcard"
         );
@@ -1877,7 +1877,7 @@ mod tests {
         languages.insert(
             "python".to_string(),
             LanguageConfig {
-                library: Some("/python/path.so".to_string()),
+                parser: Some("/python/path.so".to_string()),
                 bridge: Some(python_bridge),
                 ..Default::default()
             },
@@ -1928,7 +1928,7 @@ mod tests {
         languages.insert(
             "_".to_string(),
             LanguageConfig {
-                library: Some("/default/path.so".to_string()),
+                parser: Some("/default/path.so".to_string()),
                 bridge: Some(wildcard_bridge),
                 ..Default::default()
             },
@@ -1989,7 +1989,7 @@ mod tests {
         languages.insert(
             "_".to_string(),
             LanguageConfig {
-                library: Some("/default/path.so".to_string()),
+                parser: Some("/default/path.so".to_string()),
                 bridge: Some(wildcard_bridge),
                 ..Default::default()
             },
@@ -2005,7 +2005,7 @@ mod tests {
         languages.insert(
             "python".to_string(),
             LanguageConfig {
-                // library: None - Inherits from wildcard
+                // parser: None - Inherits from wildcard
                 bridge: Some(python_bridge),
                 ..Default::default()
             },
@@ -2018,7 +2018,7 @@ mod tests {
 
         // Library should be inherited from wildcard
         assert_eq!(
-            lang_config.library,
+            lang_config.parser,
             Some("/default/path.so".to_string()),
             "Python should inherit library from wildcard"
         );
@@ -2784,7 +2784,7 @@ mod tests {
         user_languages.insert(
             "markdown".to_string(),
             LanguageConfig {
-                library: Some("/usr/lib/markdown.so".to_string()),
+                parser: Some("/usr/lib/markdown.so".to_string()),
                 aliases: Some(vec!["rmd".to_string(), "qmd".to_string()]),
                 ..Default::default()
             },
@@ -2826,7 +2826,7 @@ mod tests {
         let markdown = &result.languages["markdown"];
 
         // Library: inherited from user
-        assert_eq!(markdown.library, Some("/usr/lib/markdown.so".to_string()));
+        assert_eq!(markdown.parser, Some("/usr/lib/markdown.so".to_string()));
 
         // Highlights: overridden by project
         assert_eq!(

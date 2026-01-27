@@ -153,7 +153,7 @@ mod tests {
         configs.insert(
             "rust".to_string(),
             LanguageConfig {
-                library: Some("/path/to/rust.so".to_string()),
+                parser: Some("/path/to/rust.so".to_string()),
                 highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
                 ..Default::default()
             },
@@ -163,7 +163,7 @@ mod tests {
 
         // Test get individual config
         let rust_config = store.get_language_config("rust").unwrap();
-        assert_eq!(rust_config.library, Some("/path/to/rust.so".to_string()));
+        assert_eq!(rust_config.parser, Some("/path/to/rust.so".to_string()));
 
         // Test get all configs
         let all_configs = store.get_all_language_configs();

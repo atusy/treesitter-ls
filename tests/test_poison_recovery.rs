@@ -123,7 +123,7 @@ fn test_config_store_recovers_from_poisoned_lock() {
     new_configs.insert(
         "rust".to_string(),
         LanguageConfig {
-            library: Some("/path/to/rust.so".to_string()),
+            parser: Some("/path/to/rust.so".to_string()),
             ..Default::default()
         },
     );

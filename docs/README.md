@@ -103,7 +103,7 @@ Configuration is provided via LSP `initializationOptions`. All options are optio
   "autoInstall": true,
   "languages": {
     "lua": {
-      "library": "/path/to/lua.so",
+      "parser": "/path/to/lua.so",
       "highlights": [
         "/path/to/highlights.scm",
         "/path/to/custom.scm"
@@ -148,7 +148,7 @@ Per-language configuration. Usually not needed as kakehashi auto-detects languag
 
 | Field | Description |
 |-------|-------------|
-| `library` | Explicit path to the parser library (`.so`, `.dylib`, `.dll`) |
+| `parser` | Explicit path to the parser library (`.so`, `.dylib`, `.dll`) |
 | `highlights` | Array of paths to highlight query files (`.scm`) |
 | `injections` | Array of paths to injection query files (for embedded languages) |
 

@@ -116,7 +116,7 @@ pub fn infer_query_kind(path: &str) -> Option<QueryKind> {
 
 #[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
 pub struct LanguageConfig {
-    pub library: Option<String>,
+    pub parser: Option<String>,
     /// Unified query file configuration (new format)
     /// Each entry has a path and optional kind (inferred from filename if omitted)
     pub queries: Option<Vec<QueryItem>>,
@@ -159,7 +159,7 @@ pub struct TreeSitterSettings {
 /// Per-language Tree-sitter language configuration surfaced to the domain.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LanguageSettings {
-    /// Path to the parser library (renamed from `library` for clarity)
+    /// Path to the parser library (.so/.dylib/.dll)
     pub parser: Option<String>,
     /// Unified query file configuration
     /// - None: Not specified (inherit from wildcard/defaults)
@@ -325,7 +325,7 @@ mod tests {
         let config_json = r#"{
             "languages": {
                 "rust": {
-                    "library": "/path/to/rust.so",
+                    "parser": "/path/to/rust.so",
                     "filetypes": ["rs"],
                     "highlights": [
                         "/path/to/highlights.scm",
@@ -340,7 +340,7 @@ mod tests {
         assert!(settings.search_paths.is_none());
         assert!(settings.languages.contains_key("rust"));
         assert_eq!(
-            settings.languages["rust"].library,
+            settings.languages["rust"].parser,
             Some("/path/to/rust.so".to_string())
         );
         // filetypes field removed in PBI-061
@@ -384,7 +384,7 @@ mod tests {
         let invalid_json = r#"{
             "treesitter": {
                 "rust": {
-                    "library": "/path/to/rust.so"
+                    "parser": "/path/to/rust.so"
                     // Missing comma - invalid JSON
                     "highlight": []
                 }
@@ -466,7 +466,7 @@ mod tests {
             vec!["/usr/local/lib/tree-sitter", "/opt/tree-sitter/parsers"]
         );
         assert!(settings.languages.contains_key("rust"));
-        assert_eq!(settings.languages["rust"].library, None);
+        assert_eq!(settings.languages["rust"].parser, None);
         // filetypes field removed in PBI-061
     }
 
@@ -476,7 +476,7 @@ mod tests {
             "searchPaths": ["/usr/local/lib/tree-sitter"],
             "languages": {
                 "rust": {
-                    "library": "/custom/path/rust.so",
+                    "parser": "/custom/path/rust.so",
                     "filetypes": ["rs"],
                     "highlights": ["/path/to/highlights.scm"]
                 },
@@ -497,12 +497,12 @@ mod tests {
 
         // rust has explicit library path
         assert_eq!(
-            settings.languages["rust"].library,
+            settings.languages["rust"].parser,
             Some("/custom/path/rust.so".to_string())
         );
 
         // python will use searchPaths
-        assert_eq!(settings.languages["python"].library, None);
+        assert_eq!(settings.languages["python"].parser, None);
     }
 
     #[test]
@@ -532,8 +532,8 @@ mod tests {
     #[test]
     fn should_handle_malformed_json_gracefully() {
         let malformed_configs = vec![
-            r#"{"languages": {"rust": {"library": "/path"}"#, // Missing closing braces
-            r#"{"languages": {"rust": {"library": "/path", "highlights": [}}"#, // Invalid array
+            r#"{"languages": {"rust": {"parser": "/path"}"#, // Missing closing braces
+            r#"{"languages": {"rust": {"parser": "/path", "highlights": [}}"#, // Invalid array
         ];
 
         for config in malformed_configs {
@@ -604,7 +604,7 @@ mod tests {
         let config_json = r#"{
             "languages": {
                 "lua": {
-                    "library": "/path/to/lua.so",
+                    "parser": "/path/to/lua.so",
                     "highlights": [
                         "/path/to/highlights.scm",
                         "/path/to/custom.scm"
@@ -617,7 +617,7 @@ mod tests {
 
         assert!(settings.languages.contains_key("lua"));
         let lua_config = &settings.languages["lua"];
-        assert_eq!(lua_config.library, Some("/path/to/lua.so".to_string()));
+        assert_eq!(lua_config.parser, Some("/path/to/lua.so".to_string()));
 
         // NEW: highlights should be Vec<String>
         assert!(lua_config.highlights.is_some());
@@ -670,7 +670,7 @@ mod tests {
             config.languages.insert(
                 lang.to_string(),
                 LanguageConfig {
-                    library: Some(format!("/usr/lib/libtree-sitter-{}.so", lang)),
+                    parser: Some(format!("/usr/lib/libtree-sitter-{}.so", lang)),
                     highlights: Some(vec![format!("/etc/tree-sitter/{}/highlights.scm", lang)]),
                     ..Default::default()
                 },
@@ -690,7 +690,7 @@ mod tests {
         // PBI-061: filetypes field should be removed from LanguageConfig
         // Language detection now relies entirely on languageId from DidOpen
         let config = LanguageConfig {
-            library: Some("/path/to/parser.so".to_string()),
+            parser: Some("/path/to/parser.so".to_string()),
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
             ..Default::default()
         };
@@ -856,7 +856,7 @@ mod tests {
         // PBI-120: LanguageConfig should parse bridge field as HashMap<String, BridgeLanguageConfig>
         // Example: bridge = { python = { enabled = true }, r = { enabled = true } }
         let config_json = r#"{
-            "library": "/path/to/parser.so",
+            "parser": "/path/to/parser.so",
             "highlights": ["/path/to/highlights.scm"],
             "bridge": {
                 "python": { "enabled": true },
@@ -878,7 +878,7 @@ mod tests {
         // PBI-120: Empty bridge map should disable all bridging
         // bridge: {} disables all bridging for that host filetype
         let config_json = r#"{
-            "library": "/path/to/parser.so",
+            "parser": "/path/to/parser.so",
             "highlights": ["/path/to/highlights.scm"],
             "bridge": {}
         }"#;
@@ -898,7 +898,7 @@ mod tests {
         // PBI-108: Omitted bridge field should be None (bridges all languages)
         // AC3: bridge omitted or null bridges all configured languages
         let config_json = r#"{
-            "library": "/path/to/parser.so",
+            "parser": "/path/to/parser.so",
             "highlights": ["/path/to/highlights.scm"]
         }"#;
 
@@ -1101,7 +1101,7 @@ mod tests {
         // PBI-120: LanguageConfig.bridge should be HashMap<String, BridgeLanguageConfig>
         // Example: bridge = { python = { enabled = true }, r = { enabled = false } }
         let config_json = r#"{
-            "library": "/path/to/parser.so",
+            "parser": "/path/to/parser.so",
             "highlights": ["/path/to/highlights.scm"],
             "bridge": {
                 "python": { "enabled": true },
@@ -1168,7 +1168,7 @@ kind = "injections""#;
     fn should_parse_queries_array_in_language_config() {
         // LanguageConfig should have queries: Option<Vec<QueryItem>>
         let config_toml = r#"
-            library = "/path/to/parser.so"
+            parser ="/path/to/parser.so"
             [[queries]]
             path = "/path/to/highlights.scm"
 
@@ -1283,7 +1283,7 @@ kind = "injections""#;
         // aliases allows mapping multiple languageId values to one parser
         // Example: markdown parser handles rmd, qmd, mdx files
         let config_toml = r#"
-            library = "/path/to/markdown.so"
+            parser ="/path/to/markdown.so"
             aliases = ["rmd", "qmd", "mdx"]
             highlights = ["/path/to/highlights.scm"]
         "#;
@@ -1302,7 +1302,7 @@ kind = "injections""#;
     fn should_parse_language_config_without_aliases() {
         // When aliases is omitted, it should be None
         let config_toml = r#"
-            library = "/path/to/rust.so"
+            parser ="/path/to/rust.so"
             highlights = ["/path/to/highlights.scm"]
         "#;
 
@@ -1315,7 +1315,7 @@ kind = "injections""#;
     fn should_parse_language_config_with_empty_aliases() {
         // Empty aliases array should be Some([])
         let config_toml = r#"
-            library = "/path/to/parser.so"
+            parser ="/path/to/parser.so"
             aliases = []
         "#;
 
