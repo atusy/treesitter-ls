@@ -9,22 +9,31 @@ pub use store::{DocumentHandle, DocumentStore};
 use crate::language::LanguageCoordinator;
 use url::Url;
 
-/// Get the language for a document from path or stored language_id.
+/// Get the language for a document using the full detection chain.
 ///
-/// This function:
-/// 1. Tries path-based detection using LanguageCoordinator
-/// 2. Falls back to the document's stored language_id
+/// This function uses LanguageCoordinator::detect_language() which implements
+/// the fallback chain: languageId → alias → shebang → extension (ADR-0005).
+///
+/// This ensures aliases are resolved (e.g., "rmd" → "markdown") even when
+/// the document is accessed before didOpen fully completes (race condition).
 pub(crate) fn get_language_for_document(
     uri: &Url,
     language: &LanguageCoordinator,
     documents: &DocumentStore,
 ) -> Option<String> {
-    // Try path-based detection first
-    if let Some(lang) = language.get_language_for_path(uri.path()) {
-        return Some(lang);
-    }
-    // Fall back to document's stored language
-    documents
+    let path = uri.path();
+
+    // Get the document's language_id and content if available
+    let (language_id, content) = documents
         .get(uri)
-        .and_then(|doc| doc.language_id().map(|s| s.to_string()))
+        .map(|doc| {
+            (
+                doc.language_id().map(|s| s.to_string()),
+                doc.text().to_string(),
+            )
+        })
+        .unwrap_or((None, String::new()));
+
+    // Use the full detection chain with alias resolution
+    language.detect_language(path, language_id.as_deref(), &content)
 }

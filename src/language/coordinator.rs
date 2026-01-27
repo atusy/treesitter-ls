@@ -8,6 +8,7 @@ use super::query_store::QueryStore;
 use super::registry::LanguageRegistry;
 use crate::config::settings::{LanguageConfig, QueryKind, infer_query_kind};
 use crate::config::{CaptureMappings, TreeSitterSettings, WorkspaceSettings};
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tree_sitter::Language;
 
@@ -18,6 +19,10 @@ pub struct LanguageCoordinator {
     filetype_resolver: FiletypeResolver,
     language_registry: LanguageRegistry,
     parser_loader: RwLock<ParserLoader>,
+    /// Maps alias languageId → canonical language name.
+    /// Built from `languages.<name>.aliases` in configuration.
+    /// Example: "rmd" → "markdown", "qmd" → "markdown"
+    alias_map: RwLock<HashMap<String, String>>,
 }
 
 impl Default for LanguageCoordinator {
@@ -34,6 +39,7 @@ impl LanguageCoordinator {
             filetype_resolver: FiletypeResolver::new(),
             language_registry: LanguageRegistry::new(),
             parser_loader: RwLock::new(ParserLoader::new()),
+            alias_map: RwLock::new(HashMap::new()),
         }
     }
 
@@ -62,12 +68,71 @@ impl LanguageCoordinator {
         self.config_store.update_from_settings(settings);
         // build_from_settings removed in PBI-061 - filetypes no longer in config
 
+        // Build alias map from language configs
+        self.build_alias_map(&settings.languages);
+
         let mut summary = LanguageLoadSummary::default();
         for (lang_name, config) in &settings.languages {
             let result = self.load_single_language(lang_name, config, &settings.search_paths);
             summary.record(lang_name, result);
         }
         summary
+    }
+
+    /// Build the alias → canonical language map from configuration.
+    ///
+    /// For each language with `aliases = ["a", "b"]`, maps "a" → language_name
+    /// and "b" → language_name. This enables editors sending languageId "rmd"
+    /// to use the "markdown" parser configuration.
+    fn build_alias_map(&self, languages: &HashMap<String, LanguageConfig>) {
+        let mut alias_map = self.alias_map.write().unwrap_or_else(|poisoned| {
+            log::warn!(
+                target: "kakehashi::lock_recovery",
+                "Recovered from poisoned alias_map lock in build_alias_map"
+            );
+            poisoned.into_inner()
+        });
+
+        alias_map.clear();
+
+        for (lang_name, config) in languages {
+            if let Some(aliases) = &config.aliases {
+                for alias in aliases {
+                    if let Some(previous) = alias_map.insert(alias.clone(), lang_name.clone()) {
+                        log::warn!(
+                            target: "kakehashi::language_detection",
+                            "Alias '{}' collision: was '{}', now '{}' (last-wins)",
+                            alias,
+                            previous,
+                            lang_name
+                        );
+                    } else {
+                        log::debug!(
+                            target: "kakehashi::language_detection",
+                            "Registered alias '{}' → '{}'",
+                            alias,
+                            lang_name
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Resolve a languageId to its canonical language name using the alias map.
+    ///
+    /// Returns the canonical name if the input is an alias, otherwise returns None.
+    /// Example: "rmd" → Some("markdown") if markdown has aliases = ["rmd"]
+    fn resolve_alias(&self, language_id: &str) -> Option<String> {
+        let alias_map = self.alias_map.read().unwrap_or_else(|poisoned| {
+            log::warn!(
+                target: "kakehashi::lock_recovery",
+                "Recovered from poisoned alias_map lock in resolve_alias"
+            );
+            poisoned.into_inner()
+        });
+
+        alias_map.get(language_id).cloned()
     }
 
     /// Try to dynamically load a language by ID from configured search paths
@@ -211,9 +276,10 @@ impl LanguageCoordinator {
     /// Returns the first language for which a parser is available.
     ///
     /// Priority order:
-    /// 1. languageId (if parser available and not "plaintext")
-    /// 2. Shebang detection from content
-    /// 3. Extension-based detection from path
+    /// 1. languageId directly (if parser available and not "plaintext")
+    /// 2. languageId via configured alias (if alias maps to language with parser)
+    /// 3. Shebang detection from content
+    /// 4. Extension-based detection from path
     ///
     /// Visibility: Public - called by LSP layer (lsp_impl) for document
     /// language detection during text_document/didOpen.
@@ -223,28 +289,93 @@ impl LanguageCoordinator {
         language_id: Option<&str>,
         content: &str,
     ) -> Option<String> {
-        // 1. Try languageId if parser is available (and not "plaintext")
+        log::debug!(
+            target: "kakehashi::language_detection",
+            "Starting detection for path='{}', language_id={:?}",
+            path,
+            language_id
+        );
+
+        // 1. Try languageId directly if parser is available (and not "plaintext")
         if let Some(lang_id) = language_id
             && lang_id != "plaintext"
-            && self.has_parser_available(lang_id)
         {
-            return Some(lang_id.to_string());
+            if self.has_parser_available(lang_id) {
+                log::debug!(
+                    target: "kakehashi::language_detection",
+                    "Detected '{}' via languageId for path='{}'",
+                    lang_id,
+                    path
+                );
+                return Some(lang_id.to_string());
+            }
+
+            // 2. Try configured alias resolution (e.g., "rmd" → "markdown")
+            if let Some(canonical) = self.resolve_alias(lang_id) {
+                if self.has_parser_available(&canonical) {
+                    log::debug!(
+                        target: "kakehashi::language_detection",
+                        "Detected '{}' via alias '{}' → '{}' for path='{}'",
+                        canonical,
+                        lang_id,
+                        canonical,
+                        path
+                    );
+                    return Some(canonical);
+                } else {
+                    log::debug!(
+                        target: "kakehashi::language_detection",
+                        "Alias '{}' → '{}' found but no parser available",
+                        lang_id,
+                        canonical
+                    );
+                }
+            }
         }
 
-        // 2. Try shebang detection (lazy I/O: only runs if step 1 failed)
-        if let Some(shebang_lang) = super::shebang::detect_from_shebang(content)
-            && self.has_parser_available(&shebang_lang)
-        {
-            return Some(shebang_lang);
+        // 3. Try shebang detection (lazy I/O: only runs if above steps failed)
+        if let Some(shebang_lang) = super::shebang::detect_from_shebang(content) {
+            if self.has_parser_available(&shebang_lang) {
+                log::debug!(
+                    target: "kakehashi::language_detection",
+                    "Detected '{}' via shebang for path='{}'",
+                    shebang_lang,
+                    path
+                );
+                return Some(shebang_lang);
+            } else {
+                log::debug!(
+                    target: "kakehashi::language_detection",
+                    "Shebang detected '{}' but no parser available, continuing fallback",
+                    shebang_lang
+                );
+            }
         }
 
-        // 3. Fall back to extension-based detection (ADR-0005: strip dot, use as parser name)
-        if let Some(ext_lang) = super::extension::detect_from_extension(path)
-            && self.has_parser_available(&ext_lang)
-        {
-            return Some(ext_lang);
+        // 4. Fall back to extension-based detection (ADR-0005: strip dot, use as parser name)
+        if let Some(ext_lang) = super::extension::detect_from_extension(path) {
+            if self.has_parser_available(&ext_lang) {
+                log::debug!(
+                    target: "kakehashi::language_detection",
+                    "Detected '{}' via extension for path='{}'",
+                    ext_lang,
+                    path
+                );
+                return Some(ext_lang);
+            } else {
+                log::debug!(
+                    target: "kakehashi::language_detection",
+                    "Extension detected '{}' but no parser available",
+                    ext_lang
+                );
+            }
         }
 
+        log::debug!(
+            target: "kakehashi::language_detection",
+            "No language detected for path='{}'",
+            path
+        );
         None
     }
 
@@ -263,9 +394,20 @@ impl LanguageCoordinator {
         &self,
         identifier: &str,
     ) -> Option<(String, LanguageLoadResult)> {
+        log::debug!(
+            target: "kakehashi::language_detection",
+            "Resolving injection language for identifier='{}'",
+            identifier
+        );
+
         // 1. Try direct identifier first
         let direct_result = self.ensure_language_loaded(identifier);
         if direct_result.success {
+            log::debug!(
+                target: "kakehashi::language_detection",
+                "Resolved injection '{}' via direct identifier",
+                identifier
+            );
             return Some((identifier.to_string(), direct_result));
         }
 
@@ -273,10 +415,21 @@ impl LanguageCoordinator {
         if let Some(normalized) = super::alias::normalize_alias(identifier) {
             let alias_result = self.ensure_language_loaded(&normalized);
             if alias_result.success {
+                log::debug!(
+                    target: "kakehashi::language_detection",
+                    "Resolved injection '{}' -> '{}' via alias normalization",
+                    identifier,
+                    normalized
+                );
                 return Some((normalized, alias_result));
             }
         }
 
+        log::debug!(
+            target: "kakehashi::language_detection",
+            "Failed to resolve injection language for identifier='{}'",
+            identifier
+        );
         None
     }
 
@@ -1052,5 +1205,145 @@ mod tests {
         );
         // Note: We can't directly check injection queries through the coordinator API
         // but the events confirm they were processed
+    }
+
+    // Tests for alias resolution
+
+    #[test]
+    fn test_alias_resolution_detects_canonical_language() {
+        // When languageId "rmd" is aliased to "markdown" and markdown parser exists,
+        // detect_language should return "markdown"
+        let coordinator = LanguageCoordinator::new();
+
+        // Register "markdown" parser (using rust as a stand-in)
+        coordinator.register_language_for_test("markdown", tree_sitter_rust::LANGUAGE.into());
+
+        // Build alias map: "rmd" → "markdown"
+        let mut languages = HashMap::new();
+        languages.insert(
+            "markdown".to_string(),
+            crate::config::settings::LanguageConfig {
+                aliases: Some(vec!["rmd".to_string(), "qmd".to_string()]),
+                ..Default::default()
+            },
+        );
+        coordinator.build_alias_map(&languages);
+
+        // Detection with languageId "rmd" should resolve to "markdown"
+        let result = coordinator.detect_language("/path/to/file.Rmd", Some("rmd"), "");
+        assert_eq!(
+            result,
+            Some("markdown".to_string()),
+            "rmd should resolve to markdown via alias"
+        );
+
+        // Also test qmd
+        let result = coordinator.detect_language("/path/to/file.qmd", Some("qmd"), "");
+        assert_eq!(
+            result,
+            Some("markdown".to_string()),
+            "qmd should also resolve to markdown via alias"
+        );
+    }
+
+    #[test]
+    fn test_alias_resolution_prefers_direct_language() {
+        // When languageId directly has a parser, use it (don't check alias)
+        let coordinator = LanguageCoordinator::new();
+
+        // Register both "rmd" and "markdown" as separate parsers
+        coordinator.register_language_for_test("rmd", tree_sitter_rust::LANGUAGE.into());
+        coordinator.register_language_for_test("markdown", tree_sitter_rust::LANGUAGE.into());
+
+        // Build alias map: "rmd" → "markdown"
+        let mut languages = HashMap::new();
+        languages.insert(
+            "markdown".to_string(),
+            crate::config::settings::LanguageConfig {
+                aliases: Some(vec!["rmd".to_string()]),
+                ..Default::default()
+            },
+        );
+        coordinator.build_alias_map(&languages);
+
+        // Detection with languageId "rmd" should use "rmd" directly (not alias)
+        let result = coordinator.detect_language("/path/to/file.Rmd", Some("rmd"), "");
+        assert_eq!(
+            result,
+            Some("rmd".to_string()),
+            "Direct languageId should be preferred over alias"
+        );
+    }
+
+    #[test]
+    fn test_alias_resolution_skipped_when_no_parser_for_canonical() {
+        // When alias points to a language without a parser, continue fallback
+        let coordinator = LanguageCoordinator::new();
+
+        // Don't register any parser - only the alias mapping
+
+        // Build alias map: "rmd" → "markdown"
+        let mut languages = HashMap::new();
+        languages.insert(
+            "markdown".to_string(),
+            crate::config::settings::LanguageConfig {
+                aliases: Some(vec!["rmd".to_string()]),
+                ..Default::default()
+            },
+        );
+        coordinator.build_alias_map(&languages);
+
+        // Detection should return None (alias found but no parser for "markdown")
+        let result = coordinator.detect_language("/path/to/file.Rmd", Some("rmd"), "");
+        assert_eq!(
+            result, None,
+            "Should return None when alias target has no parser"
+        );
+    }
+
+    #[test]
+    fn test_alias_map_cleared_on_reload() {
+        // Verify that alias map is cleared and rebuilt when settings change
+        let coordinator = LanguageCoordinator::new();
+
+        // First config: "rmd" → "markdown"
+        let mut languages1 = HashMap::new();
+        languages1.insert(
+            "markdown".to_string(),
+            crate::config::settings::LanguageConfig {
+                aliases: Some(vec!["rmd".to_string()]),
+                ..Default::default()
+            },
+        );
+        coordinator.build_alias_map(&languages1);
+
+        // Verify first mapping
+        assert_eq!(
+            coordinator.resolve_alias("rmd"),
+            Some("markdown".to_string())
+        );
+
+        // Second config: no aliases for markdown, "jsx" → "javascript"
+        let mut languages2 = HashMap::new();
+        languages2.insert(
+            "javascript".to_string(),
+            crate::config::settings::LanguageConfig {
+                aliases: Some(vec!["jsx".to_string()]),
+                ..Default::default()
+            },
+        );
+        coordinator.build_alias_map(&languages2);
+
+        // Old alias should be gone
+        assert_eq!(
+            coordinator.resolve_alias("rmd"),
+            None,
+            "Old alias should be cleared after rebuild"
+        );
+        // New alias should work
+        assert_eq!(
+            coordinator.resolve_alias("jsx"),
+            Some("javascript".to_string())
+        );
     }
 }

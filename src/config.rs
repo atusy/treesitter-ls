@@ -135,6 +135,8 @@ pub(crate) fn resolve_language_settings_with_wildcard(
                 queries: s.queries.clone().or_else(|| w.queries.clone()),
                 // Deep merge bridge HashMaps: wildcard + specific
                 bridge: merge_bridge_maps(&w.bridge, &s.bridge),
+                // Aliases are not inherited from wildcard - they're specific to each language
+                aliases: s.aliases.clone(),
             })
         }
         (Some(w), None) => Some(w.clone()),
@@ -242,7 +244,12 @@ impl From<&LanguageConfig> for LanguageSettings {
             None
         };
 
-        LanguageSettings::with_bridge(config.library.clone(), queries, config.bridge.clone())
+        LanguageSettings {
+            parser: config.library.clone(),
+            queries,
+            bridge: config.bridge.clone(),
+            aliases: config.aliases.clone(),
+        }
     }
 }
 
@@ -296,6 +303,7 @@ impl From<&LanguageSettings> for LanguageConfig {
                 Some(injections)
             },
             bridge: settings.bridge.clone(),
+            aliases: settings.aliases.clone(),
         }
     }
 }
@@ -421,6 +429,10 @@ fn merge_languages(
                     .bridge
                     .clone()
                     .or_else(|| base_config.bridge.clone());
+                base_config.aliases = overlay_config
+                    .aliases
+                    .clone()
+                    .or_else(|| base_config.aliases.clone());
             })
             .or_insert(overlay_config);
     }
@@ -562,6 +574,8 @@ pub(crate) fn resolve_language_with_wildcard(
                 injections: s.injections.clone().or_else(|| w.injections.clone()),
                 // Deep merge bridge HashMaps: wildcard + specific
                 bridge: merge_bridge_maps(&w.bridge, &s.bridge),
+                // Aliases are not merged from wildcard - they're specific to each language
+                aliases: s.aliases.clone(),
             })
         }
         (Some(w), None) => Some(w.clone()),
@@ -645,11 +659,7 @@ mod tests {
             "rust".to_string(),
             LanguageConfig {
                 library: Some("/fallback/rust.so".to_string()),
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
-                bridge: None,
+                ..Default::default()
             },
         );
 
@@ -666,11 +676,7 @@ mod tests {
             "rust".to_string(),
             LanguageConfig {
                 library: Some("/primary/rust.so".to_string()),
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
-                bridge: None,
+                ..Default::default()
             },
         );
 
@@ -1093,11 +1099,9 @@ mod tests {
     fn test_language_settings_from_config_preserves_injections() {
         let config = LanguageConfig {
             library: Some("/path/to/parser.so".to_string()),
-            queries: None,
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
-            locals: None,
             injections: Some(vec!["/path/to/injections.scm".to_string()]),
-            bridge: None,
+            ..Default::default()
         };
 
         let settings: LanguageSettings = LanguageSettings::from(&config);
@@ -1130,11 +1134,10 @@ mod tests {
             "python".to_string(),
             LanguageConfig {
                 library: Some("/usr/lib/python.so".to_string()),
-                queries: None,
                 highlights: Some(vec!["/usr/share/python/highlights.scm".to_string()]),
                 locals: Some(vec!["/usr/share/python/locals.scm".to_string()]),
-                injections: None,
                 bridge: Some(user_bridge),
+                ..Default::default()
             },
         );
 
@@ -1151,12 +1154,11 @@ mod tests {
         project_languages.insert(
             "python".to_string(),
             LanguageConfig {
-                library: None, // Not specified - should inherit from user
-                queries: None,
+                // library: None - Not specified - should inherit from user
                 highlights: Some(vec!["./queries/python-highlights.scm".to_string()]),
-                locals: None, // Not specified - should inherit from user
-                injections: None,
-                bridge: None, // Not specified - should inherit from user
+                // locals: None - Not specified - should inherit from user
+                // bridge: None - Not specified - should inherit from user
+                ..Default::default()
             },
         );
 
@@ -1205,11 +1207,7 @@ mod tests {
             "python".to_string(),
             LanguageConfig {
                 library: Some("/usr/lib/python.so".to_string()),
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
-                bridge: None,
+                ..Default::default()
             },
         );
 
@@ -1226,11 +1224,7 @@ mod tests {
             "rust".to_string(),
             LanguageConfig {
                 library: Some("/project/rust.so".to_string()),
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
-                bridge: None,
+                ..Default::default()
             },
         );
 
@@ -1753,11 +1747,9 @@ mod tests {
             "_".to_string(),
             LanguageConfig {
                 library: Some("/default/path.so".to_string()),
-                queries: None,
                 highlights: Some(vec!["/default/highlights.scm".to_string()]),
-                locals: None,
-                injections: None,
                 bridge: Some(wildcard_bridge),
+                ..Default::default()
             },
         );
 
@@ -1803,11 +1795,9 @@ mod tests {
             "_".to_string(),
             LanguageConfig {
                 library: Some("/default/path.so".to_string()),
-                queries: None,
                 highlights: Some(vec!["/default/highlights.scm".to_string()]),
-                locals: None,
-                injections: None,
                 bridge: Some(wildcard_bridge),
+                ..Default::default()
             },
         );
 
@@ -1821,12 +1811,10 @@ mod tests {
         languages.insert(
             "python".to_string(),
             LanguageConfig {
-                library: None, // Should inherit from _
-                queries: None,
-                highlights: None, // Should inherit from _
-                locals: None,
-                injections: None,
+                // library: None - Should inherit from _
+                // highlights: None - Should inherit from _
                 bridge: Some(python_bridge),
+                ..Default::default()
             },
         );
 
@@ -1890,11 +1878,8 @@ mod tests {
             "python".to_string(),
             LanguageConfig {
                 library: Some("/python/path.so".to_string()),
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
                 bridge: Some(python_bridge),
+                ..Default::default()
             },
         );
 
@@ -1944,11 +1929,8 @@ mod tests {
             "_".to_string(),
             LanguageConfig {
                 library: Some("/default/path.so".to_string()),
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
                 bridge: Some(wildcard_bridge),
+                ..Default::default()
             },
         );
 
@@ -2008,11 +1990,8 @@ mod tests {
             "_".to_string(),
             LanguageConfig {
                 library: Some("/default/path.so".to_string()),
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
                 bridge: Some(wildcard_bridge),
+                ..Default::default()
             },
         );
 
@@ -2026,12 +2005,9 @@ mod tests {
         languages.insert(
             "python".to_string(),
             LanguageConfig {
-                library: None, // Inherits from wildcard
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
+                // library: None - Inherits from wildcard
                 bridge: Some(python_bridge),
+                ..Default::default()
             },
         );
 
@@ -2523,12 +2499,9 @@ mod tests {
         languages.insert(
             "_".to_string(),
             LanguageConfig {
-                library: None,
-                queries: None,
                 highlights: Some(vec!["/default/highlights.scm".to_string()]),
-                locals: None,
-                injections: None,
                 bridge: Some(wildcard_bridge),
+                ..Default::default()
             },
         );
 
@@ -2538,12 +2511,9 @@ mod tests {
         languages.insert(
             "markdown".to_string(),
             LanguageConfig {
-                library: None,
-                queries: None,
-                highlights: None, // Should inherit from wildcard
-                locals: None,
-                injections: None,
+                // highlights: None - Should inherit from wildcard
                 bridge: Some(markdown_bridge),
+                ..Default::default()
             },
         );
 
@@ -2798,5 +2768,133 @@ mod tests {
             !rmd_settings.is_language_bridgeable("python"),
             "Bridge router should block python for rmd (empty filter)"
         );
+    }
+
+    // Regression test: aliases must be merged in merge_languages()
+    // Bug: When aliases field was added to LanguageConfig, merge_languages() was not
+    // updated to merge it. This caused aliases from user config to be lost when
+    // project config also defined the same language.
+
+    #[test]
+    fn test_merge_all_languages_preserves_aliases() {
+        // User config defines markdown with aliases=["rmd"]
+        // Project config adds highlights for markdown but doesn't set aliases
+        // Result should preserve aliases from user config
+        let mut user_languages = HashMap::new();
+        user_languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                library: Some("/usr/lib/markdown.so".to_string()),
+                aliases: Some(vec!["rmd".to_string(), "qmd".to_string()]),
+                ..Default::default()
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: user_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        // Project only adds highlights, doesn't set aliases
+        let mut project_languages = HashMap::new();
+        project_languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                highlights: Some(vec!["./queries/markdown-highlights.scm".to_string()]),
+                // aliases: None - should inherit from user
+                ..Default::default()
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: project_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // Markdown should exist
+        assert!(result.languages.contains_key("markdown"));
+        let markdown = &result.languages["markdown"];
+
+        // Library: inherited from user
+        assert_eq!(markdown.library, Some("/usr/lib/markdown.so".to_string()));
+
+        // Highlights: overridden by project
+        assert_eq!(
+            markdown.highlights,
+            Some(vec!["./queries/markdown-highlights.scm".to_string()])
+        );
+
+        // Aliases: MUST be inherited from user (this was the bug)
+        assert!(
+            markdown.aliases.is_some(),
+            "aliases should be preserved from user config"
+        );
+        let aliases = markdown.aliases.as_ref().unwrap();
+        assert_eq!(aliases.len(), 2);
+        assert!(aliases.contains(&"rmd".to_string()));
+        assert!(aliases.contains(&"qmd".to_string()));
+    }
+
+    #[test]
+    fn test_merge_all_languages_project_aliases_override_user() {
+        // When project explicitly sets aliases, it should override user config
+        let mut user_languages = HashMap::new();
+        user_languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                aliases: Some(vec!["rmd".to_string()]),
+                ..Default::default()
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: user_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        // Project overrides aliases
+        let mut project_languages = HashMap::new();
+        project_languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                aliases: Some(vec!["qmd".to_string(), "mdx".to_string()]),
+                ..Default::default()
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: project_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        let markdown = &result.languages["markdown"];
+
+        // Aliases: project values should win
+        assert!(markdown.aliases.is_some());
+        let aliases = markdown.aliases.as_ref().unwrap();
+        assert_eq!(aliases.len(), 2);
+        assert!(aliases.contains(&"qmd".to_string()));
+        assert!(aliases.contains(&"mdx".to_string()));
+        assert!(!aliases.contains(&"rmd".to_string())); // User's alias should be gone
     }
 }
