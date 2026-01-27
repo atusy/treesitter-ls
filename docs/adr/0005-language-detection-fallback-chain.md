@@ -26,87 +26,105 @@ This applies to both document-level language detection and injected language res
 2. **Injection-level**: Resolving embedded languages within a parsed document
 
 ```
-1. LSP languageId  →  Check if parser available  →  If yes: use it
-                                                 →  If no: continue
-2. Alias resolution →  Map to canonical name     →  Check if parser available  →  If yes: use it
-                                                                               →  If no: continue
-3. Heuristic       →  Check if parser available  →  If yes: use it
-                                                 →  If no: continue
-4. File extension  →  Check if parser available  →  If yes: use it
-                                                 →  If no: return None
+1. LSP languageId  →  Try direct  →  Try alias  →  If available: use it
+                                                →  If no: continue
+2. Heuristic       →  Try direct  →  Try alias  →  If available: use it
+                                                →  If no: continue
+3. File extension  →  Try direct  →  Try alias  →  If available: use it
+                                                →  If no: return None
 ```
 
 ### Priority Order Rationale
+
+Each detection method follows the **detect → alias resolution → availability check** pattern:
 
 1. **LSP languageId (highest priority)**
    - Client has full context: file path, content, user preferences, workspace settings
    - Already handles complex cases: `.tsx` vs `.ts`, polyglot files, user overrides
    - Trust the client—it knows best
 
-2. **Alias resolution (second priority)**
-   - Maps alternative languageId values to canonical parser names
-   - Configured via `aliases` field in language config:
-     ```toml
-     [languages.markdown]
-     aliases = ["rmd", "qmd"]
-     ```
-   - Handles cases where editors send non-standard languageIds that the user cannot control
-   - Example: Editor sends `rmd` for R Markdown files → alias maps to `markdown` parser
-
-3. **Heuristic analysis (middle priority)**
+2. **Heuristic analysis (middle priority)**
    - Shebang detection: `#!/usr/bin/env python` → python
    - Magic comments: `# -*- mode: ruby -*-` → ruby
    - File patterns: `Makefile` → make, `Dockerfile` → dockerfile
    - Useful when client sends generic languageId (e.g., "plaintext")
    - Candidate implementation: syntect's `find_syntax_for_file` (reads first line for shebang/magic)
 
-4. **File extension (lowest priority)**
+3. **File extension (lowest priority)**
    - Strips the dot: `.rs` → `rs`, `.py` → `py`
    - No mapping — uses extension directly as parser name candidate
    - Fallback when above methods fail or return unavailable parsers
 
+### Alias Resolution as Sub-step
+
+Alias resolution is applied **after each detection method**, not as a separate step in the chain. This is configured via the `aliases` field in language config:
+
+```toml
+[languages.markdown]
+aliases = ["rmd", "qmd"]
+```
+
+This ensures:
+- **Consistent behavior**: All detection paths apply the same alias logic
+- **User control**: Users can define mappings that work at any detection level
+- **Alignment with injection**: Document-level and injection-level detection behave the same way
+
+Example scenarios:
+- Editor sends `languageId: "rmd"` → alias resolves to `markdown` → parser found
+- Shebang returns `python3` → no parser → alias resolves to `python` → parser found
+- Extension `.jsx` → no parser → alias resolves to `javascript` → parser found
+
 ### Availability Check
 
-Each detection method returns a candidate language. Before accepting it:
+Each detection method tries direct match first, then alias resolution:
 
 ```rust
 fn detect_language(&self, path: &str, language_id: Option<&str>, content: &str) -> Option<String> {
-    // 1. Try languageId directly
+    // 1. Try languageId
     if let Some(lang_id) = language_id {
-        if self.has_parser_available(lang_id) {
-            return Some(lang_id.to_string());
-        }
-
-        // 2. Try alias resolution (e.g., "rmd" → "markdown")
-        if let Some(canonical) = self.resolve_alias(lang_id) {
-            if self.has_parser_available(&canonical) {
-                return Some(canonical);
-            }
+        if let Some(result) = self.try_with_alias_fallback(lang_id) {
+            return Some(result);
         }
     }
 
-    // 3. Try heuristics (shebang, etc.)
+    // 2. Try heuristics (shebang, etc.)
     if let Some(candidate) = self.detect_from_heuristics(path, content) {
-        if self.has_parser_available(&candidate) {
-            return Some(candidate);
+        if let Some(result) = self.try_with_alias_fallback(&candidate) {
+            return Some(result);
         }
     }
 
-    // 4. Try file extension
+    // 3. Try file extension
     if let Some(candidate) = self.detect_from_extension(path) {
-        if self.has_parser_available(&candidate) {
-            return Some(candidate);
+        if let Some(result) = self.try_with_alias_fallback(&candidate) {
+            return Some(result);
         }
     }
 
+    None
+}
+
+/// Helper: Try candidate directly, then with config-based alias
+fn try_with_alias_fallback(&self, candidate: &str) -> Option<String> {
+    // Direct match
+    if self.has_parser_available(candidate) {
+        return Some(candidate.to_string());
+    }
+    // Config-based alias
+    if let Some(canonical) = self.resolve_alias(candidate) {
+        if self.has_parser_available(&canonical) {
+            return Some(canonical);
+        }
+    }
     None
 }
 ```
 
 This means:
 - If client sends `languageId: "rmd"` and alias maps `rmd` → `markdown`, use the markdown parser
-- If client sends `languageId: "typescript"` but only JavaScript parser is loaded, fall through to check if extension `.ts` maps to an available parser
-- If shebang says `python3` but Python parser isn't installed, continue to extension check
+- If shebang says `python3` and alias maps `python3` → `python`, use the python parser
+- If extension is `.jsx` and alias maps `jsx` → `javascript`, use the javascript parser
+- If no alias matches, continue to the next detection method
 
 ### Language Injection
 
