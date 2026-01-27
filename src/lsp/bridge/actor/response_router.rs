@@ -25,7 +25,8 @@ pub(crate) enum RouteResult {
     Delivered,
     /// Request ID was found but the receiver was dropped (requester gave up).
     ReceiverDropped,
-    /// No pending request found for this ID.
+    /// No pending request found for this ID, or message was not a response
+    /// (e.g., notification without an ID field).
     NotFound,
 }
 

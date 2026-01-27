@@ -219,7 +219,7 @@ pub struct LanguageServerPool {
     ///
     /// When a handshake task panics (JoinError), we increment this counter.
     /// When handshake succeeds, we reset it to 0.
-    /// If panic count exceeds MAX_CONSECUTIVE_PANICS, we stop retrying.
+    /// If panic count reaches MAX_CONSECUTIVE_PANICS, we stop retrying.
     ///
     /// This prevents infinite retry loops when a server's handshake consistently panics.
     consecutive_panic_counts: std::sync::Mutex<HashMap<String, u32>>,
@@ -618,18 +618,18 @@ impl LanguageServerPool {
                 }
                 Ok(Err(e)) => {
                     // Init failed with io::Error - transition to Failed
-                    let msg = e.to_string();
+                    // Preserve the original ErrorKind for proper error categorization
                     log::error!(
                         target: "kakehashi::bridge::init",
                         "[{}] LSP handshake failed: {}",
                         server_name_for_log,
-                        msg
+                        e
                     );
                     handle_for_handshake.set_state(ConnectionState::Failed);
-                    Err(io::Error::other(format!(
-                        "bridge: handshake failed: {}",
-                        msg
-                    )))
+                    Err(io::Error::new(
+                        e.kind(),
+                        format!("bridge: handshake failed: {}", e),
+                    ))
                 }
                 Err(_elapsed) => {
                     // Timeout occurred - transition to Failed
@@ -661,28 +661,44 @@ impl LanguageServerPool {
             }
             Ok(Err(e)) => Err(e),
             Err(join_err) => {
-                // Task panicked - track consecutive panic count to avoid infinite retry
-                let new_count = {
-                    let mut counts = self
-                        .consecutive_panic_counts
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
-                    let count = counts.entry(server_name.to_string()).or_insert(0);
-                    *count += 1;
-                    *count
-                };
-                log::error!(
-                    target: "kakehashi::bridge::init",
-                    "[{}] Handshake task panicked (consecutive count: {}): {}",
-                    server_name,
-                    new_count,
-                    join_err
-                );
                 handle.set_state(ConnectionState::Failed);
-                Err(io::Error::other(format!(
-                    "bridge: handshake task panicked: {}",
-                    join_err
-                )))
+
+                // Distinguish panic from cancellation - only panics should trip circuit breaker
+                if join_err.is_panic() {
+                    // Task panicked - track consecutive panic count to avoid infinite retry
+                    let new_count = {
+                        let mut counts = self
+                            .consecutive_panic_counts
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        let count = counts.entry(server_name.to_string()).or_insert(0);
+                        *count += 1;
+                        *count
+                    };
+                    log::error!(
+                        target: "kakehashi::bridge::init",
+                        "[{}] Handshake task panicked (consecutive count: {}): {}",
+                        server_name,
+                        new_count,
+                        join_err
+                    );
+                    Err(io::Error::other(format!(
+                        "bridge: handshake task panicked: {}",
+                        join_err
+                    )))
+                } else {
+                    // Task was cancelled (e.g., runtime shutdown) - don't increment panic count
+                    log::warn!(
+                        target: "kakehashi::bridge::init",
+                        "[{}] Handshake task cancelled: {}",
+                        server_name,
+                        join_err
+                    );
+                    Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "bridge: handshake task cancelled",
+                    ))
+                }
             }
         }
     }
@@ -701,6 +717,7 @@ impl LanguageServerPool {
     ///
     /// # Returns
     /// * `Ok(())` - Cancel was forwarded, or silently dropped if not forwardable
+    /// * `Err(e)` - I/O error occurred while writing to the downstream server
     ///
     /// # Silent Drop Cases (Best-Effort Semantics)
     ///
@@ -709,6 +726,8 @@ impl LanguageServerPool {
     /// - No connection exists for the server
     /// - Connection is not in Ready state (still initializing or failed)
     /// - Upstream ID not found in router (request already completed)
+    ///
+    /// Actual I/O errors when writing to the downstream server are propagated as `Err`.
     pub(crate) async fn forward_cancel(
         &self,
         server_name: &str,
