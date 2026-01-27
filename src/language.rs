@@ -5,6 +5,7 @@ pub mod events;
 pub mod extension;
 pub mod failed_parsers;
 pub mod filetypes;
+mod heuristic;
 pub mod injection;
 pub mod loader;
 pub mod parser_pool;
@@ -14,7 +15,6 @@ pub mod query_predicates;
 pub mod query_store;
 pub(crate) mod region_id_tracker;
 pub mod registry;
-pub mod shebang;
 
 pub use config_store::ConfigStore;
 pub use coordinator::LanguageCoordinator;
@@ -38,4 +38,3 @@ pub(crate) use region_id_tracker::RegionIdTracker;
 
 // Re-export detection functions
 pub use extension::detect_from_extension;
-pub use shebang::detect_from_shebang;

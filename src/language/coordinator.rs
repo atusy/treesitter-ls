@@ -296,7 +296,7 @@ impl LanguageCoordinator {
     /// Priority order (ADR-0005):
     /// Each detection method follows: detect → alias resolution → availability check
     /// 1. LSP languageId (if not "plaintext")
-    /// 2. Shebang detection from content
+    /// 2. Heuristic detection (shebang, mode line, filename patterns via syntect)
     /// 3. Extension-based detection from path
     ///
     /// Visibility: Public - called by LSP layer (lsp_impl) for document
@@ -329,22 +329,27 @@ impl LanguageCoordinator {
             return Some(result);
         }
 
-        // 2. Try shebang detection (with alias fallback)
-        if let Some(shebang_lang) = super::shebang::detect_from_shebang(content) {
-            if let Some(result) = self.try_with_alias_fallback(&shebang_lang) {
+        // 2. Try heuristic detection: first line (shebang, mode line) and filename patterns
+        //    Uses syntect's Sublime Text syntax definitions for comprehensive coverage.
+        let heuristic_candidates = [
+            super::heuristic::detect_from_first_line(content),
+            super::heuristic::detect_from_filename(path),
+        ];
+        for candidate in heuristic_candidates.into_iter().flatten() {
+            if let Some(result) = self.try_with_alias_fallback(&candidate) {
                 log::debug!(
                     target: "kakehashi::language_detection",
-                    "Detected '{}' via shebang '{}' for path='{}'",
+                    "Detected '{}' via heuristic '{}' for path='{}'",
                     result,
-                    shebang_lang,
+                    candidate,
                     path
                 );
                 return Some(result);
             } else {
                 log::debug!(
                     target: "kakehashi::language_detection",
-                    "Shebang detected '{}' but no parser available, continuing fallback",
-                    shebang_lang
+                    "Heuristic detected '{}' but no parser available, continuing fallback",
+                    candidate
                 );
             }
         }
@@ -887,12 +892,12 @@ mod tests {
     }
 
     #[test]
-    fn test_shebang_used_when_language_id_plaintext() {
+    fn test_heuristic_used_when_language_id_plaintext() {
         let coordinator = LanguageCoordinator::new();
 
-        // When languageId is "plaintext", fallback to shebang detection
+        // When languageId is "plaintext", fallback to heuristic detection
         // Note: No parser loaded, so will return None (graceful degradation)
-        // But the shebang detection path is still exercised
+        // But the heuristic detection path is still exercised
         let content = "#!/usr/bin/env python\nprint('hello')";
         let result = coordinator.detect_language("/script", Some("plaintext"), content);
 
@@ -902,14 +907,14 @@ mod tests {
     }
 
     #[test]
-    fn test_shebang_skipped_when_language_id_has_parser() {
+    fn test_heuristic_skipped_when_language_id_has_parser() {
         let coordinator = LanguageCoordinator::new();
 
-        // When languageId has an available parser, don't run shebang detection
-        // This tests lazy I/O - shebang parsing is skipped entirely
+        // When languageId has an available parser, don't run heuristic detection
+        // This tests lazy evaluation - heuristic parsing is skipped entirely
 
         // Scenario: languageId is "rust" but no rust parser loaded
-        // So it falls through to shebang, but no python parser either
+        // So it falls through to heuristic, but no python parser either
         let content = "#!/usr/bin/env python\nprint('hello')";
         let result = coordinator.detect_language("/script", Some("rust"), content);
 
@@ -920,16 +925,16 @@ mod tests {
     }
 
     #[test]
-    fn test_extension_fallback_after_shebang() {
+    fn test_extension_fallback_after_heuristic() {
         let coordinator = LanguageCoordinator::new();
 
-        // When shebang detection fails (no parser), extension fallback runs
+        // When heuristic detection fails (no parser), extension fallback runs
         // File has .rs extension but content has python shebang
         let content = "#!/usr/bin/env python\nprint('hello')";
         let result = coordinator.detect_language("/path/to/file.rs", None, content);
 
         // No parsers loaded, so result is None
-        // But the chain tried: languageId (None) -> shebang (python, no parser) -> extension (rs, no parser)
+        // But the chain tried: languageId (None) -> heuristic (python, no parser) -> extension (rs, no parser)
         assert_eq!(result, None);
     }
 
@@ -937,10 +942,10 @@ mod tests {
     fn test_full_detection_chain() {
         let coordinator = LanguageCoordinator::new();
 
-        // Full chain test: languageId -> shebang -> extension
+        // Full chain test: languageId -> heuristic -> extension
         // All methods tried, none have parsers available
 
-        // languageId = "plaintext" (skipped), shebang = python (no parser), extension = rs (no parser)
+        // languageId = "plaintext" (skipped), heuristic = python (no parser), extension = rs (no parser)
         let content = "#!/usr/bin/env python\nprint('hello')";
         let result = coordinator.detect_language("/path/to/file.rs", Some("plaintext"), content);
 
@@ -951,10 +956,22 @@ mod tests {
     fn test_detection_chain_returns_none_when_all_fail() {
         let coordinator = LanguageCoordinator::new();
 
-        // No languageId, no shebang, no extension -> None
+        // No languageId, no heuristic match, no extension -> None
         let result =
-            coordinator.detect_language("/Makefile", None, "all: build\n\nbuild:\n\techo hello");
+            coordinator.detect_language("/random_file", None, "random content without shebang");
 
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_heuristic_detects_makefile_by_filename() {
+        let coordinator = LanguageCoordinator::new();
+
+        // Makefile has no extension but should be detected by filename pattern
+        // No parser loaded, so returns None (but heuristic path is exercised)
+        let result = coordinator.detect_language("/path/to/Makefile", None, "all: build");
+
+        // No make parser loaded
         assert_eq!(result, None);
     }
 
