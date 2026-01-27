@@ -114,7 +114,7 @@ pub fn infer_query_kind(path: &str) -> Option<QueryKind> {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
 pub struct LanguageConfig {
     pub library: Option<String>,
     /// Unified query file configuration (new format)
@@ -131,6 +131,10 @@ pub struct LanguageConfig {
     /// - Some({}): Bridge NOTHING (disable bridging for this host)
     /// - Some({ python: { enabled: true } }): Bridge only enabled languages
     pub bridge: Option<HashMap<String, BridgeLanguageConfig>>,
+    /// Alternative languageId values that map to this language.
+    /// Example: `[languages.markdown]` with `aliases = ["rmd", "qmd"]`
+    /// allows editors sending languageId "rmd" or "qmd" to use the markdown parser.
+    pub aliases: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
@@ -661,11 +665,8 @@ mod tests {
                 lang.to_string(),
                 LanguageConfig {
                     library: Some(format!("/usr/lib/libtree-sitter-{}.so", lang)),
-                    queries: None,
                     highlights: Some(vec![format!("/etc/tree-sitter/{}/highlights.scm", lang)]),
-                    locals: None,
-                    injections: None,
-                    bridge: None,
+                    ..Default::default()
                 },
             );
         }
@@ -684,11 +685,8 @@ mod tests {
         // Language detection now relies entirely on languageId from DidOpen
         let config = LanguageConfig {
             library: Some("/path/to/parser.so".to_string()),
-            queries: None,
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
-            locals: None,
-            injections: None,
-            bridge: None,
+            ..Default::default()
         };
 
         // Serialize and verify no filetypes in output
@@ -1271,6 +1269,56 @@ kind = "injections""#;
             infer_query_kind("very-local-injections.scm"),
             None,
             "very-local-injections.scm should not match"
+        );
+    }
+
+    #[test]
+    fn should_parse_language_config_with_aliases() {
+        // aliases allows mapping multiple languageId values to one parser
+        // Example: markdown parser handles rmd, qmd, mdx files
+        let config_toml = r#"
+            library = "/path/to/markdown.so"
+            aliases = ["rmd", "qmd", "mdx"]
+            highlights = ["/path/to/highlights.scm"]
+        "#;
+
+        let config: LanguageConfig = toml::from_str(config_toml).unwrap();
+
+        assert!(config.aliases.is_some(), "aliases field should be present");
+        let aliases = config.aliases.unwrap();
+        assert_eq!(aliases.len(), 3);
+        assert_eq!(aliases[0], "rmd");
+        assert_eq!(aliases[1], "qmd");
+        assert_eq!(aliases[2], "mdx");
+    }
+
+    #[test]
+    fn should_parse_language_config_without_aliases() {
+        // When aliases is omitted, it should be None
+        let config_toml = r#"
+            library = "/path/to/rust.so"
+            highlights = ["/path/to/highlights.scm"]
+        "#;
+
+        let config: LanguageConfig = toml::from_str(config_toml).unwrap();
+
+        assert!(config.aliases.is_none(), "omitted aliases should be None");
+    }
+
+    #[test]
+    fn should_parse_language_config_with_empty_aliases() {
+        // Empty aliases array should be Some([])
+        let config_toml = r#"
+            library = "/path/to/parser.so"
+            aliases = []
+        "#;
+
+        let config: LanguageConfig = toml::from_str(config_toml).unwrap();
+
+        assert!(config.aliases.is_some(), "empty aliases should be Some");
+        assert!(
+            config.aliases.as_ref().unwrap().is_empty(),
+            "should be empty vec"
         );
     }
 }

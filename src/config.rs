@@ -296,6 +296,7 @@ impl From<&LanguageSettings> for LanguageConfig {
                 Some(injections)
             },
             bridge: settings.bridge.clone(),
+            ..Default::default()
         }
     }
 }
@@ -562,6 +563,8 @@ pub(crate) fn resolve_language_with_wildcard(
                 injections: s.injections.clone().or_else(|| w.injections.clone()),
                 // Deep merge bridge HashMaps: wildcard + specific
                 bridge: merge_bridge_maps(&w.bridge, &s.bridge),
+                // Aliases are not merged from wildcard - they're specific to each language
+                aliases: s.aliases.clone(),
             })
         }
         (Some(w), None) => Some(w.clone()),
@@ -645,11 +648,7 @@ mod tests {
             "rust".to_string(),
             LanguageConfig {
                 library: Some("/fallback/rust.so".to_string()),
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
-                bridge: None,
+                ..Default::default()
             },
         );
 
@@ -666,11 +665,7 @@ mod tests {
             "rust".to_string(),
             LanguageConfig {
                 library: Some("/primary/rust.so".to_string()),
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
-                bridge: None,
+                ..Default::default()
             },
         );
 
@@ -1093,11 +1088,9 @@ mod tests {
     fn test_language_settings_from_config_preserves_injections() {
         let config = LanguageConfig {
             library: Some("/path/to/parser.so".to_string()),
-            queries: None,
             highlights: Some(vec!["/path/to/highlights.scm".to_string()]),
-            locals: None,
             injections: Some(vec!["/path/to/injections.scm".to_string()]),
-            bridge: None,
+            ..Default::default()
         };
 
         let settings: LanguageSettings = LanguageSettings::from(&config);
@@ -1130,11 +1123,10 @@ mod tests {
             "python".to_string(),
             LanguageConfig {
                 library: Some("/usr/lib/python.so".to_string()),
-                queries: None,
                 highlights: Some(vec!["/usr/share/python/highlights.scm".to_string()]),
                 locals: Some(vec!["/usr/share/python/locals.scm".to_string()]),
-                injections: None,
                 bridge: Some(user_bridge),
+                ..Default::default()
             },
         );
 
@@ -1151,12 +1143,11 @@ mod tests {
         project_languages.insert(
             "python".to_string(),
             LanguageConfig {
-                library: None, // Not specified - should inherit from user
-                queries: None,
+                // library: None - Not specified - should inherit from user
                 highlights: Some(vec!["./queries/python-highlights.scm".to_string()]),
-                locals: None, // Not specified - should inherit from user
-                injections: None,
-                bridge: None, // Not specified - should inherit from user
+                // locals: None - Not specified - should inherit from user
+                // bridge: None - Not specified - should inherit from user
+                ..Default::default()
             },
         );
 
@@ -1205,11 +1196,7 @@ mod tests {
             "python".to_string(),
             LanguageConfig {
                 library: Some("/usr/lib/python.so".to_string()),
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
-                bridge: None,
+                ..Default::default()
             },
         );
 
@@ -1226,11 +1213,7 @@ mod tests {
             "rust".to_string(),
             LanguageConfig {
                 library: Some("/project/rust.so".to_string()),
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
-                bridge: None,
+                ..Default::default()
             },
         );
 
@@ -1753,11 +1736,9 @@ mod tests {
             "_".to_string(),
             LanguageConfig {
                 library: Some("/default/path.so".to_string()),
-                queries: None,
                 highlights: Some(vec!["/default/highlights.scm".to_string()]),
-                locals: None,
-                injections: None,
                 bridge: Some(wildcard_bridge),
+                ..Default::default()
             },
         );
 
@@ -1803,11 +1784,9 @@ mod tests {
             "_".to_string(),
             LanguageConfig {
                 library: Some("/default/path.so".to_string()),
-                queries: None,
                 highlights: Some(vec!["/default/highlights.scm".to_string()]),
-                locals: None,
-                injections: None,
                 bridge: Some(wildcard_bridge),
+                ..Default::default()
             },
         );
 
@@ -1821,12 +1800,10 @@ mod tests {
         languages.insert(
             "python".to_string(),
             LanguageConfig {
-                library: None, // Should inherit from _
-                queries: None,
-                highlights: None, // Should inherit from _
-                locals: None,
-                injections: None,
+                // library: None - Should inherit from _
+                // highlights: None - Should inherit from _
                 bridge: Some(python_bridge),
+                ..Default::default()
             },
         );
 
@@ -1890,11 +1867,8 @@ mod tests {
             "python".to_string(),
             LanguageConfig {
                 library: Some("/python/path.so".to_string()),
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
                 bridge: Some(python_bridge),
+                ..Default::default()
             },
         );
 
@@ -1944,11 +1918,8 @@ mod tests {
             "_".to_string(),
             LanguageConfig {
                 library: Some("/default/path.so".to_string()),
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
                 bridge: Some(wildcard_bridge),
+                ..Default::default()
             },
         );
 
@@ -2008,11 +1979,8 @@ mod tests {
             "_".to_string(),
             LanguageConfig {
                 library: Some("/default/path.so".to_string()),
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
                 bridge: Some(wildcard_bridge),
+                ..Default::default()
             },
         );
 
@@ -2026,12 +1994,9 @@ mod tests {
         languages.insert(
             "python".to_string(),
             LanguageConfig {
-                library: None, // Inherits from wildcard
-                queries: None,
-                highlights: None,
-                locals: None,
-                injections: None,
+                // library: None - Inherits from wildcard
                 bridge: Some(python_bridge),
+                ..Default::default()
             },
         );
 
@@ -2523,12 +2488,9 @@ mod tests {
         languages.insert(
             "_".to_string(),
             LanguageConfig {
-                library: None,
-                queries: None,
                 highlights: Some(vec!["/default/highlights.scm".to_string()]),
-                locals: None,
-                injections: None,
                 bridge: Some(wildcard_bridge),
+                ..Default::default()
             },
         );
 
@@ -2538,12 +2500,9 @@ mod tests {
         languages.insert(
             "markdown".to_string(),
             LanguageConfig {
-                library: None,
-                queries: None,
-                highlights: None, // Should inherit from wildcard
-                locals: None,
-                injections: None,
+                // highlights: None - Should inherit from wildcard
                 bridge: Some(markdown_bridge),
+                ..Default::default()
             },
         );
 
