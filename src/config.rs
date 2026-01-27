@@ -422,6 +422,10 @@ fn merge_languages(
                     .bridge
                     .clone()
                     .or_else(|| base_config.bridge.clone());
+                base_config.aliases = overlay_config
+                    .aliases
+                    .clone()
+                    .or_else(|| base_config.aliases.clone());
             })
             .or_insert(overlay_config);
     }
@@ -2757,5 +2761,133 @@ mod tests {
             !rmd_settings.is_language_bridgeable("python"),
             "Bridge router should block python for rmd (empty filter)"
         );
+    }
+
+    // Regression test: aliases must be merged in merge_languages()
+    // Bug: When aliases field was added to LanguageConfig, merge_languages() was not
+    // updated to merge it. This caused aliases from user config to be lost when
+    // project config also defined the same language.
+
+    #[test]
+    fn test_merge_all_languages_preserves_aliases() {
+        // User config defines markdown with aliases=["rmd"]
+        // Project config adds highlights for markdown but doesn't set aliases
+        // Result should preserve aliases from user config
+        let mut user_languages = HashMap::new();
+        user_languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                library: Some("/usr/lib/markdown.so".to_string()),
+                aliases: Some(vec!["rmd".to_string(), "qmd".to_string()]),
+                ..Default::default()
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: user_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        // Project only adds highlights, doesn't set aliases
+        let mut project_languages = HashMap::new();
+        project_languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                highlights: Some(vec!["./queries/markdown-highlights.scm".to_string()]),
+                // aliases: None - should inherit from user
+                ..Default::default()
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: project_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        // Markdown should exist
+        assert!(result.languages.contains_key("markdown"));
+        let markdown = &result.languages["markdown"];
+
+        // Library: inherited from user
+        assert_eq!(markdown.library, Some("/usr/lib/markdown.so".to_string()));
+
+        // Highlights: overridden by project
+        assert_eq!(
+            markdown.highlights,
+            Some(vec!["./queries/markdown-highlights.scm".to_string()])
+        );
+
+        // Aliases: MUST be inherited from user (this was the bug)
+        assert!(
+            markdown.aliases.is_some(),
+            "aliases should be preserved from user config"
+        );
+        let aliases = markdown.aliases.as_ref().unwrap();
+        assert_eq!(aliases.len(), 2);
+        assert!(aliases.contains(&"rmd".to_string()));
+        assert!(aliases.contains(&"qmd".to_string()));
+    }
+
+    #[test]
+    fn test_merge_all_languages_project_aliases_override_user() {
+        // When project explicitly sets aliases, it should override user config
+        let mut user_languages = HashMap::new();
+        user_languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                aliases: Some(vec!["rmd".to_string()]),
+                ..Default::default()
+            },
+        );
+
+        let user_config = TreeSitterSettings {
+            search_paths: None,
+            languages: user_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        // Project overrides aliases
+        let mut project_languages = HashMap::new();
+        project_languages.insert(
+            "markdown".to_string(),
+            LanguageConfig {
+                aliases: Some(vec!["qmd".to_string(), "mdx".to_string()]),
+                ..Default::default()
+            },
+        );
+
+        let project_config = TreeSitterSettings {
+            search_paths: None,
+            languages: project_languages,
+            capture_mappings: HashMap::new(),
+            auto_install: None,
+            language_servers: None,
+        };
+
+        let result = merge_all(&[Some(user_config), Some(project_config)]);
+        assert!(result.is_some());
+        let result = result.unwrap();
+
+        let markdown = &result.languages["markdown"];
+
+        // Aliases: project values should win
+        assert!(markdown.aliases.is_some());
+        let aliases = markdown.aliases.as_ref().unwrap();
+        assert_eq!(aliases.len(), 2);
+        assert!(aliases.contains(&"qmd".to_string()));
+        assert!(aliases.contains(&"mdx".to_string()));
+        assert!(!aliases.contains(&"rmd".to_string())); // User's alias should be gone
     }
 }
