@@ -912,6 +912,46 @@ mod tests {
     }
 
     #[test]
+    fn test_injection_uses_first_line_detection() {
+        // When identifier doesn't match and token normalization fails,
+        // fall back to first-line (shebang/mode line) detection
+        let coordinator = LanguageCoordinator::new();
+
+        // Register "python" parser
+        coordinator.register_language_for_test("python", tree_sitter_rust::LANGUAGE.into());
+
+        // Injection with unknown identifier but Python shebang in content
+        let content = "#!/usr/bin/env python\nprint('hello')";
+        let result = coordinator.resolve_injection_language("script", content);
+
+        assert!(
+            result.is_some(),
+            "Should detect python via shebang when identifier is unknown"
+        );
+        let (resolved, load_result) = result.unwrap();
+        assert_eq!(resolved, "python");
+        assert!(load_result.success);
+    }
+
+    #[test]
+    fn test_injection_first_line_with_alias() {
+        // First-line detection should also try config alias resolution
+        let coordinator = LanguageCoordinator::new();
+
+        // Register "bash" parser
+        coordinator.register_language_for_test("bash", tree_sitter_rust::LANGUAGE.into());
+
+        // Content with bash shebang - syntect detects "bash" for #!/bin/bash
+        let content = "#!/bin/bash\necho hello";
+        let result = coordinator.resolve_injection_language("unknown", content);
+
+        assert!(result.is_some(), "Should detect bash via shebang");
+        let (resolved, load_result) = result.unwrap();
+        assert_eq!(resolved, "bash");
+        assert!(load_result.success);
+    }
+
+    #[test]
     fn test_load_settings_does_not_make_parser_available() {
         // Documents that load_settings alone does NOT make parsers available.
         // ensure_language_loaded must be called to actually load the parser.
