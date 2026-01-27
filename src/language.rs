@@ -1,7 +1,6 @@
 pub mod config_store;
 pub mod coordinator;
 pub mod events;
-pub mod extension;
 pub mod failed_parsers;
 pub mod filetypes;
 pub mod heuristic;
@@ -34,6 +33,3 @@ pub use injection::{
 
 // Re-export region ID tracking
 pub(crate) use region_id_tracker::RegionIdTracker;
-
-// Re-export detection functions
-pub use extension::detect_from_extension;

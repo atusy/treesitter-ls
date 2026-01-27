@@ -4,10 +4,16 @@
 //! - Token matching (e.g., "py", "js", "bash" from code fences)
 //! - Shebang lines (e.g., `#!/usr/bin/env python`)
 //! - Emacs/Vim mode lines (e.g., `# -*- mode: ruby -*-`)
-//! - File name patterns (e.g., `Makefile`, `Dockerfile`)
 //!
 //! Uses syntect's Sublime Text syntax definitions for comprehensive coverage.
 //! Part of the detection fallback chain (ADR-0005).
+//!
+//! ## Token Extraction from Paths
+//!
+//! The `extract_token_from_path` function enables unified detection by converting
+//! file paths to tokens that can be passed to `detect_from_token`:
+//! - Files with extension: `foo.py` → `"py"`
+//! - Files without extension: `Makefile` → `"Makefile"`
 
 use std::path::Path;
 use std::sync::LazyLock;
@@ -36,27 +42,20 @@ pub fn detect_from_first_line(content: &str) -> Option<String> {
     Some(normalize_syntax_name(&syntax.name))
 }
 
-/// Detect language from file name pattern (e.g., `Makefile`, `Dockerfile`).
+/// Extract a token from a file path for language detection.
 ///
-/// Tries two strategies:
-/// 1. Full filename as token (for special files like Makefile, Gemfile, Dockerfile)
-/// 2. File extension only (for regular files like file.rs, script.py)
+/// This enables unified detection by converting paths to tokens:
+/// - Files with extension: `foo.py` → `"py"` (extension)
+/// - Files without extension: `Makefile` → `"Makefile"` (basename)
 ///
-/// Returns the syntax name in lowercase if found, None otherwise.
-pub fn detect_from_filename(path: &str) -> Option<String> {
+/// The returned token can be passed to `detect_from_token` for syntect-based detection.
+pub(crate) fn extract_token_from_path(path: &str) -> Option<&str> {
     let path = Path::new(path);
     let filename = path.file_name()?.to_str()?;
 
-    // 1. Try full filename (handles Makefile, Gemfile, Dockerfile, etc.)
-    //    find_syntax_by_token searches: extension list first, then syntax name
-    if let Some(syntax) = SYNTAX_SET.find_syntax_by_token(filename) {
-        return Some(normalize_syntax_name(&syntax.name));
-    }
-
-    // 2. Try file extension only (handles file.rs, script.py, etc.)
-    let extension = path.extension()?.to_str()?;
-    let syntax = SYNTAX_SET.find_syntax_by_extension(extension)?;
-    Some(normalize_syntax_name(&syntax.name))
+    // If file has an extension, use extension; otherwise use basename
+    // This handles both "script.py" → "py" and "Makefile" → "Makefile"
+    path.extension().and_then(|e| e.to_str()).or(Some(filename))
 }
 
 /// Normalize syntect syntax name to Tree-sitter parser name.
@@ -174,60 +173,79 @@ mod tests {
         assert_eq!(detect_from_first_line(""), None);
     }
 
-    // File name pattern tests
+    // Token extraction from path tests
 
     #[test]
-    fn test_detect_makefile() {
+    fn test_extract_token_with_extension() {
+        // Files with extension return the extension
+        assert_eq!(extract_token_from_path("/path/to/file.rs"), Some("rs"));
+        assert_eq!(extract_token_from_path("/path/to/script.py"), Some("py"));
+        assert_eq!(extract_token_from_path("/path/to/app.js"), Some("js"));
+    }
+
+    #[test]
+    fn test_extract_token_without_extension() {
+        // Files without extension return the basename
         assert_eq!(
-            detect_from_filename("/path/to/Makefile"),
-            Some("make".to_string())
+            extract_token_from_path("/path/to/Makefile"),
+            Some("Makefile")
+        );
+        assert_eq!(
+            extract_token_from_path("/path/to/Dockerfile"),
+            Some("Dockerfile")
+        );
+        assert_eq!(extract_token_from_path("/path/to/Gemfile"), Some("Gemfile"));
+    }
+
+    #[test]
+    fn test_extract_token_hidden_file() {
+        // Hidden files without extension return the basename
+        assert_eq!(extract_token_from_path("/home/.bashrc"), Some(".bashrc"));
+        assert_eq!(
+            extract_token_from_path("/home/.gitignore"),
+            Some(".gitignore")
         );
     }
 
     #[test]
-    fn test_detect_dockerfile() {
-        // Note: syntect may not have Dockerfile in default syntaxes
-        // This test verifies the function doesn't panic on Dockerfile
-        let result = detect_from_filename("/path/to/Dockerfile");
-        // If syntect supports it, we get Some; otherwise None is acceptable
-        assert!(result.is_none() || result == Some("dockerfile".to_string()));
+    fn test_extract_token_unknown_file() {
+        // Unknown file still extracts basename
+        assert_eq!(
+            extract_token_from_path("/path/to/random_file"),
+            Some("random_file")
+        );
+    }
+
+    // Combined token extraction + detection tests (integration)
+
+    #[test]
+    fn test_path_to_token_to_language_rust() {
+        let token = extract_token_from_path("/path/to/main.rs").unwrap();
+        assert_eq!(detect_from_token(token), Some("rust".to_string()));
     }
 
     #[test]
-    fn test_detect_gemfile() {
+    fn test_path_to_token_to_language_python() {
+        let token = extract_token_from_path("/path/to/script.py").unwrap();
+        assert_eq!(detect_from_token(token), Some("python".to_string()));
+    }
+
+    #[test]
+    fn test_path_to_token_to_language_makefile() {
+        let token = extract_token_from_path("/path/to/Makefile").unwrap();
+        assert_eq!(detect_from_token(token), Some("make".to_string()));
+    }
+
+    #[test]
+    fn test_path_to_token_to_language_gemfile() {
+        let token = extract_token_from_path("/path/to/Gemfile").unwrap();
         // Gemfile is recognized as Ruby
-        let result = detect_from_filename("/path/to/Gemfile");
-        assert!(result.is_some());
+        assert!(detect_from_token(token).is_some());
     }
 
     #[test]
-    fn test_detect_unknown_filename() {
-        assert_eq!(detect_from_filename("/path/to/random_file"), None);
-    }
-
-    // Extension-based detection tests
-
-    #[test]
-    fn test_detect_rust_by_extension() {
-        assert_eq!(
-            detect_from_filename("/path/to/main.rs"),
-            Some("rust".to_string())
-        );
-    }
-
-    #[test]
-    fn test_detect_python_by_extension() {
-        assert_eq!(
-            detect_from_filename("/path/to/script.py"),
-            Some("python".to_string())
-        );
-    }
-
-    #[test]
-    fn test_detect_javascript_by_extension() {
-        assert_eq!(
-            detect_from_filename("/path/to/app.js"),
-            Some("javascript".to_string())
-        );
+    fn test_path_to_token_to_language_bashrc() {
+        let token = extract_token_from_path("/home/.bashrc").unwrap();
+        assert_eq!(detect_from_token(token), Some("bash".to_string()));
     }
 }

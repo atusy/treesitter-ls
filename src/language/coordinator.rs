@@ -373,33 +373,47 @@ impl LanguageCoordinator {
             last_candidate = Some(lang_id.to_string());
         }
 
-        // 2. Try heuristic detection: token, first line (shebang), filename patterns
+        // 2. Try heuristic detection: token, path-derived token, first line (shebang)
         //    Short-circuits on first successful match.
-        if let Some(candidate) = token.and_then(super::heuristic::detect_from_token) {
-            if let Some(result) = self.try_with_alias_fallback(&candidate) {
-                return (Some(result), "token", None);
-            }
-            last_candidate = Some(candidate);
-        }
+        //
+        // Token priority (ADR-0005):
+        // - Explicit token (e.g., code fence identifier) takes precedence
+        // - Path-derived token (extension or basename) is used as fallback
+        // - First line (shebang/mode line) for extensionless files
+        let effective_token = token.or_else(|| super::heuristic::extract_token_from_path(path));
 
-        if let Some(candidate) = super::heuristic::detect_from_filename(path) {
-            if let Some(result) = self.try_with_alias_fallback(&candidate) {
-                return (Some(result), "filename", None);
+        if let Some(tok) = effective_token {
+            // First try syntect-based detection (normalizes "py" → "python", etc.)
+            if let Some(candidate) = super::heuristic::detect_from_token(tok) {
+                if let Some(result) = self.try_with_alias_fallback(&candidate) {
+                    let method = if token.is_some() {
+                        "token"
+                    } else {
+                        "path-token"
+                    };
+                    return (Some(result), method, None);
+                }
+                // Syntect recognized but no parser available - record for logging
+                last_candidate = Some(candidate);
+            } else if let Some(result) = self.try_with_alias_fallback(tok) {
+                // Syntect doesn't recognize the token, try it directly as alias
+                // This handles extensions like "jsx", "tsx" that syntect doesn't know
+                // but may be configured as aliases (e.g., "jsx" → "javascript")
+                let method = if token.is_some() {
+                    "token"
+                } else {
+                    "path-token"
+                };
+                return (Some(result), method, None);
+            } else {
+                // Neither syntect nor alias resolved - record raw token for logging
+                last_candidate = Some(tok.to_string());
             }
-            last_candidate = Some(candidate);
         }
 
         if let Some(candidate) = super::heuristic::detect_from_first_line(content) {
             if let Some(result) = self.try_with_alias_fallback(&candidate) {
                 return (Some(result), "first-line", None);
-            }
-            last_candidate = Some(candidate);
-        }
-
-        // 3. Try extension-based detection (with alias fallback)
-        if let Some(candidate) = super::extension::detect_from_extension(path) {
-            if let Some(result) = self.try_with_alias_fallback(&candidate) {
-                return (Some(result), "extension", None);
             }
             last_candidate = Some(candidate);
         }
