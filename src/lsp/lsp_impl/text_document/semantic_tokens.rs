@@ -329,6 +329,7 @@ impl Kakehashi {
             }; // Lock released here
 
             // Step 3: Process tokens (no lock held)
+            let supports_multiline = self.supports_multiline_tokens();
             let result = handle_semantic_tokens_full_with_local_parsers(
                 &text,
                 &tree,
@@ -337,6 +338,7 @@ impl Kakehashi {
                 Some(&capture_mappings),
                 Some(&self.language),
                 &mut local_parsers,
+                supports_multiline,
             );
 
             // Step 4: Return parsers with brief lock

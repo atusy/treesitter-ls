@@ -153,6 +153,21 @@ impl SettingsManager {
             .unwrap_or(false)
     }
 
+    /// Returns true if client declared textDocument.semanticTokens.multilineTokenSupport.
+    /// Returns false if initialize() hasn't been called yet (OnceLock is empty).
+    ///
+    /// Per LSP 3.16.0+, multiline tokens allow a single semantic token to span
+    /// multiple lines. When not supported, tokens spanning multiple lines must
+    /// be split into per-line tokens.
+    pub(crate) fn supports_multiline_tokens(&self) -> bool {
+        self.client_capabilities
+            .get()
+            .and_then(|caps| caps.text_document.as_ref())
+            .and_then(|td| td.semantic_tokens.as_ref())
+            .and_then(|st| st.multiline_token_support)
+            .unwrap_or(false)
+    }
+
     /// Check if auto-install is enabled.
     ///
     /// Returns `false` if:

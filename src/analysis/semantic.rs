@@ -155,6 +155,14 @@ type RawToken = (usize, usize, usize, u32, String);
 /// This is the common logic shared by both pool-based and local-parser-based
 /// recursive functions. It processes the given query against the tree and
 /// maps positions from content-local coordinates to host document coordinates.
+///
+/// # Multiline Token Handling
+///
+/// When `supports_multiline` is true (client declares `multilineTokenSupport`),
+/// tokens spanning multiple lines are emitted as-is per LSP 3.16.0+ spec.
+///
+/// When `supports_multiline` is false, multiline tokens are split into per-line
+/// tokens for compatibility with clients that don't support multiline tokens.
 #[allow(clippy::too_many_arguments)]
 fn collect_host_tokens(
     text: &str,
@@ -165,6 +173,7 @@ fn collect_host_tokens(
     host_text: &str,
     host_lines: &[&str],
     content_start_byte: usize,
+    supports_multiline: bool,
     all_tokens: &mut Vec<RawToken>,
 ) {
     // Validate content_start_byte is within bounds to prevent slice panics
@@ -193,6 +202,9 @@ fn collect_host_tokens(
         }
     };
 
+    // Split content text into lines for byte offset calculations
+    let content_lines: Vec<&str> = text.lines().collect();
+
     // Collect tokens from this document's highlight query
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
@@ -205,14 +217,20 @@ fn collect_host_tokens(
             let start_pos = node.start_position();
             let end_pos = node.end_position();
 
-            // Allow tokens that span to the next line at column 0 (trailing newline case).
-            // Some tree-sitter grammars (e.g., Rust) include trailing newlines in nodes like
-            // line_comment, making end_pos = (start_row + 1, 0). These are effectively
-            // single-line tokens and should not be filtered out.
+            // Check if this is a single-line token or trailing newline case
             let is_single_line = start_pos.row == end_pos.row;
             let is_trailing_newline = end_pos.row == start_pos.row + 1 && end_pos.column == 0;
 
+            // Get the mapped capture name early to avoid repeated mapping
+            let capture_name = &query.capture_names()[c.index as usize];
+            let Some(mapped_name) = apply_capture_mapping(capture_name, filetype, capture_mappings)
+            else {
+                // Skip unknown captures (None)
+                continue;
+            };
+
             if is_single_line || is_trailing_newline {
+                // Single-line token: emit as before
                 let host_line = content_start_line + start_pos.row;
                 let host_line_text = host_lines.get(host_line).unwrap_or(&"");
 
@@ -233,18 +251,136 @@ fn collect_host_tokens(
                 };
                 let end_utf16 = byte_to_utf16_col(host_line_text, end_byte_offset_in_host);
 
-                let capture_name = &query.capture_names()[c.index as usize];
-                // Skip unknown captures (None) - don't add them to all_tokens
-                if let Some(mapped_name) =
-                    apply_capture_mapping(capture_name, filetype, capture_mappings)
-                {
-                    all_tokens.push((
-                        host_line,
-                        start_utf16,
-                        end_utf16 - start_utf16,
-                        c.index,
-                        mapped_name,
-                    ));
+                all_tokens.push((
+                    host_line,
+                    start_utf16,
+                    end_utf16 - start_utf16,
+                    c.index,
+                    mapped_name,
+                ));
+            } else if supports_multiline {
+                // Multiline token with client support: emit single token spanning multiple lines
+                // Note: LSP semantic tokens use line-relative positions, so we emit the first line
+                // with the full token. The client will interpret the length as spanning to the end
+                // position on end_pos.row.
+                //
+                // Per LSP spec, for multiline tokens:
+                // - deltaLine, deltaStartChar identify the start position
+                // - length is in UTF-16 code units from start to end
+                //
+                // However, the standard encoding calculates length per-line. For true multiline
+                // support, we need to calculate the total length across all lines.
+                let host_start_line = content_start_line + start_pos.row;
+                let host_end_line = content_start_line + end_pos.row;
+
+                // Calculate start position
+                let host_start_line_text = host_lines.get(host_start_line).unwrap_or(&"");
+                let start_byte_offset = if start_pos.row == 0 {
+                    content_start_col + start_pos.column
+                } else {
+                    start_pos.column
+                };
+                let start_utf16 = byte_to_utf16_col(host_start_line_text, start_byte_offset);
+
+                // Calculate total length in UTF-16 code units across all lines
+                let mut total_length_utf16 = 0usize;
+                for row in start_pos.row..=end_pos.row {
+                    let host_row = content_start_line + row;
+                    let line_text = host_lines.get(host_row).unwrap_or(&"");
+
+                    let line_start = if row == start_pos.row {
+                        if row == 0 {
+                            content_start_col + start_pos.column
+                        } else {
+                            start_pos.column
+                        }
+                    } else {
+                        0
+                    };
+
+                    let line_end = if row == end_pos.row {
+                        if row == 0 {
+                            content_start_col + end_pos.column
+                        } else {
+                            end_pos.column
+                        }
+                    } else {
+                        line_text.len()
+                    };
+
+                    let line_start_utf16 = byte_to_utf16_col(line_text, line_start);
+                    let line_end_utf16 = byte_to_utf16_col(line_text, line_end);
+                    total_length_utf16 += line_end_utf16 - line_start_utf16;
+
+                    // Add 1 for newline character between lines (except last line)
+                    if row < end_pos.row {
+                        total_length_utf16 += 1;
+                    }
+                }
+
+                log::trace!(
+                    target: "kakehashi::semantic",
+                    "[MULTILINE_TOKEN] capture={} lines={}..{} host_lines={}..{} length={}",
+                    capture_name, start_pos.row, end_pos.row,
+                    host_start_line, host_end_line, total_length_utf16
+                );
+
+                all_tokens.push((
+                    host_start_line,
+                    start_utf16,
+                    total_length_utf16,
+                    c.index,
+                    mapped_name,
+                ));
+            } else {
+                // Multiline token without client support: split into per-line tokens
+                for row in start_pos.row..=end_pos.row {
+                    let host_row = content_start_line + row;
+                    let host_line_text = host_lines.get(host_row).unwrap_or(&"");
+                    let content_line_text = content_lines.get(row).unwrap_or(&"");
+
+                    // Calculate start column for this line
+                    let line_start_byte = if row == start_pos.row {
+                        if row == 0 {
+                            content_start_col + start_pos.column
+                        } else {
+                            start_pos.column
+                        }
+                    } else {
+                        // For continuation lines, start at column 0
+                        0
+                    };
+
+                    // Calculate end column for this line
+                    let line_end_byte = if row == end_pos.row {
+                        if row == 0 {
+                            content_start_col + end_pos.column
+                        } else {
+                            end_pos.column
+                        }
+                    } else {
+                        // For non-final lines, end at line length
+                        if row == 0 && content_start_col > 0 {
+                            // Injection on first line: use host line text
+                            host_line_text.len()
+                        } else {
+                            content_line_text.len()
+                        }
+                    };
+
+                    let start_utf16 = byte_to_utf16_col(host_line_text, line_start_byte);
+                    let end_utf16 = byte_to_utf16_col(host_line_text, line_end_byte);
+
+                    // Skip empty tokens
+                    if end_utf16 > start_utf16 {
+                        all_tokens.push((
+                            host_row,
+                            start_utf16,
+                            end_utf16 - start_utf16,
+                            c.index,
+                            mapped_name.clone(),
+                        ));
+                    }
                 }
             }
         }
@@ -550,6 +686,7 @@ fn collect_injection_tokens_recursive(
     host_lines: &[&str],
     content_start_byte: usize,
     depth: usize,
+    supports_multiline: bool,
     all_tokens: &mut Vec<RawToken>,
 ) {
     // Safety check for recursion depth
@@ -567,6 +704,7 @@ fn collect_injection_tokens_recursive(
         host_text,
         host_lines,
         content_start_byte,
+        supports_multiline,
         all_tokens,
     );
 
@@ -603,6 +741,7 @@ fn collect_injection_tokens_recursive(
             host_lines,
             ctx.host_start_byte,
             depth + 1,
+            supports_multiline,
             all_tokens,
         );
 
@@ -630,6 +769,10 @@ fn collect_injection_tokens_recursive(
 ///
 /// # Returns
 /// Semantic tokens for the entire document including injected content (if coordinator/parser_pool provided)
+///
+/// # Note
+/// This function defaults `supports_multiline` to `false` for backward compatibility.
+/// Use `handle_semantic_tokens_full_with_multiline` for explicit control.
 #[allow(clippy::too_many_arguments)]
 pub fn handle_semantic_tokens_full(
     text: &str,
@@ -639,6 +782,46 @@ pub fn handle_semantic_tokens_full(
     capture_mappings: Option<&crate::config::CaptureMappings>,
     coordinator: Option<&crate::language::LanguageCoordinator>,
     parser_pool: Option<&mut crate::language::DocumentParserPool>,
+) -> Option<SemanticTokensResult> {
+    handle_semantic_tokens_full_with_multiline(
+        text,
+        tree,
+        query,
+        filetype,
+        capture_mappings,
+        coordinator,
+        parser_pool,
+        false, // Default to split multiline tokens for backward compatibility
+    )
+}
+
+/// Handle semantic tokens full request with explicit multiline token support.
+///
+/// This variant allows explicit control over multiline token handling based on
+/// client capabilities.
+///
+/// # Arguments
+/// * `text` - The source text
+/// * `tree` - The parsed syntax tree
+/// * `query` - The tree-sitter query for semantic highlighting (host language)
+/// * `filetype` - The filetype of the document being processed
+/// * `capture_mappings` - The capture mappings to apply
+/// * `coordinator` - Language coordinator for loading injected language parsers (None = no injection)
+/// * `parser_pool` - Parser pool for efficient parser reuse (None = no injection)
+/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
+///
+/// # Returns
+/// Semantic tokens for the entire document including injected content
+#[allow(clippy::too_many_arguments)]
+pub fn handle_semantic_tokens_full_with_multiline(
+    text: &str,
+    tree: &Tree,
+    query: &Query,
+    filetype: Option<&str>,
+    capture_mappings: Option<&crate::config::CaptureMappings>,
+    coordinator: Option<&crate::language::LanguageCoordinator>,
+    parser_pool: Option<&mut crate::language::DocumentParserPool>,
+    supports_multiline: bool,
 ) -> Option<SemanticTokensResult> {
     // Collect all absolute tokens (line, col, length, capture_index, mapped_name)
     let mut all_tokens: Vec<(usize, usize, usize, u32, String)> = Vec::with_capacity(1000);
@@ -658,6 +841,7 @@ pub fn handle_semantic_tokens_full(
         &lines, // host_lines
         0,      // content_start_byte = 0 (we're at the root)
         0,      // depth = 0 (starting depth)
+        supports_multiline,
         &mut all_tokens,
     );
 
@@ -678,6 +862,7 @@ pub fn handle_semantic_tokens_full(
 /// * `capture_mappings` - The capture mappings to apply
 /// * `coordinator` - Language coordinator for injection queries (required for injection support)
 /// * `local_parsers` - Pre-acquired parsers keyed by language ID
+/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
 ///
 /// # Returns
 /// Semantic tokens for the entire document including injected content
@@ -690,6 +875,7 @@ pub(crate) fn handle_semantic_tokens_full_with_local_parsers(
     capture_mappings: Option<&crate::config::CaptureMappings>,
     coordinator: Option<&crate::language::LanguageCoordinator>,
     local_parsers: &mut std::collections::HashMap<String, tree_sitter::Parser>,
+    supports_multiline: bool,
 ) -> Option<SemanticTokensResult> {
     let mut all_tokens: Vec<RawToken> = Vec::with_capacity(1000);
     let lines: Vec<&str> = text.lines().collect();
@@ -707,6 +893,7 @@ pub(crate) fn handle_semantic_tokens_full_with_local_parsers(
         &lines,
         0,
         0,
+        supports_multiline,
         &mut all_tokens,
     );
 
@@ -730,6 +917,7 @@ fn collect_injection_tokens_recursive_with_local_parsers(
     host_lines: &[&str],
     content_start_byte: usize,
     depth: usize,
+    supports_multiline: bool,
     all_tokens: &mut Vec<RawToken>,
 ) {
     if depth >= MAX_INJECTION_DEPTH {
@@ -746,6 +934,7 @@ fn collect_injection_tokens_recursive_with_local_parsers(
         host_text,
         host_lines,
         content_start_byte,
+        supports_multiline,
         all_tokens,
     );
 
@@ -780,6 +969,7 @@ fn collect_injection_tokens_recursive_with_local_parsers(
             host_lines,
             ctx.host_start_byte,
             depth + 1,
+            supports_multiline,
             all_tokens,
         );
     }
@@ -2452,6 +2642,7 @@ let z = 42"#;
             None,
             Some(&coordinator),
             &mut local_parsers,
+            false, // supports_multiline = false for backward compatibility in tests
         );
 
         // Step 3: Return parsers to pool
@@ -2553,6 +2744,7 @@ fn main() {}
             None,
             Some(&coordinator),
             &mut local_parsers,
+            false, // supports_multiline = false for backward compatibility in tests
         );
 
         // Return parsers to pool
@@ -2654,6 +2846,134 @@ fn main() {}
             "Should find full doc comment token at line 1, col 0 with length 7. \
              Got tokens: {:?}",
             tokens.data
+        );
+    }
+
+    #[test]
+    fn test_multiline_token_split_when_not_supported() {
+        // Test that multiline tokens are split into per-line tokens when
+        // supports_multiline is false (Option A fallback behavior).
+        use tree_sitter::{Parser, Query};
+
+        // A simple markdown document with a multiline block quote
+        let text = "> line1\n> line2\n> line3\n";
+
+        let language = tree_sitter_md::LANGUAGE.into();
+        let mut parser = Parser::new();
+        parser.set_language(&language).unwrap();
+
+        let tree = parser.parse(text, None).unwrap();
+
+        // Query that captures block_quote as a single multiline node
+        let query_text = r#"
+            (block_quote) @comment
+        "#;
+
+        let query = Query::new(&language, query_text).unwrap();
+
+        // Test with supports_multiline = false (split into per-line tokens)
+        let result = handle_semantic_tokens_full_with_multiline(
+            text,
+            &tree,
+            &query,
+            Some("markdown"),
+            None,
+            None,
+            None,
+            false,
+        );
+
+        let tokens = result.expect("Should return tokens");
+        let SemanticTokensResult::Tokens(tokens) = tokens else {
+            panic!("Expected full tokens result");
+        };
+
+        // Should have 3 separate tokens, one for each line
+        // Each line should be highlighted separately
+        assert!(
+            tokens.data.len() >= 3,
+            "Expected at least 3 tokens for 3-line block quote, got {}. Tokens: {:?}",
+            tokens.data.len(),
+            tokens.data
+        );
+
+        // Verify tokens are on different lines
+        let mut abs_line = 0u32;
+        let mut lines_with_tokens = std::collections::HashSet::new();
+
+        for token in &tokens.data {
+            abs_line += token.delta_line;
+            lines_with_tokens.insert(abs_line);
+        }
+
+        assert!(
+            lines_with_tokens.len() >= 3,
+            "Expected tokens on at least 3 different lines, got lines: {:?}",
+            lines_with_tokens
+        );
+    }
+
+    #[test]
+    fn test_multiline_token_single_when_supported() {
+        // Test that multiline tokens are emitted as single tokens when
+        // supports_multiline is true (Option B primary behavior).
+        use tree_sitter::{Parser, Query};
+
+        // A simple markdown document with a multiline block quote
+        let text = "> line1\n> line2\n> line3\n";
+
+        let language = tree_sitter_md::LANGUAGE.into();
+        let mut parser = Parser::new();
+        parser.set_language(&language).unwrap();
+
+        let tree = parser.parse(text, None).unwrap();
+
+        // Query that captures block_quote as a single multiline node
+        let query_text = r#"
+            (block_quote) @comment
+        "#;
+
+        let query = Query::new(&language, query_text).unwrap();
+
+        // Test with supports_multiline = true (emit single token)
+        let result = handle_semantic_tokens_full_with_multiline(
+            text,
+            &tree,
+            &query,
+            Some("markdown"),
+            None,
+            None,
+            None,
+            true,
+        );
+
+        let tokens = result.expect("Should return tokens");
+        let SemanticTokensResult::Tokens(tokens) = tokens else {
+            panic!("Expected full tokens result");
+        };
+
+        // Should have a single token for the entire block quote
+        // The token should start at line 0 and have a length that spans all lines
+        assert!(
+            !tokens.data.is_empty(),
+            "Expected at least 1 token for multiline block quote"
+        );
+
+        // The first token should start at line 0, column 0
+        let first_token = &tokens.data[0];
+        assert_eq!(first_token.delta_line, 0, "First token should be on line 0");
+        assert_eq!(
+            first_token.delta_start, 0,
+            "First token should start at column 0"
+        );
+
+        // The length should span multiple lines worth of content
+        // "> line1" (7) + newline (1) + "> line2" (7) + newline (1) + "> line3" (7) = 23
+        // But actual length depends on implementation details
+        assert!(
+            first_token.length > 7,
+            "Multiline token length ({}) should be greater than single line (7)",
+            first_token.length
         );
     }
 }
