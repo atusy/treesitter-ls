@@ -1,3 +1,4 @@
+use crate::language::LanguageCoordinator;
 use crate::language::predicate_accessor::{UnifiedPredicate, get_all_predicates};
 use crate::language::region_id_tracker::RegionIdTracker;
 use tree_sitter::{Node, Query, QueryCursor, QueryMatch, StreamingIterator, Tree};
@@ -534,6 +535,7 @@ impl InjectionResolver {
     /// pre-cloned, typically via DocumentSnapshot.
     ///
     /// # Arguments
+    /// * `coordinator` - Language coordinator for resolving injection language
     /// * `tracker` - Region ID tracker for stable ULID generation
     /// * `uri` - Host document URI
     /// * `tree` - Parsed syntax tree
@@ -545,6 +547,7 @@ impl InjectionResolver {
     /// `Some(ResolvedInjection)` if position is within an injection region,
     /// `None` otherwise.
     pub(crate) fn resolve_at_byte_offset(
+        coordinator: &LanguageCoordinator,
         tracker: &RegionIdTracker,
         uri: &Url,
         tree: &Tree,
@@ -569,10 +572,15 @@ impl InjectionResolver {
         // 5. Extract virtual document content
         let virtual_content = cacheable_region.extract_content(text).to_string();
 
+        // 6. Resolve injection language using unified detection (ADR-0005)
+        // This normalizes tokens like "py" -> "python" for bridge server lookup
+        let resolved_language =
+            Self::resolve_language(coordinator, &region.language, &virtual_content);
+
         Some(ResolvedInjection {
             region: cacheable_region,
             region_id: region_id_str,
-            injection_language: region.language.clone(),
+            injection_language: resolved_language,
             virtual_content,
         })
     }
@@ -601,6 +609,28 @@ impl InjectionResolver {
         )
     }
 
+    /// Resolve injection language using the unified detection chain (ADR-0005).
+    ///
+    /// This normalizes raw fence identifiers (e.g., "py") to canonical language names
+    /// (e.g., "python") that match bridge server configurations.
+    ///
+    /// Falls back to the raw identifier if no resolution is found, allowing the
+    /// bridge lookup to fail gracefully with a clear error message.
+    fn resolve_language(
+        coordinator: &LanguageCoordinator,
+        raw_identifier: &str,
+        content: &str,
+    ) -> String {
+        coordinator
+            .detect_language(
+                raw_identifier, // Use identifier as path for token extraction
+                content,
+                Some(raw_identifier), // Explicit token
+                Some(raw_identifier), // Also try as languageId
+            )
+            .unwrap_or_else(|| raw_identifier.to_string())
+    }
+
     /// Resolve all injection regions in a document.
     ///
     /// This is used for whole-document operations like document_link that need
@@ -611,6 +641,7 @@ impl InjectionResolver {
     /// pre-cloned, typically via DocumentSnapshot.
     ///
     /// # Arguments
+    /// * `coordinator` - Language coordinator for resolving injection language
     /// * `tracker` - Region ID tracker for stable ULID generation
     /// * `uri` - Host document URI
     /// * `tree` - Parsed syntax tree
@@ -620,6 +651,7 @@ impl InjectionResolver {
     /// # Returns
     /// Vector of resolved injections, may be empty if no injections found.
     pub(crate) fn resolve_all(
+        coordinator: &LanguageCoordinator,
         tracker: &RegionIdTracker,
         uri: &Url,
         tree: &Tree,
@@ -643,10 +675,14 @@ impl InjectionResolver {
                     CacheableInjectionRegion::from_region_info(region, &region_id_str, text);
                 let virtual_content = cacheable_region.extract_content(text).to_string();
 
+                // Resolve injection language using unified detection (ADR-0005)
+                let resolved_language =
+                    Self::resolve_language(coordinator, &region.language, &virtual_content);
+
                 ResolvedInjection {
                     region: cacheable_region,
                     region_id: region_id_str,
-                    injection_language: region.language.clone(),
+                    injection_language: resolved_language,
                     virtual_content,
                 }
             })
@@ -1149,6 +1185,10 @@ mod tests {
         Url::parse(&format!("file:///test/{}.rs", name)).unwrap()
     }
 
+    fn test_coordinator() -> LanguageCoordinator {
+        LanguageCoordinator::new()
+    }
+
     #[test]
     fn test_resolve_injection_returns_ulid_format() {
         // Test that resolved injection has region_id in ULID format (26 chars)
@@ -1163,12 +1203,20 @@ mod tests {
         let language = tree_sitter_rust::LANGUAGE.into();
         let query = Query::new(&language, query_str).expect("valid query");
 
+        let coordinator = test_coordinator();
         let tracker = RegionIdTracker::new();
         let uri = test_uri("ulid_format");
 
         // Resolve injection at byte offset inside the string literal
-        let resolved =
-            InjectionResolver::resolve_at_byte_offset(&tracker, &uri, &tree, text, &query, 22);
+        let resolved = InjectionResolver::resolve_at_byte_offset(
+            &coordinator,
+            &tracker,
+            &uri,
+            &tree,
+            text,
+            &query,
+            22,
+        );
         assert!(resolved.is_some(), "Should resolve injection");
         let region_id = resolved.unwrap().region_id;
         assert_eq!(
@@ -1193,6 +1241,7 @@ mod tests {
         let language = tree_sitter_rust::LANGUAGE.into();
         let query = Query::new(&language, query_str).expect("valid query");
 
+        let coordinator = test_coordinator();
         let tracker = RegionIdTracker::new();
         let uri = test_uri("multiple");
 
@@ -1208,6 +1257,7 @@ mod tests {
 
         // Resolve each injection
         let r1 = InjectionResolver::resolve_at_byte_offset(
+            &coordinator,
             &tracker,
             &uri,
             &tree,
@@ -1216,6 +1266,7 @@ mod tests {
             byte_offsets[0],
         );
         let r2 = InjectionResolver::resolve_at_byte_offset(
+            &coordinator,
             &tracker,
             &uri,
             &tree,
@@ -1224,6 +1275,7 @@ mod tests {
             byte_offsets[1],
         );
         let r3 = InjectionResolver::resolve_at_byte_offset(
+            &coordinator,
             &tracker,
             &uri,
             &tree,
@@ -1255,12 +1307,14 @@ mod tests {
         let language = tree_sitter_rust::LANGUAGE.into();
         let query = Query::new(&language, query_str).expect("valid query");
 
+        let coordinator = test_coordinator();
         let tracker = RegionIdTracker::new();
         let uri = test_uri("consistent");
 
         // Resolve the same position multiple times
         let byte_offset = 22;
         let r1 = InjectionResolver::resolve_at_byte_offset(
+            &coordinator,
             &tracker,
             &uri,
             &tree,
@@ -1269,6 +1323,7 @@ mod tests {
             byte_offset,
         );
         let r2 = InjectionResolver::resolve_at_byte_offset(
+            &coordinator,
             &tracker,
             &uri,
             &tree,
