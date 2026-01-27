@@ -146,7 +146,8 @@ mod tests {
         );
 
         // Above the threshold, should also fail fast
-        let action = decide_connection_action(Some(ConnectionState::Failed), MAX_CONSECUTIVE_PANICS + 1);
+        let action =
+            decide_connection_action(Some(ConnectionState::Failed), MAX_CONSECUTIVE_PANICS + 1);
         assert_eq!(
             action,
             ConnectionAction::FailFast("bridge: server disabled after repeated handshake failures")
@@ -157,7 +158,8 @@ mod tests {
     #[test]
     fn below_panic_threshold_allows_retry() {
         // Just below the threshold, should still spawn new
-        let action = decide_connection_action(Some(ConnectionState::Failed), MAX_CONSECUTIVE_PANICS - 1);
+        let action =
+            decide_connection_action(Some(ConnectionState::Failed), MAX_CONSECUTIVE_PANICS - 1);
         assert_eq!(action, ConnectionAction::SpawnNew);
     }
 }
