@@ -529,6 +529,16 @@ impl LanguageServerPool {
                 )));
             }
             ConnectionAction::FailFast(msg) => {
+                // Log once when server is disabled due to repeated panics
+                if msg.contains("repeated handshake failures") {
+                    log::error!(
+                        target: "kakehashi::bridge::connection",
+                        "[{}] Server disabled after {} consecutive handshake panics (max: {})",
+                        server_name,
+                        panic_count,
+                        connection_action::MAX_CONSECUTIVE_PANICS
+                    );
+                }
                 return Err(io::Error::other(msg));
             }
             ConnectionAction::SpawnNew => {
