@@ -259,17 +259,13 @@ fn collect_host_tokens(
                     mapped_name,
                 ));
             } else if supports_multiline {
-                // Multiline token with client support: emit single token spanning multiple lines
-                // Note: LSP semantic tokens use line-relative positions, so we emit the first line
-                // with the full token. The client will interpret the length as spanning to the end
-                // position on end_pos.row.
+                // Multiline token with client support: emit a single token spanning multiple lines.
+                // LSP semantic tokens use line-relative positions, so the token naturally starts on
+                // the first line (start_pos.row), and its length spans across all lines in UTF-16
+                // code units (including newline characters) up to the end position on end_pos.row.
                 //
-                // Per LSP spec, for multiline tokens:
-                // - deltaLine, deltaStartChar identify the start position
-                // - length is in UTF-16 code units from start to end
-                //
-                // However, the standard encoding calculates length per-line. For true multiline
-                // support, we need to calculate the total length across all lines.
+                // The length is calculated by summing UTF-16 lengths across all lines of the token,
+                // plus 1 for each newline character between lines.
                 let host_start_line = content_start_line + start_pos.row;
                 let host_end_line = content_start_line + end_pos.row;
 
@@ -305,7 +301,14 @@ fn collect_host_tokens(
                             end_pos.column
                         }
                     } else {
-                        line_text.len()
+                        // Non-final lines: end at injected content's line end (not host line end)
+                        // This is important for injections that start mid-line
+                        let content_line_len = content_lines.get(row).map(|l| l.len()).unwrap_or(0);
+                        if row == 0 {
+                            content_start_col + content_line_len
+                        } else {
+                            content_line_len
+                        }
                     };
 
                     let line_start_utf16 = byte_to_utf16_col(line_text, line_start);
@@ -359,10 +362,10 @@ fn collect_host_tokens(
                             end_pos.column
                         }
                     } else {
-                        // For non-final lines, end at line length
-                        if row == 0 && content_start_col > 0 {
-                            // Injection on first line: use host line text
-                            host_line_text.len()
+                        // Non-final lines: end at injected content's line end
+                        if row == 0 {
+                            // First row of injection: offset content line length by start column
+                            content_start_col + content_line_text.len()
                         } else {
                             content_line_text.len()
                         }
