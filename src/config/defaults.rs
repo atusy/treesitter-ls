@@ -137,6 +137,10 @@ fn default_highlight_mappings() -> CaptureMapping {
         ("markup.list", ""),
         ("markup.list.checked", ""),
         ("markup.list.unchecked", ""),
+        // Special captures (suppress - these are hints for editor features, not highlighting)
+        ("spell", ""),   // @spell - indicates spellcheck regions
+        ("nospell", ""), // @nospell - indicates no-spellcheck regions
+        ("conceal", ""), // @conceal - indicates concealable text
         // Diff
         ("diff.plus", ""),
         ("diff.minus", ""),
@@ -231,6 +235,48 @@ mod tests {
             toml_string.contains("\"variable\""),
             "TOML should contain variable mapping. Got:\n{}",
             toml_string
+        );
+    }
+
+    #[test]
+    fn default_settings_through_coordinator_has_markup_strong_mapping() {
+        // This test verifies the full chain from default_settings() through
+        // WorkspaceSettings and into LanguageCoordinator, ensuring that
+        // markup.strong -> "" mapping is preserved.
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+
+        // Create settings from defaults
+        let ts_settings = default_settings();
+        let ws_settings = WorkspaceSettings::from(&ts_settings);
+
+        // Verify WorkspaceSettings has the mapping
+        assert!(
+            ws_settings.capture_mappings.contains_key(WILDCARD_KEY),
+            "WorkspaceSettings should have wildcard key"
+        );
+        let wildcard = ws_settings.capture_mappings.get(WILDCARD_KEY).unwrap();
+        assert_eq!(
+            wildcard.highlights.get("markup.strong"),
+            Some(&String::new()),
+            "WorkspaceSettings should map markup.strong to empty string"
+        );
+
+        // Load into coordinator
+        let coordinator = LanguageCoordinator::new();
+        let _summary = coordinator.load_settings(ws_settings);
+
+        // Verify coordinator has the mapping
+        let mappings = coordinator.get_capture_mappings();
+        assert!(
+            mappings.contains_key(WILDCARD_KEY),
+            "Coordinator should have wildcard key after loading settings"
+        );
+        let coord_wildcard = mappings.get(WILDCARD_KEY).unwrap();
+        assert_eq!(
+            coord_wildcard.highlights.get("markup.strong"),
+            Some(&String::new()),
+            "Coordinator should map markup.strong to empty string after loading settings"
         );
     }
 }
