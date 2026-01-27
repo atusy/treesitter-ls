@@ -382,16 +382,16 @@ impl LanguageCoordinator {
             last_candidate = Some(candidate);
         }
 
-        if let Some(candidate) = super::heuristic::detect_from_first_line(content) {
+        if let Some(candidate) = super::heuristic::detect_from_filename(path) {
             if let Some(result) = self.try_with_alias_fallback(&candidate) {
-                return (Some(result), "first-line", None);
+                return (Some(result), "filename", None);
             }
             last_candidate = Some(candidate);
         }
 
-        if let Some(candidate) = super::heuristic::detect_from_filename(path) {
+        if let Some(candidate) = super::heuristic::detect_from_first_line(content) {
             if let Some(result) = self.try_with_alias_fallback(&candidate) {
-                return (Some(result), "filename", None);
+                return (Some(result), "first-line", None);
             }
             last_candidate = Some(candidate);
         }
