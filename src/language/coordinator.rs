@@ -497,7 +497,7 @@ impl LanguageCoordinator {
         let Some(lib_path) = library_path else {
             return LanguageLoadResult::failure_with(LanguageEvent::log(
                 LanguageLogLevel::Error,
-                format!("No library path found for language {lang_name}"),
+                format!("No parser path found for language {lang_name}"),
             ));
         };
 
