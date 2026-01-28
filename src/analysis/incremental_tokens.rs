@@ -273,53 +273,84 @@ pub fn merge_tokens(
     }
 
     let min_changed_line = *changed_lines.iter().min().unwrap_or(&0);
-    let max_changed_line = *changed_lines.iter().max().unwrap_or(&0);
-
-    // Convert changed region bounds to old coordinates
-    // changed_lines are in NEW text coordinates
-    // For tokens after the change, we need to know where the boundary is in OLD coordinates
-    let max_changed_line_old = (max_changed_line as i32 - line_delta).max(0) as usize;
+    // Note: max_changed_line is not used in the current algorithm, but kept for potential future use
+    let _max_changed_line = *changed_lines.iter().max().unwrap_or(&0);
 
     let mut result = Vec::new();
 
-    // Process old tokens:
-    // - Keep tokens BEFORE the changed region (line < min_changed_line)
-    // - For tokens IN the [min, max_old] range: keep only if not in changed_lines (for disjoint gaps)
-    // - Keep tokens AFTER the changed region (line > max_changed_line_old), with line adjustment
-    for token in old_tokens {
-        let old_line = token.line as usize;
+    // Process old tokens based on line_delta:
+    //
+    // For line_delta == 0 (in-place edits only):
+    //   - Tokens on unchanged lines (not in changed_lines): preserve as-is
+    //   - Tokens on changed lines: skip (replaced by new_tokens)
+    //
+    // For line_delta > 0 (line insertion):
+    //   - Tokens before min_changed_line: preserve as-is
+    //   - Tokens at/after min_changed_line: shift by line_delta
+    //   (No old tokens are deleted; new content is inserted)
+    //
+    // For line_delta < 0 (line deletion):
+    //   - Tokens before min_changed_line: preserve as-is
+    //   - Tokens in deleted region: skip
+    //   - Tokens after deleted region: shift by line_delta
+    //
+    // In all cases, new_tokens provides tokens for lines in changed_lines.
 
-        if old_line < min_changed_line {
-            // Before the first change - keep as-is (no line adjustment needed)
-            result.push(token.clone());
-        } else if old_line <= max_changed_line_old {
-            // Within the changed region (in old coordinates)
-            // Check if this old line maps to a NEW line that is NOT in changed_lines
-            // For lines in the gap between disjoint changes, preserve them
-            //
-            // Note: When line_delta != 0, lines shift. But for disjoint changes with line_delta=0,
-            // old_line == new_line, so we can directly check changed_lines.
-            // When line_delta != 0, the affected lines in old coordinates should NOT be preserved
-            // because their content has been deleted or shifted.
-            //
-            // For simplicity: when line_delta != 0, don't preserve tokens in the [min, max_old] range
-            // (let new_tokens provide the correct tokens for this region)
-            if line_delta == 0 && !changed_lines.contains(&old_line) {
-                // No line count change, and this line is not in changed_lines
-                // This is a gap between disjoint changes - preserve the token
+    if line_delta == 0 {
+        // In-place edits: preserve tokens not in changed_lines
+        for token in old_tokens {
+            let old_line = token.line as usize;
+            if !changed_lines.contains(&old_line) {
                 result.push(token.clone());
             }
-            // When line_delta != 0, skip tokens in this range - they'll be replaced by new_tokens
-        } else {
-            // After the changed region - keep with line adjustment
-            let mut adjusted = token.clone();
-            adjusted.line = ((token.line as i32) + line_delta) as u32;
-            result.push(adjusted);
+        }
+    } else if line_delta > 0 {
+        // Line insertion: shift all tokens at/after min_changed_line
+        for token in old_tokens {
+            let old_line = token.line as usize;
+            if old_line < min_changed_line {
+                // Before the insertion point - keep as-is
+                result.push(token.clone());
+            } else {
+                // At or after the insertion point - shift by line_delta
+                let mut adjusted = token.clone();
+                adjusted.line = ((token.line as i32) + line_delta) as u32;
+                // Only add if the adjusted line is not in changed_lines
+                // (changed_lines provides the new content)
+                let new_line = adjusted.line as usize;
+                if !changed_lines.contains(&new_line) {
+                    result.push(adjusted);
+                }
+            }
+        }
+    } else {
+        // Line deletion (line_delta < 0):
+        // Old lines in [min_changed_line, min_changed_line - line_delta) were deleted
+        // Old lines after that are shifted
+        let deleted_range_end = (min_changed_line as i32 - line_delta) as usize;
+
+        for token in old_tokens {
+            let old_line = token.line as usize;
+            if old_line < min_changed_line {
+                // Before the deletion point - keep as-is
+                result.push(token.clone());
+            } else if old_line < deleted_range_end {
+                // In the deleted range - skip
+            } else {
+                // After the deleted range - shift by line_delta
+                let mut adjusted = token.clone();
+                adjusted.line = ((token.line as i32) + line_delta) as u32;
+                // Only add if the adjusted line is not in changed_lines
+                // (changed_lines provides the new content for those lines)
+                let new_line = adjusted.line as usize;
+                if !changed_lines.contains(&new_line) {
+                    result.push(adjusted);
+                }
+            }
         }
     }
 
     // Add new tokens ONLY for lines that are IN changed_lines
-    // (not all lines in the [min, max] range)
     for token in new_tokens {
         let line = token.line as usize;
         if changed_lines.contains(&line) {
