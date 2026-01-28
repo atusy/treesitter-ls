@@ -277,19 +277,32 @@ pub fn merge_tokens(
 
     let mut result = Vec::new();
 
-    // 1. Keep tokens before the changed region
+    // 1. Keep tokens BEFORE the changed region AND tokens BETWEEN changed lines
+    // (i.e., tokens whose line is NOT in changed_lines and is < max_changed_line in old coordinates)
     for token in old_tokens {
-        if (token.line as usize) < min_changed_line {
+        let line = token.line as usize;
+        if line < min_changed_line {
+            // Before the first change - keep as-is
             result.push(token.clone());
+        } else if line <= (max_changed_line as i32 - line_delta).max(0) as usize {
+            // Within the [min, max] range in old coordinates
+            // Only keep if the line is NOT changed (gap between disjoint changes)
+            // Convert old line to new coordinates for comparison
+            let line_in_new = (line as i32 + line_delta) as usize;
+            if !changed_lines.contains(&line_in_new) {
+                // This line is unchanged - preserve the old token with adjusted line
+                let mut adjusted = token.clone();
+                adjusted.line = line_in_new as u32;
+                result.push(adjusted);
+            }
         }
     }
 
-    // 2. Add new tokens from the changed region
-    // Both changed_lines and new_tokens use new text coordinates,
-    // so we compare directly without adjustment
+    // 2. Add new tokens ONLY for lines that are IN changed_lines
+    // (not all lines in the [min, max] range)
     for token in new_tokens {
         let line = token.line as usize;
-        if line >= min_changed_line && line <= max_changed_line {
+        if changed_lines.contains(&line) {
             result.push(token.clone());
         }
     }
