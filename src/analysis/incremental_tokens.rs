@@ -275,19 +275,22 @@ pub fn merge_tokens(
     }
 
     // 2. Add new tokens from the changed region
+    // Both changed_lines and new_tokens use new text coordinates,
+    // so we compare directly without adjustment
     for token in new_tokens {
         let line = token.line as usize;
-        // Include tokens from min_changed_line up to (max_changed_line + line_delta)
-        // because the changed region in new_tokens may span more/fewer lines
-        let new_max_line = (max_changed_line as i32 + line_delta) as usize;
-        if line >= min_changed_line && line <= new_max_line {
+        if line >= min_changed_line && line <= max_changed_line {
             result.push(token.clone());
         }
     }
 
     // 3. Keep tokens after the changed region, adjusting their line numbers
+    // old_tokens have line numbers in old text coordinates.
+    // max_changed_line is in new text coordinates.
+    // Convert to old coordinates: max_changed_line_old = max_changed_line - line_delta
+    let max_changed_line_old = (max_changed_line as i32 - line_delta).max(0) as usize;
     for token in old_tokens {
-        if (token.line as usize) > max_changed_line {
+        if (token.line as usize) > max_changed_line_old {
             let mut adjusted = token.clone();
             adjusted.line = ((token.line as i32) + line_delta) as u32;
             result.push(adjusted);
