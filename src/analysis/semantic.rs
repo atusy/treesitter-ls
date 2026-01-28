@@ -146,9 +146,23 @@ fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> Option<(u32, u
 /// Maximum recursion depth for nested injections to prevent stack overflow
 const MAX_INJECTION_DEPTH: usize = 10;
 
-/// Type alias for raw token data before delta encoding
-/// (line, column, length, capture_index, mapped_name, depth)
-type RawToken = (usize, usize, usize, u32, String, usize);
+/// Represents a token before delta encoding with all position information.
+#[derive(Clone, Debug)]
+pub(crate) struct RawToken {
+    /// 0-indexed line number in the host document
+    pub line: usize,
+    /// UTF-16 column position within the line
+    pub column: usize,
+    /// Length in UTF-16 code units
+    pub length: usize,
+    /// Tree-sitter capture index (retained for debugging via Debug trait)
+    #[allow(dead_code)]
+    pub capture_index: u32,
+    /// Mapped capture name (e.g., "keyword", "variable.readonly")
+    pub mapped_name: String,
+    /// Injection depth (0 = host document)
+    pub depth: usize,
+}
 
 /// Calculate byte offsets for a line within a multiline token.
 ///
@@ -304,14 +318,14 @@ fn collect_host_tokens(
                 };
                 let end_utf16 = byte_to_utf16_col(host_line_text, end_byte_offset_in_host);
 
-                all_tokens.push((
-                    host_line,
-                    start_utf16,
-                    end_utf16 - start_utf16,
-                    c.index,
+                all_tokens.push(RawToken {
+                    line: host_line,
+                    column: start_utf16,
+                    length: end_utf16 - start_utf16,
+                    capture_index: c.index,
                     mapped_name,
                     depth,
-                ));
+                });
             } else if supports_multiline {
                 // Multiline token with client support: emit a single token spanning multiple lines.
                 // LSP semantic tokens use line-relative positions, so the token naturally starts on
@@ -364,14 +378,14 @@ fn collect_host_tokens(
                     host_start_line, host_end_line, total_length_utf16
                 );
 
-                all_tokens.push((
-                    host_start_line,
-                    start_utf16,
-                    total_length_utf16,
-                    c.index,
+                all_tokens.push(RawToken {
+                    line: host_start_line,
+                    column: start_utf16,
+                    length: total_length_utf16,
+                    capture_index: c.index,
                     mapped_name,
                     depth,
-                ));
+                });
             } else {
                 // Multiline token without client support: split into per-line tokens
                 for row in start_pos.row..=end_pos.row {
@@ -392,14 +406,14 @@ fn collect_host_tokens(
 
                     // Skip empty tokens
                     if end_utf16 > start_utf16 {
-                        all_tokens.push((
-                            host_row,
-                            start_utf16,
-                            end_utf16 - start_utf16,
-                            c.index,
-                            mapped_name.clone(),
+                        all_tokens.push(RawToken {
+                            line: host_row,
+                            column: start_utf16,
+                            length: end_utf16 - start_utf16,
+                            capture_index: c.index,
+                            mapped_name: mapped_name.clone(),
                             depth,
-                        ));
+                        });
                     }
                 }
             }
@@ -538,13 +552,18 @@ fn collect_injection_contexts<'a>(
 fn finalize_tokens(mut all_tokens: Vec<RawToken>) -> Option<SemanticTokensResult> {
     // Filter out zero-length tokens BEFORE dedup.
     // Unknown captures are already filtered at collection time (apply_capture_mapping returns None).
-    all_tokens.retain(|(_, _, length, _, _, _)| *length > 0);
+    all_tokens.retain(|token| token.length > 0);
 
-    // Sort by position
-    all_tokens.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(b.5.cmp(&a.5)));
+    // Sort by position (line, column, then prefer deeper tokens)
+    all_tokens.sort_by(|a, b| {
+        a.line
+            .cmp(&b.line)
+            .then(a.column.cmp(&b.column))
+            .then(b.depth.cmp(&a.depth))
+    });
 
     // Deduplicate at same position
-    all_tokens.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+    all_tokens.dedup_by(|a, b| a.line == b.line && a.column == b.column);
 
     if all_tokens.is_empty() {
         return None;
@@ -555,30 +574,30 @@ fn finalize_tokens(mut all_tokens: Vec<RawToken>) -> Option<SemanticTokensResult
     let mut last_line = 0usize;
     let mut last_start = 0usize;
 
-    for (line, start, length, _capture_index, mapped_name, _depth) in all_tokens {
+    for token in all_tokens {
         // Unknown types are already filtered at collection time (apply_capture_mapping returns None),
         // so map_capture_to_token_type_and_modifiers should always return Some here.
         let (token_type, token_modifiers_bitset) =
-            map_capture_to_token_type_and_modifiers(&mapped_name)
+            map_capture_to_token_type_and_modifiers(&token.mapped_name)
                 .expect("all tokens should have known types after apply_capture_mapping filtering");
 
-        let delta_line = line - last_line;
+        let delta_line = token.line - last_line;
         let delta_start = if delta_line == 0 {
-            start - last_start
+            token.column - last_start
         } else {
-            start
+            token.column
         };
 
         data.push(SemanticToken {
             delta_line: delta_line as u32,
             delta_start: delta_start as u32,
-            length: length as u32,
+            length: token.length as u32,
             token_type,
             token_modifiers_bitset,
         });
 
-        last_line = line;
-        last_start = start;
+        last_line = token.line;
+        last_start = token.column;
     }
 
     Some(SemanticTokensResult::Tokens(SemanticTokens {
