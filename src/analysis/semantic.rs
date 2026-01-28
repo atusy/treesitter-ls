@@ -147,7 +147,7 @@ fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> Option<(u32, u
 const MAX_INJECTION_DEPTH: usize = 10;
 
 /// Type alias for raw token data before delta encoding
-/// (line, column, length, capture_index, mapped_name)
+/// (line, column, length, capture_index, mapped_name, depth)
 type RawToken = (usize, usize, usize, u32, String, usize);
 
 /// Calculate byte offsets for a line within a multiline token.
