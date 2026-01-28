@@ -1079,8 +1079,14 @@ impl LanguageServer for Kakehashi {
         self.parse_document(uri.clone(), text, language_id.as_deref(), edits)
             .await;
 
-        // Invalidate semantic token cache to ensure fresh tokens for delta calculations
-        self.cache.invalidate_semantic(&uri);
+        // NOTE: We intentionally do NOT invalidate the semantic token cache here.
+        // The cached tokens (with their result_id) are needed for delta calculations.
+        // When semanticTokens/full/delta arrives with previousResultId, we look up
+        // the cached tokens to compute the delta. If we invalidated here, the delta
+        // request would always fall back to full tokenization.
+        //
+        // The cache is validated at lookup time via result_id matching, so stale
+        // tokens won't be returned for mismatched result_ids.
 
         // Forward didChange to opened virtual documents in bridge
         self.forward_didchange_to_bridges(&uri, &text_for_bridge)

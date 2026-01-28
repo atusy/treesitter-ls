@@ -22,10 +22,17 @@
 //!
 //! The coordinator provides:
 //! - Document lifecycle management (remove_document for did_close)
-//! - Edit handling (invalidate_for_edits, invalidate_semantic for did_change)
+//! - Edit handling (invalidate_for_edits for injection regions)
 //! - Injection map operations (populate, get, find_overlapping)
 //! - Semantic token operations (get, store)
 //! - Request tracking (start, is_active, finish, cancel)
+//!
+//! ## Semantic Token Cache Lifecycle
+//!
+//! The semantic token cache is NOT invalidated on `didChange`. This is intentional:
+//! - Cached tokens are needed for `semanticTokens/full/delta` requests
+//! - The `result_id` validation at lookup ensures stale tokens aren't returned
+//! - Invalidating on edit would prevent delta calculations entirely
 
 use std::collections::{HashMap, HashSet};
 
@@ -126,7 +133,11 @@ impl CacheCoordinator {
 
     /// Invalidate semantic token cache for a document.
     ///
-    /// Called during did_change to ensure fresh tokens for delta calculations.
+    /// Note: This should NOT be called during `didChange` - the cached tokens are
+    /// needed for delta calculations. Instead, the cache is validated via `result_id`
+    /// matching at lookup time. This function is used primarily in tests and for
+    /// explicit cache reset scenarios.
+    #[cfg(test)]
     pub(crate) fn invalidate_semantic(&self, uri: &Url) {
         // Log the result_id being invalidated (if any) for debugging cache behavior
         if let Some(cached) = self.semantic_cache.get(uri) {
