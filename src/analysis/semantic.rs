@@ -148,7 +148,7 @@ const MAX_INJECTION_DEPTH: usize = 10;
 
 /// Type alias for raw token data before delta encoding
 /// (line, column, length, capture_index, mapped_name)
-type RawToken = (usize, usize, usize, u32, String);
+type RawToken = (usize, usize, usize, u32, String, usize);
 
 /// Calculate byte offsets for a line within a multiline token.
 ///
@@ -225,6 +225,7 @@ fn collect_host_tokens(
     host_text: &str,
     host_lines: &[&str],
     content_start_byte: usize,
+    depth: usize,
     supports_multiline: bool,
     all_tokens: &mut Vec<RawToken>,
 ) {
@@ -309,6 +310,7 @@ fn collect_host_tokens(
                     end_utf16 - start_utf16,
                     c.index,
                     mapped_name,
+                    depth,
                 ));
             } else if supports_multiline {
                 // Multiline token with client support: emit a single token spanning multiple lines.
@@ -368,6 +370,7 @@ fn collect_host_tokens(
                     total_length_utf16,
                     c.index,
                     mapped_name,
+                    depth,
                 ));
             } else {
                 // Multiline token without client support: split into per-line tokens
@@ -395,6 +398,7 @@ fn collect_host_tokens(
                             end_utf16 - start_utf16,
                             c.index,
                             mapped_name.clone(),
+                            depth,
                         ));
                     }
                 }
@@ -534,10 +538,10 @@ fn collect_injection_contexts<'a>(
 fn finalize_tokens(mut all_tokens: Vec<RawToken>) -> Option<SemanticTokensResult> {
     // Filter out zero-length tokens BEFORE dedup.
     // Unknown captures are already filtered at collection time (apply_capture_mapping returns None).
-    all_tokens.retain(|(_, _, length, _, _)| *length > 0);
+    all_tokens.retain(|(_, _, length, _, _, _)| *length > 0);
 
     // Sort by position
-    all_tokens.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    all_tokens.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(b.5.cmp(&a.5)));
 
     // Deduplicate at same position
     all_tokens.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
@@ -551,7 +555,7 @@ fn finalize_tokens(mut all_tokens: Vec<RawToken>) -> Option<SemanticTokensResult
     let mut last_line = 0usize;
     let mut last_start = 0usize;
 
-    for (line, start, length, _capture_index, mapped_name) in all_tokens {
+    for (line, start, length, _capture_index, mapped_name, _depth) in all_tokens {
         // Unknown types are already filtered at collection time (apply_capture_mapping returns None),
         // so map_capture_to_token_type_and_modifiers should always return Some here.
         let (token_type, token_modifiers_bitset) =
@@ -757,6 +761,7 @@ fn collect_injection_tokens_recursive(
         host_text,
         host_lines,
         content_start_byte,
+        depth,
         supports_multiline,
         all_tokens,
     );
@@ -877,7 +882,7 @@ pub fn handle_semantic_tokens_full_with_multiline(
     supports_multiline: bool,
 ) -> Option<SemanticTokensResult> {
     // Collect all absolute tokens (line, col, length, capture_index, mapped_name)
-    let mut all_tokens: Vec<(usize, usize, usize, u32, String)> = Vec::with_capacity(1000);
+    let mut all_tokens: Vec<RawToken> = Vec::with_capacity(1000);
 
     let lines: Vec<&str> = text.lines().collect();
 
@@ -987,6 +992,7 @@ fn collect_injection_tokens_recursive_with_local_parsers(
         host_text,
         host_lines,
         content_start_byte,
+        depth,
         supports_multiline,
         all_tokens,
     );
