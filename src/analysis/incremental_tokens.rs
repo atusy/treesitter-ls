@@ -133,9 +133,12 @@ pub fn changed_ranges_to_lines(text: &str, ranges: &[TsRange]) -> std::collectio
     // For each range, find which lines it touches
     for range in ranges {
         // Validate range: start_byte must be <= end_byte
-        // Invalid ranges can occur when trees are from mismatched document states
+        // Invalid ranges can occur when trees are from mismatched document states,
+        // which is possible during rapid edits. This is not necessarily a bug -
+        // tree-sitter's changed_ranges() may produce invalid ranges when the old
+        // tree was not properly edited via tree.edit() before comparison.
         if range.start_byte > range.end_byte {
-            log::warn!(
+            log::debug!(
                 target: "kakehashi::incremental",
                 "Invalid range from changed_ranges(): start_byte {} > end_byte {} - treating as full document change",
                 range.start_byte,
