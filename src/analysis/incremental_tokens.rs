@@ -110,8 +110,12 @@ pub fn get_changed_ranges(old_tree: &Tree, new_tree: &Tree) -> Vec<TsRange> {
 
 /// Convert byte ranges to the set of affected line numbers.
 /// Returns a set of line indices that overlap with any of the changed byte ranges.
+///
+/// Handles edge cases where Tree-sitter returns invalid ranges (start > end)
+/// by treating them as covering the entire document.
 pub fn changed_ranges_to_lines(text: &str, ranges: &[TsRange]) -> std::collections::HashSet<usize> {
     let mut affected_lines = std::collections::HashSet::new();
+    let text_len = text.len();
 
     // Build a mapping of byte offset -> line number
     let line_starts: Vec<usize> = std::iter::once(0)
@@ -121,14 +125,35 @@ pub fn changed_ranges_to_lines(text: &str, ranges: &[TsRange]) -> std::collectio
             },
         ))
         .collect();
+    let total_lines = line_starts.len();
 
     // For each range, find which lines it touches
     for range in ranges {
+        // Validate range: start_byte must be <= end_byte
+        // Invalid ranges can occur when trees are from mismatched document states
+        if range.start_byte > range.end_byte {
+            log::warn!(
+                target: "kakehashi::incremental",
+                "Invalid range from changed_ranges(): start_byte {} > end_byte {} - treating as full document change",
+                range.start_byte,
+                range.end_byte
+            );
+            // Treat invalid range as affecting all lines
+            for line in 0..total_lines {
+                affected_lines.insert(line);
+            }
+            continue;
+        }
+
+        // Clamp byte positions to text bounds
+        let start_byte = range.start_byte.min(text_len);
+        let end_byte = range.end_byte.min(text_len);
+
         let start_line = line_starts
-            .partition_point(|&start| start <= range.start_byte)
+            .partition_point(|&start| start <= start_byte)
             .saturating_sub(1);
         let end_line = line_starts
-            .partition_point(|&start| start <= range.end_byte)
+            .partition_point(|&start| start <= end_byte)
             .saturating_sub(1);
 
         for line in start_line..=end_line {

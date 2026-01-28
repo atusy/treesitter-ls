@@ -442,9 +442,21 @@ fn collect_injection_contexts<'a>(
     let mut contexts = Vec::with_capacity(injections.len());
 
     for injection in injections {
+        // Validate injection bounds before slicing
+        // This can fail if tree is stale relative to text (race condition)
+        let inj_start = injection.content_node.start_byte();
+        let inj_end = injection.content_node.end_byte();
+        if inj_start > inj_end || inj_end > text.len() {
+            log::debug!(
+                target: "kakehashi::semantic",
+                "Skipping injection with invalid bounds: start={}, end={}, text_len={}",
+                inj_start, inj_end, text.len()
+            );
+            continue;
+        }
+
         // Extract injection content for first-line detection (shebang, mode line)
-        let injection_content =
-            &text[injection.content_node.start_byte()..injection.content_node.end_byte()];
+        let injection_content = &text[inj_start..inj_end];
 
         // Resolve injection language with unified detection
         let Some((resolved_lang, _)) =
@@ -620,9 +632,21 @@ fn collect_injection_languages_recursive(
     };
 
     for injection in injections {
+        // Validate injection bounds before slicing
+        // This can fail if tree is stale relative to text (race condition)
+        let inj_start = injection.content_node.start_byte();
+        let inj_end = injection.content_node.end_byte();
+        if inj_start > inj_end || inj_end > text.len() {
+            log::debug!(
+                target: "kakehashi::semantic",
+                "Skipping injection with invalid bounds: start={}, end={}, text_len={}",
+                inj_start, inj_end, text.len()
+            );
+            continue;
+        }
+
         // Extract injection content for first-line detection (shebang, mode line)
-        let injection_content =
-            &text[injection.content_node.start_byte()..injection.content_node.end_byte()];
+        let injection_content = &text[inj_start..inj_end];
 
         // Resolve the injection language
         let Some((resolved_lang, _)) =
