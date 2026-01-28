@@ -985,6 +985,105 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_tokens_at_document_boundaries() {
+        // Test 1: Change at line 0 (first line of document)
+        {
+            let old_tokens = vec![
+                make_token(0, 0, 5, 1), // line 0 - CHANGED
+                make_token(1, 0, 5, 2), // line 1 - unchanged
+                make_token(2, 0, 5, 3), // line 2 - unchanged
+            ];
+
+            let new_tokens = vec![
+                make_token(0, 0, 5, 11), // line 0 - new
+                make_token(1, 0, 5, 2),  // line 1 - same
+                make_token(2, 0, 5, 3),  // line 2 - same
+            ];
+
+            let mut changed_lines = std::collections::HashSet::new();
+            changed_lines.insert(0); // First line changed
+
+            let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 0);
+
+            assert_eq!(result.len(), 3, "Should have 3 tokens");
+            assert_eq!(
+                result[0].token_type, 11,
+                "Line 0 should use new token (type 11)"
+            );
+            assert_eq!(
+                result[1].token_type, 2,
+                "Line 1 should preserve old token (type 2)"
+            );
+            assert_eq!(
+                result[2].token_type, 3,
+                "Line 2 should preserve old token (type 3)"
+            );
+        }
+
+        // Test 2: Change at last line
+        {
+            let old_tokens = vec![
+                make_token(0, 0, 5, 1), // line 0 - unchanged
+                make_token(1, 0, 5, 2), // line 1 - unchanged
+                make_token(2, 0, 5, 3), // line 2 - CHANGED (last line)
+            ];
+
+            let new_tokens = vec![
+                make_token(0, 0, 5, 1),  // line 0 - same
+                make_token(1, 0, 5, 2),  // line 1 - same
+                make_token(2, 0, 5, 13), // line 2 - new
+            ];
+
+            let mut changed_lines = std::collections::HashSet::new();
+            changed_lines.insert(2); // Last line changed
+
+            let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 0);
+
+            assert_eq!(result.len(), 3, "Should have 3 tokens");
+            assert_eq!(
+                result[0].token_type, 1,
+                "Line 0 should preserve old token (type 1)"
+            );
+            assert_eq!(
+                result[1].token_type, 2,
+                "Line 1 should preserve old token (type 2)"
+            );
+            assert_eq!(
+                result[2].token_type, 13,
+                "Line 2 should use new token (type 13)"
+            );
+        }
+
+        // Test 3: Line insertion at document start (new line 0)
+        {
+            let old_tokens = vec![
+                make_token(0, 0, 5, 1), // old line 0 -> new line 1
+                make_token(1, 0, 5, 2), // old line 1 -> new line 2
+            ];
+
+            let new_tokens = vec![
+                make_token(0, 0, 5, 10), // new line 0 (inserted)
+                make_token(1, 0, 5, 1),  // new line 1 (was old line 0)
+                make_token(2, 0, 5, 2),  // new line 2 (was old line 1)
+            ];
+
+            let mut changed_lines = std::collections::HashSet::new();
+            changed_lines.insert(0); // Line 0 is where insertion happened
+
+            let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 1);
+
+            assert_eq!(result.len(), 3, "Should have 3 tokens after insertion");
+            assert_eq!(
+                result[0].token_type, 10,
+                "Line 0 should be new inserted token (type 10)"
+            );
+            // Old tokens should be shifted
+            assert_eq!(result[1].line, 1, "Old line 0 should shift to line 1");
+            assert_eq!(result[2].line, 2, "Old line 1 should shift to line 2");
+        }
+    }
+
+    #[test]
     fn test_incremental_tokenization_performance() {
         use std::time::Instant;
 
