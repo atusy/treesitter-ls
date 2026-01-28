@@ -264,6 +264,10 @@ pub fn merge_tokens(
     line_delta: i32,
 ) -> Vec<AbsoluteToken> {
     if changed_lines.is_empty() {
+        // If line count changed but no changed lines were detected, fall back to full tokens.
+        if line_delta != 0 {
+            return new_tokens.to_vec();
+        }
         // No changes, return old tokens as-is
         return old_tokens.to_vec();
     }
@@ -513,6 +517,22 @@ mod tests {
 
         // Line 3 token preserved from old (but needs adjustment check - no change in line count)
         assert_eq!(result[4].line, 3, "Line 3 token should still be on line 3");
+    }
+
+    #[test]
+    fn test_merge_tokens_falls_back_when_line_delta_without_changes() {
+        let old_tokens = vec![
+            make_token(0, 0, 2, 1),
+            make_token(1, 0, 2, 1),
+            make_token(2, 0, 2, 1),
+        ];
+
+        let new_tokens = vec![make_token(0, 0, 2, 2), make_token(1, 0, 2, 2)];
+
+        let changed_lines = std::collections::HashSet::new();
+        let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, -1);
+
+        assert_eq!(result, new_tokens, "Should fall back to new tokens");
     }
 
     #[test]
