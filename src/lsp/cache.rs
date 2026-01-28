@@ -301,37 +301,26 @@ impl CacheCoordinator {
     ) -> Option<SemanticTokens> {
         let result = self.semantic_cache.get_if_valid(uri, expected_result_id);
 
-        // Diagnostic logging to understand cache validation failures
-        if result.is_none() {
-            // Check if the URI exists in cache at all
-            if let Some(cached) = self.semantic_cache.get(uri) {
-                log::debug!(
-                    target: "kakehashi::semantic_cache",
-                    "Cache MISS: result_id mismatch for {} - expected '{}', cached '{}'",
-                    uri.path(),
-                    expected_result_id,
-                    cached.tokens.result_id.as_deref().unwrap_or("<none>")
-                );
-            } else {
-                log::debug!(
-                    target: "kakehashi::semantic_cache",
-                    "Cache MISS: no entry for {} (expected result_id '{}')",
-                    uri.path(),
-                    expected_result_id
-                );
-            }
-        } else {
+        if result.is_some() {
             log::debug!(
                 target: "kakehashi::semantic_cache",
                 "Cache HIT: found tokens for {} with result_id '{}'",
                 uri.path(),
                 expected_result_id
             );
+        } else {
+            self.log_cache_miss(uri, expected_result_id);
         }
 
         result.map(|cached| cached.tokens)
     }
 
+    /// Get cached semantic tokens if both result_id and text_hash match.
+    ///
+    /// Returns None if:
+    /// - No tokens are cached for this URI
+    /// - The cached result_id doesn't match the expected one
+    /// - The cached text_hash doesn't match the expected one
     pub(crate) fn get_tokens_if_valid_with_text_hash(
         &self,
         uri: &Url,
@@ -355,6 +344,12 @@ impl CacheCoordinator {
             return None;
         }
 
+        self.log_cache_miss(uri, expected_result_id);
+        None
+    }
+
+    /// Log diagnostic information for cache misses.
+    fn log_cache_miss(&self, uri: &Url, expected_result_id: &str) {
         if let Some(cached) = self.semantic_cache.get(uri) {
             log::debug!(
                 target: "kakehashi::semantic_cache",
@@ -371,8 +366,6 @@ impl CacheCoordinator {
                 expected_result_id
             );
         }
-
-        None
     }
 
     /// Store semantic tokens for a document.
