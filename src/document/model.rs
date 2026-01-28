@@ -154,8 +154,32 @@ impl Document {
     /// This preserves both previous tree and previous text for:
     /// - changed_ranges comparison (tree)
     /// - line delta calculation (text)
+    ///
+    /// Note: For proper `changed_ranges()` support, prefer `update_with_edited_tree`
+    /// which accepts the edited previous tree (after `tree.edit()` was called).
     pub fn update_tree_and_text(&mut self, new_tree: Tree, new_text: String) {
         self.previous_tree = self.tree.take();
+        self.previous_text = Some(std::mem::replace(&mut self.text, new_text));
+        self.tree = Some(new_tree);
+    }
+
+    /// Update tree and text with an explicit edited previous tree.
+    ///
+    /// This is the preferred method when the previous tree was edited via `tree.edit()`
+    /// before parsing. The edited tree allows `changed_ranges()` to accurately compute
+    /// the byte ranges that changed between the old and new parse trees.
+    ///
+    /// # Arguments
+    /// * `new_tree` - The newly parsed tree
+    /// * `new_text` - The new document text
+    /// * `edited_previous_tree` - The previous tree after `tree.edit()` was applied
+    pub fn update_with_edited_tree(
+        &mut self,
+        new_tree: Tree,
+        new_text: String,
+        edited_previous_tree: Tree,
+    ) {
+        self.previous_tree = Some(edited_previous_tree);
         self.previous_text = Some(std::mem::replace(&mut self.text, new_text));
         self.tree = Some(new_tree);
     }

@@ -184,6 +184,38 @@ impl DocumentStore {
         }
     }
 
+    /// Update document with an edited previous tree for proper changed_ranges() support.
+    ///
+    /// This method should be called when parsing was done with an edited old tree (via tree.edit()).
+    /// The edited_previous_tree allows tree-sitter's changed_ranges() to accurately compute
+    /// the byte ranges that changed between versions.
+    ///
+    /// # Arguments
+    /// * `uri` - Document URI
+    /// * `text` - New document text
+    /// * `new_tree` - Newly parsed tree
+    /// * `edited_previous_tree` - The previous tree after tree.edit() was applied
+    pub fn update_document_with_edited_tree(
+        &self,
+        uri: Url,
+        text: String,
+        new_tree: Tree,
+        edited_previous_tree: Tree,
+    ) {
+        if let Some(mut doc) = self.documents.get_mut(&uri) {
+            doc.update_with_edited_tree(new_tree, text, edited_previous_tree);
+            self.update_tree_availability(&uri, true);
+            return;
+        }
+
+        // Document doesn't exist - create new one (edited_previous_tree is lost)
+        self.documents.insert(
+            uri.clone(),
+            Document::with_tree(text, "unknown".to_string(), new_tree),
+        );
+        self.update_tree_availability(&uri, true);
+    }
+
     /// Get the existing tree and apply edits for incremental parsing
     /// Returns the edited tree without updating the document store
     // Lock safety: and_then() consumes Ref, returning owned Tree clone - no read lock held after return

@@ -338,10 +338,17 @@ impl Kakehashi {
                 };
 
                 if let Some(mut parser) = parser {
-                    let old_tree = if !edits.is_empty() {
-                        self.documents.get_edited_tree(&uri, &edits)
+                    // Get old tree for incremental parsing
+                    // For edits: get edited tree (after tree.edit() applied)
+                    // For full parse: get current tree as-is
+                    let (old_tree, edited_old_tree_for_store) = if !edits.is_empty() {
+                        let edited = self.documents.get_edited_tree(&uri, &edits);
+                        // Clone for storage - we need to keep the edited tree for changed_ranges()
+                        let for_store = edited.clone();
+                        (edited, for_store)
                     } else {
-                        self.documents.get(&uri).and_then(|doc| doc.tree().cloned())
+                        let tree = self.documents.get(&uri).and_then(|doc| doc.tree().cloned());
+                        (tree, None)
                     };
 
                     let language_name_clone = language_name.clone();
@@ -400,7 +407,8 @@ impl Kakehashi {
                         // Return parser to pool (brief lock)
                         let mut pool = self.parser_pool.lock().await;
                         pool.release(language_name.clone(), parser);
-                        parse_result
+                        // Return both parse result and edited tree for proper changed_ranges support
+                        parse_result.map(|tree| (tree, edited_old_tree_for_store))
                     } else {
                         None
                     }
@@ -410,7 +418,7 @@ impl Kakehashi {
             };
 
             // Store the parsed document
-            if let Some(tree) = parsed_tree {
+            if let Some((tree, edited_old_tree)) = parsed_tree {
                 // Populate InjectionMap with injection regions for targeted cache invalidation
                 self.cache.populate_injections(
                     &uri,
@@ -421,9 +429,14 @@ impl Kakehashi {
                     self.bridge.region_id_tracker(),
                 );
 
-                if !edits.is_empty() {
-                    self.documents
-                        .update_document(uri.clone(), text, Some(tree));
+                if let Some(edited_tree) = edited_old_tree {
+                    // Use the new method that preserves the edited tree for changed_ranges()
+                    self.documents.update_document_with_edited_tree(
+                        uri.clone(),
+                        text,
+                        tree,
+                        edited_tree,
+                    );
                 } else {
                     self.documents.insert(
                         uri.clone(),
