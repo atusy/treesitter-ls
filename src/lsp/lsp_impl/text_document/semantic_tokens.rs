@@ -50,12 +50,8 @@ impl Kakehashi {
     /// This handles the race condition where semantic tokens are requested before
     /// `didOpen`/`didChange` finishes parsing. Strategy:
     /// 1. Wait up to 200ms for any in-flight parse to complete
-    /// 2. Parse on-demand with validation to ensure tree+text consistency
-    ///
-    /// Note: We always use `try_parse_and_update_document` rather than reading
-    /// trees directly from the document store, because the store may contain
-    /// stale trees (old tree preserved with new text when parsing fails).
-    /// Only `try_parse_and_update_document` validates that tree matches text.
+    /// 2. Try to use the tree from the document store (preferred for incremental tokenization)
+    /// 3. Parse on-demand as fallback if tree is missing or stale
     ///
     /// Returns `(tree, text)` tuple where tree was verified to be parsed from text,
     /// or `None` if the document is missing or parsing failed.
@@ -65,9 +61,31 @@ impl Kakehashi {
             .wait_for_parse_completion(uri, Duration::from_millis(200))
             .await;
 
-        // Always parse on-demand with validation to ensure tree+text consistency.
-        // This is necessary because document store may preserve stale trees
-        // (old tree with new text) when parsing fails.
+        // First, try to use the tree from the document store.
+        // This is preferred because:
+        // 1. The tree was parsed with the old tree reference (via tree.edit())
+        // 2. Tree-sitter can accurately compute changed_ranges() for incremental tokenization
+        // 3. Avoids redundant parsing
+        if let Some(doc) = self.documents.get(uri) {
+            let text = doc.text().to_string();
+            if let Some(tree) = doc.tree().cloned() {
+                log::debug!(
+                    target: "kakehashi::semantic",
+                    "Using existing tree from document store for {}",
+                    uri.path()
+                );
+                return Some((tree, text));
+            }
+        }
+
+        // Fallback: parse on-demand if no tree is available.
+        // This handles race conditions where semantic tokens are requested before
+        // didOpen/didChange finishes parsing.
+        log::debug!(
+            target: "kakehashi::semantic",
+            "Parsing on-demand for {} (no tree in store)",
+            uri.path()
+        );
         self.try_parse_and_update_document(uri, language_name).await
     }
 
