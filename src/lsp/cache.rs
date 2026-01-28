@@ -44,6 +44,7 @@ use crate::analysis::{InjectionMap, InjectionTokenCache, SemanticTokenCache};
 use crate::language::LanguageCoordinator;
 use crate::language::RegionIdTracker;
 use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
+use crate::text::fnv1a_hash;
 
 use super::semantic_request_tracker::SemanticRequestTracker;
 
@@ -405,15 +406,7 @@ impl CacheCoordinator {
 }
 
 pub(crate) fn calculate_text_hash(text: &str) -> u64 {
-    // FNV-1a hash, consistent with `CacheableInjectionRegion::hash_content`
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
-    let mut hash = FNV_OFFSET;
-    for byte in text.bytes() {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash
+    fnv1a_hash(text)
 }
 
 impl Default for CacheCoordinator {
