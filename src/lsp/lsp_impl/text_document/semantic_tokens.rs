@@ -530,11 +530,17 @@ impl Kakehashi {
             // Get previous tokens from cache with result_id validation
             let previous_tokens = self.cache.get_tokens_if_valid(&uri, &previous_result_id);
 
-            // Get previous text for incremental tokenization
-            let previous_text = doc.previous_text().map(|s| s.to_string());
+            // Atomically extract all state required for incremental tokenization.
+            // This eliminates TOCTOU race conditions by extracting previous_tree
+            // and previous_text together in a single operation.
+            let incremental_state = doc.incremental_tokenization_state();
 
             // Decide tokenization strategy based on change size
-            let strategy = decide_tokenization_strategy(doc.previous_tree(), &tree, text.len());
+            let strategy = decide_tokenization_strategy(
+                incremental_state.as_ref().map(|s| &s.previous_tree),
+                &tree,
+                text.len(),
+            );
 
             // Get capture mappings
             let capture_mappings = self.language.get_capture_mappings();
@@ -553,21 +559,23 @@ impl Kakehashi {
             //
             // This preserves cached tokens for unchanged regions, reducing redundant work.
             // Falls back to full path if any required state is missing.
-            let use_incremental = matches!(strategy, IncrementalDecision::UseIncremental)
-                && previous_tokens.is_some()
-                && doc.previous_tree().is_some()
-                && previous_text.is_some();
+            //
+            // Note: We use pattern matching to ensure all required state is available
+            // atomically, eliminating TOCTOU (time-of-check-to-time-of-use) issues.
+            let incremental_context = if matches!(strategy, IncrementalDecision::UseIncremental) {
+                match (&previous_tokens, &incremental_state) {
+                    (Some(tokens), Some(state)) => Some((tokens, state)),
+                    _ => None,
+                }
+            } else {
+                None
+            };
 
-            let result = if use_incremental {
+            let result = if let Some((prev_tokens, inc_state)) = incremental_context {
                 log::debug!(
                     target: "kakehashi::semantic",
                     "Using incremental tokenization path"
                 );
-
-                // Safe to unwrap because we checked above
-                let prev_tokens = previous_tokens.as_ref().unwrap();
-                let prev_tree = doc.previous_tree().unwrap();
-                let prev_text = previous_text.as_ref().unwrap();
 
                 // Decode previous tokens to AbsoluteToken format
                 let old_absolute = decode_semantic_tokens(prev_tokens);
@@ -609,9 +617,9 @@ impl Kakehashi {
                     // Use incremental merge
                     let merge_result = compute_incremental_tokens(
                         &old_absolute,
-                        prev_tree,
+                        &inc_state.previous_tree,
                         &tree,
-                        prev_text,
+                        &inc_state.previous_text,
                         &text,
                         &new_absolute,
                     );
@@ -641,11 +649,10 @@ impl Kakehashi {
             } else {
                 log::debug!(
                     target: "kakehashi::semantic",
-                    "Using full tokenization path (strategy={:?}, has_prev_tokens={}, has_prev_tree={}, has_prev_text={})",
+                    "Using full tokenization path (strategy={:?}, has_prev_tokens={}, has_incremental_state={})",
                     strategy,
                     previous_tokens.is_some(),
-                    doc.previous_tree().is_some(),
-                    previous_text.is_some()
+                    incremental_state.is_some()
                 );
 
                 // Delegate to handler with injection support
