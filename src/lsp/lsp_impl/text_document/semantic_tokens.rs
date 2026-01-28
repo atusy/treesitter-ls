@@ -533,10 +533,6 @@ impl Kakehashi {
             // and previous_text together in a single operation.
             let incremental_state = doc.incremental_tokenization_state();
 
-            // Get previous tokens from cache with result_id validation for full delta path.
-            let previous_tokens_for_delta =
-                self.cache.get_tokens_if_valid(&uri, &previous_result_id);
-
             // Decide tokenization strategy based on change size
             let strategy = decide_tokenization_strategy(
                 incremental_state.as_ref().map(|s| &s.previous_tree),
@@ -658,6 +654,12 @@ impl Kakehashi {
                     None
                 }
             } else {
+                // Get previous tokens from cache for delta computation in full path.
+                // This lookup is deferred until here to avoid redundant cache access
+                // when taking the incremental path (which uses get_tokens_if_valid_with_text_hash).
+                let previous_tokens_for_delta =
+                    self.cache.get_tokens_if_valid(&uri, &previous_result_id);
+
                 log::debug!(
                     target: "kakehashi::semantic",
                     "Using full tokenization path (strategy={:?}, has_prev_tokens={}, has_incremental_state={})",
