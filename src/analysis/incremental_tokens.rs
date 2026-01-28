@@ -1102,8 +1102,9 @@ mod tests {
         // Scenario: Changes on lines 1 and 4 only (disjoint - not contiguous)
         // Lines 2 and 3 are UNCHANGED and should preserve old tokens
         //
-        // Bug: Current implementation treats min=1, max=4 as a contiguous range,
-        // replacing ALL tokens in [1,4] including unchanged lines 2-3
+        // Regression test: Previously, the implementation treated min=1, max=4 as a
+        // contiguous range, replacing ALL tokens in [1,4] including unchanged lines 2-3.
+        // This was fixed by checking changed_lines membership instead of range bounds.
         //
         // Expected behavior: Only replace tokens on lines that are IN changed_lines set
 
