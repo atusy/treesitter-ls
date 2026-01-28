@@ -35,6 +35,7 @@
 //! - Invalidating on edit would prevent delta calculations entirely
 
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 
 use tower_lsp_server::ls_types::SemanticTokens;
 use tree_sitter::{InputEdit, Tree};
@@ -145,7 +146,7 @@ impl CacheCoordinator {
                 target: "kakehashi::semantic_cache",
                 "Invalidating semantic cache for {} (result_id was '{}')",
                 uri.path(),
-                cached.result_id.as_deref().unwrap_or("<none>")
+                cached.tokens.result_id.as_deref().unwrap_or("<none>")
             );
         }
         self.semantic_cache.remove(uri);
@@ -309,7 +310,7 @@ impl CacheCoordinator {
                     "Cache MISS: result_id mismatch for {} - expected '{}', cached '{}'",
                     uri.path(),
                     expected_result_id,
-                    cached.result_id.as_deref().unwrap_or("<none>")
+                    cached.tokens.result_id.as_deref().unwrap_or("<none>")
                 );
             } else {
                 log::debug!(
@@ -328,12 +329,56 @@ impl CacheCoordinator {
             );
         }
 
-        result
+        result.map(|cached| cached.tokens)
+    }
+
+    pub(crate) fn get_tokens_if_valid_with_text_hash(
+        &self,
+        uri: &Url,
+        expected_result_id: &str,
+        expected_text_hash: u64,
+    ) -> Option<SemanticTokens> {
+        let result = self.semantic_cache.get_if_valid(uri, expected_result_id);
+
+        if let Some(cached) = result {
+            if cached.text_hash == expected_text_hash {
+                return Some(cached.tokens);
+            }
+
+            log::debug!(
+                target: "kakehashi::semantic_cache",
+                "Cache MISS: text_hash mismatch for {} - expected '{}', cached '{}'",
+                uri.path(),
+                expected_text_hash,
+                cached.text_hash
+            );
+            return None;
+        }
+
+        if let Some(cached) = self.semantic_cache.get(uri) {
+            log::debug!(
+                target: "kakehashi::semantic_cache",
+                "Cache MISS: result_id mismatch for {} - expected '{}', cached '{}'",
+                uri.path(),
+                expected_result_id,
+                cached.tokens.result_id.as_deref().unwrap_or("<none>")
+            );
+        } else {
+            log::debug!(
+                target: "kakehashi::semantic_cache",
+                "Cache MISS: no entry for {} (expected result_id '{}')",
+                uri.path(),
+                expected_result_id
+            );
+        }
+
+        None
     }
 
     /// Store semantic tokens for a document.
-    pub(crate) fn store_tokens(&self, uri: Url, tokens: SemanticTokens) {
-        self.semantic_cache.store(uri, tokens);
+    pub(crate) fn store_tokens(&self, uri: Url, tokens: SemanticTokens, text: &str) {
+        let text_hash = calculate_text_hash(text);
+        self.semantic_cache.store(uri, tokens, text_hash);
     }
 
     // ========================================================================
@@ -367,6 +412,12 @@ impl CacheCoordinator {
     }
 }
 
+pub(crate) fn calculate_text_hash(text: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
 impl Default for CacheCoordinator {
     fn default() -> Self {
         Self::new()
@@ -398,7 +449,7 @@ mod tests {
                 token_modifiers_bitset: 0,
             }],
         };
-        cache.store_tokens(uri.clone(), tokens);
+        cache.store_tokens(uri.clone(), tokens, "fn main() {}");
 
         // Start a request
         let _request_id = cache.start_request(&uri);
@@ -421,7 +472,7 @@ mod tests {
             result_id: Some("test-id".to_string()),
             data: vec![],
         };
-        cache.store_tokens(uri.clone(), tokens);
+        cache.store_tokens(uri.clone(), tokens, "let x = 1");
 
         // Verify stored
         assert!(cache.get_tokens_if_valid(&uri, "test-id").is_some());

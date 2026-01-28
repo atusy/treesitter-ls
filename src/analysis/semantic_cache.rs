@@ -42,9 +42,16 @@ use rust_lapper::{Interval, Lapper};
 use tower_lsp_server::ls_types::SemanticTokens;
 use url::Url;
 
+/// Cached semantic tokens with the source text hash.
+#[derive(Clone)]
+pub struct CachedSemanticTokens {
+    pub tokens: SemanticTokens,
+    pub text_hash: u64,
+}
+
 /// Thread-safe semantic token cache.
 pub struct SemanticTokenCache {
-    cache: DashMap<Url, SemanticTokens>,
+    cache: DashMap<Url, CachedSemanticTokens>,
 }
 
 impl SemanticTokenCache {
@@ -56,12 +63,13 @@ impl SemanticTokenCache {
     }
 
     /// Store semantic tokens for a document.
-    pub fn store(&self, uri: Url, tokens: SemanticTokens) {
-        self.cache.insert(uri, tokens);
+    pub fn store(&self, uri: Url, tokens: SemanticTokens, text_hash: u64) {
+        self.cache
+            .insert(uri, CachedSemanticTokens { tokens, text_hash });
     }
 
     /// Retrieve semantic tokens for a document.
-    pub fn get(&self, uri: &Url) -> Option<SemanticTokens> {
+    pub fn get(&self, uri: &Url) -> Option<CachedSemanticTokens> {
         self.cache.get(uri).map(|entry| entry.clone())
     }
 
@@ -70,9 +78,13 @@ impl SemanticTokenCache {
     /// Returns None if:
     /// - No tokens are cached for this URI
     /// - The cached result_id doesn't match the expected one
-    pub fn get_if_valid(&self, uri: &Url, expected_result_id: &str) -> Option<SemanticTokens> {
+    pub fn get_if_valid(
+        &self,
+        uri: &Url,
+        expected_result_id: &str,
+    ) -> Option<CachedSemanticTokens> {
         self.cache.get(uri).and_then(|entry| {
-            if entry.result_id.as_deref() == Some(expected_result_id) {
+            if entry.tokens.result_id.as_deref() == Some(expected_result_id) {
                 Some(entry.clone())
             } else {
                 None
@@ -279,19 +291,23 @@ mod tests {
         };
 
         // Store tokens
-        cache.store(uri.clone(), tokens.clone());
+        cache.store(uri.clone(), tokens.clone(), 42);
 
         // Retrieve tokens
         let retrieved = cache.get(&uri);
         assert!(retrieved.is_some(), "Should retrieve stored tokens");
         let retrieved = retrieved.unwrap();
         assert_eq!(
-            retrieved.result_id,
+            retrieved.tokens.result_id,
             Some("1".to_string()),
             "result_id should match"
         );
-        assert_eq!(retrieved.data.len(), 1, "Should have 1 token");
-        assert_eq!(retrieved.data[0].length, 5, "Token length should match");
+        assert_eq!(retrieved.tokens.data.len(), 1, "Should have 1 token");
+        assert_eq!(
+            retrieved.tokens.data[0].length, 5,
+            "Token length should match"
+        );
+        assert_eq!(retrieved.text_hash, 42, "text hash should match");
 
         // Non-existent URI returns None
         let other_uri = Url::parse("file:///other.rs").unwrap();
@@ -316,7 +332,7 @@ mod tests {
             }],
         };
 
-        cache.store(uri.clone(), tokens);
+        cache.store(uri.clone(), tokens, 99);
 
         // Matching result_id returns tokens
         let valid = cache.get_if_valid(&uri, "42");
@@ -324,7 +340,7 @@ mod tests {
             valid.is_some(),
             "Should return tokens when result_id matches"
         );
-        assert_eq!(valid.unwrap().data[0].length, 10);
+        assert_eq!(valid.unwrap().tokens.data[0].length, 10);
 
         // Mismatched result_id returns None
         let invalid = cache.get_if_valid(&uri, "99");
@@ -357,7 +373,7 @@ mod tests {
         };
 
         // Store tokens
-        cache.store(uri.clone(), tokens);
+        cache.store(uri.clone(), tokens, 7);
         assert!(cache.get(&uri).is_some(), "Should have cached tokens");
 
         // Remove on close

@@ -401,7 +401,8 @@ impl Kakehashi {
         let stored_tokens = tokens_with_id.clone();
         let lsp_tokens = tokens_with_id;
         // Store in dedicated cache for delta requests with result_id validation
-        self.cache.store_tokens(uri.clone(), stored_tokens);
+        self.cache
+            .store_tokens(uri.clone(), stored_tokens, &text_used);
 
         // Finish tracking this request
         self.cache.finish_request(&uri, request_id);
@@ -527,13 +528,14 @@ impl Kakehashi {
                 }
             };
 
-            // Get previous tokens from cache with result_id validation
-            let previous_tokens = self.cache.get_tokens_if_valid(&uri, &previous_result_id);
-
             // Atomically extract all state required for incremental tokenization.
             // This eliminates TOCTOU race conditions by extracting previous_tree
             // and previous_text together in a single operation.
             let incremental_state = doc.incremental_tokenization_state();
+
+            // Get previous tokens from cache with result_id validation for full delta path.
+            let previous_tokens_for_delta =
+                self.cache.get_tokens_if_valid(&uri, &previous_result_id);
 
             // Decide tokenization strategy based on change size
             let strategy = decide_tokenization_strategy(
@@ -563,9 +565,18 @@ impl Kakehashi {
             // Note: We use pattern matching to ensure all required state is available
             // atomically, eliminating TOCTOU (time-of-check-to-time-of-use) issues.
             let incremental_context = if matches!(strategy, IncrementalDecision::UseIncremental) {
-                match (&previous_tokens, &incremental_state) {
-                    (Some(tokens), Some(state)) => Some((tokens, state)),
-                    _ => None,
+                match &incremental_state {
+                    Some(state) => {
+                        let previous_text_hash =
+                            crate::lsp::cache::calculate_text_hash(&state.previous_text);
+                        let previous_tokens = self.cache.get_tokens_if_valid_with_text_hash(
+                            &uri,
+                            &previous_result_id,
+                            previous_text_hash,
+                        );
+                        previous_tokens.map(|tokens| (tokens, state))
+                    }
+                    None => None,
                 }
             } else {
                 None
@@ -578,7 +589,7 @@ impl Kakehashi {
                 );
 
                 // Decode previous tokens to AbsoluteToken format
-                let old_absolute = decode_semantic_tokens(prev_tokens);
+                let old_absolute = decode_semantic_tokens(&prev_tokens);
 
                 // Get new tokens via full computation (still needed for changed region)
                 let supports_multiline = self.supports_multiline_tokens();
@@ -639,7 +650,7 @@ impl Kakehashi {
 
                     // Calculate delta against original previous tokens
                     Some(crate::analysis::semantic::calculate_delta_or_full(
-                        prev_tokens,
+                        &prev_tokens,
                         &merged_tokens,
                         &previous_result_id,
                     ))
@@ -651,7 +662,7 @@ impl Kakehashi {
                     target: "kakehashi::semantic",
                     "Using full tokenization path (strategy={:?}, has_prev_tokens={}, has_incremental_state={})",
                     strategy,
-                    previous_tokens.is_some(),
+                    previous_tokens_for_delta.is_some(),
                     incremental_state.is_some()
                 );
 
@@ -662,7 +673,7 @@ impl Kakehashi {
                     &tree,
                     &query,
                     &previous_result_id,
-                    previous_tokens.as_ref(),
+                    previous_tokens_for_delta.as_ref(),
                     Some(&language_name),
                     Some(&capture_mappings),
                     Some(&self.language),
@@ -708,7 +719,8 @@ impl Kakehashi {
                 let stored_tokens = tokens_with_id.clone();
                 let lsp_tokens = tokens_with_id;
                 // Store in dedicated cache for next delta request
-                self.cache.store_tokens(uri.clone(), stored_tokens);
+                self.cache
+                    .store_tokens(uri.clone(), stored_tokens, &text_used);
                 Ok(Some(SemanticTokensFullDeltaResult::Tokens(lsp_tokens)))
             }
             other => Ok(Some(other)),
