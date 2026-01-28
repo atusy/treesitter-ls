@@ -1139,6 +1139,61 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_tokens_empty_document_edge_cases() {
+        // Test 1: Empty old document, non-empty new document (first content added)
+        {
+            let old_tokens: Vec<AbsoluteToken> = vec![]; // No tokens in empty document
+
+            let new_tokens = vec![
+                make_token(0, 0, 2, 1), // "fn"
+                make_token(0, 3, 4, 2), // "main"
+            ];
+
+            let mut changed_lines = std::collections::HashSet::new();
+            changed_lines.insert(0); // Line 0 is new content
+
+            // line_delta is positive because we went from 0 lines to 1 line
+            // In practice, lines().count() on "" returns 0, on "fn main()" returns 1
+            let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 1);
+
+            assert_eq!(result.len(), 2, "Should have 2 tokens from new content");
+            assert_eq!(result[0].token_type, 1);
+            assert_eq!(result[1].token_type, 2);
+        }
+
+        // Test 2: Non-empty old document, empty new document (all content deleted)
+        {
+            let old_tokens = vec![
+                make_token(0, 0, 2, 1), // "fn"
+                make_token(0, 3, 4, 2), // "main"
+            ];
+
+            let new_tokens: Vec<AbsoluteToken> = vec![]; // No tokens in empty document
+
+            // When all content is deleted, changed_lines might be empty or contain 0
+            // The behavior should handle both cases gracefully
+            let changed_lines = std::collections::HashSet::new();
+
+            // line_delta is negative because we went from 1 line to 0 lines
+            let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, -1);
+
+            // With empty changed_lines and line_delta != 0, should fall back to new tokens
+            assert_eq!(result.len(), 0, "Should have no tokens after deletion");
+        }
+
+        // Test 3: Empty to empty (no change)
+        {
+            let old_tokens: Vec<AbsoluteToken> = vec![];
+            let new_tokens: Vec<AbsoluteToken> = vec![];
+            let changed_lines = std::collections::HashSet::new();
+
+            let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 0);
+
+            assert_eq!(result.len(), 0, "Should remain empty");
+        }
+    }
+
+    #[test]
     fn test_incremental_tokenization_performance() {
         use std::time::Instant;
 
