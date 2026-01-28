@@ -46,7 +46,7 @@ pub fn decide_tokenization_strategy(
         0.0
     };
 
-    if is_large_structural_change(&changed_ranges, document_len) {
+    if is_large_structural_change(&changed_ranges, total_changed, document_len) {
         log::debug!(
             target: "kakehashi::incremental",
             "Strategy=UseFull: large change detected (ranges={}, bytes={}, ratio={:.2}%, doc_len={})",
@@ -74,7 +74,16 @@ pub fn decide_tokenization_strategy(
 /// Heuristics:
 /// - More than 10 changed ranges = likely a large structural change
 /// - Changed bytes exceed 30% of document = significant rewrite
-pub fn is_large_structural_change(ranges: &[TsRange], document_len: usize) -> bool {
+///
+/// # Arguments
+/// * `ranges` - The changed byte ranges
+/// * `total_changed` - Pre-computed total changed bytes (sum of range sizes)
+/// * `document_len` - Total document length in bytes
+pub fn is_large_structural_change(
+    ranges: &[TsRange],
+    total_changed: usize,
+    document_len: usize,
+) -> bool {
     const MAX_RANGES: usize = 10;
     const MAX_CHANGE_RATIO: f64 = 0.30;
 
@@ -82,12 +91,6 @@ pub fn is_large_structural_change(ranges: &[TsRange], document_len: usize) -> bo
     if ranges.len() > MAX_RANGES {
         return true;
     }
-
-    // Calculate total changed bytes
-    let total_changed: usize = ranges
-        .iter()
-        .map(|r| r.end_byte.saturating_sub(r.start_byte))
-        .sum();
 
     // More than 30% of document changed
     if document_len > 0 {
@@ -386,23 +389,35 @@ mod tests {
         }
     }
 
+    // Helper to calculate total changed bytes for a range list
+    fn calc_total_changed(ranges: &[TsRange]) -> usize {
+        ranges
+            .iter()
+            .map(|r| r.end_byte.saturating_sub(r.start_byte))
+            .sum()
+    }
+
     #[test]
     fn test_heuristic_large_change_triggers_full_recompute() {
         // Test 1: Few small changes - should NOT be large
         let small_changes = vec![make_range(0, 10), make_range(50, 60)];
-        assert!(!is_large_structural_change(&small_changes, 1000));
+        let total = calc_total_changed(&small_changes); // 20 bytes
+        assert!(!is_large_structural_change(&small_changes, total, 1000));
 
         // Test 2: More than 10 ranges - should be large
         let many_ranges: Vec<_> = (0..15).map(|i| make_range(i * 10, i * 10 + 5)).collect();
-        assert!(is_large_structural_change(&many_ranges, 1000));
+        let total = calc_total_changed(&many_ranges); // 75 bytes, but too many ranges
+        assert!(is_large_structural_change(&many_ranges, total, 1000));
 
         // Test 3: >30% of document changed - should be large
         let large_change = vec![make_range(0, 400)]; // 400 bytes out of 1000 = 40%
-        assert!(is_large_structural_change(&large_change, 1000));
+        let total = calc_total_changed(&large_change);
+        assert!(is_large_structural_change(&large_change, total, 1000));
 
         // Test 4: Exactly 30% - should NOT be large (boundary)
         let boundary_change = vec![make_range(0, 300)]; // 300 bytes out of 1000 = 30%
-        assert!(!is_large_structural_change(&boundary_change, 1000));
+        let total = calc_total_changed(&boundary_change);
+        assert!(!is_large_structural_change(&boundary_change, total, 1000));
     }
 
     #[test]
