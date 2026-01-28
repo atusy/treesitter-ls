@@ -6,6 +6,12 @@ pub(crate) struct DocumentSnapshot {
     tree: Tree,
 }
 
+/// State required for incremental tokenization, atomically extracted
+pub(crate) struct IncrementalTokenizationState {
+    pub previous_tree: Tree,
+    pub previous_text: String,
+}
+
 impl DocumentSnapshot {
     /// Get the text content
     pub(crate) fn text(&self) -> &str {
@@ -140,6 +146,24 @@ impl Document {
         self.previous_text.as_deref()
     }
 
+    /// Atomically extract all state required for incremental tokenization.
+    ///
+    /// This method extracts both `previous_tree` and `previous_text` together,
+    /// ensuring consistency and eliminating TOCTOU (time-of-check-to-time-of-use)
+    /// race conditions where individual checks might succeed but values could
+    /// change before use.
+    ///
+    /// Returns `Some(IncrementalTokenizationState)` only if BOTH previous_tree
+    /// and previous_text are available, `None` otherwise.
+    pub(crate) fn incremental_tokenization_state(&self) -> Option<IncrementalTokenizationState> {
+        let previous_tree = self.previous_tree.as_ref()?.clone();
+        let previous_text = self.previous_text.as_ref()?.clone();
+        Some(IncrementalTokenizationState {
+            previous_tree,
+            previous_text,
+        })
+    }
+
     /// Update tree, moving current tree to previous_tree
     ///
     /// This preserves the previous tree for changed_ranges comparison
@@ -154,8 +178,32 @@ impl Document {
     /// This preserves both previous tree and previous text for:
     /// - changed_ranges comparison (tree)
     /// - line delta calculation (text)
+    ///
+    /// Note: For proper `changed_ranges()` support, prefer `update_with_edited_tree`
+    /// which accepts the edited previous tree (after `tree.edit()` was called).
     pub fn update_tree_and_text(&mut self, new_tree: Tree, new_text: String) {
         self.previous_tree = self.tree.take();
+        self.previous_text = Some(std::mem::replace(&mut self.text, new_text));
+        self.tree = Some(new_tree);
+    }
+
+    /// Update tree and text with an explicit edited previous tree.
+    ///
+    /// This is the preferred method when the previous tree was edited via `tree.edit()`
+    /// before parsing. The edited tree allows `changed_ranges()` to accurately compute
+    /// the byte ranges that changed between the old and new parse trees.
+    ///
+    /// # Arguments
+    /// * `new_tree` - The newly parsed tree
+    /// * `new_text` - The new document text
+    /// * `edited_previous_tree` - The previous tree after `tree.edit()` was applied
+    pub fn update_with_edited_tree(
+        &mut self,
+        new_tree: Tree,
+        new_text: String,
+        edited_previous_tree: Tree,
+    ) {
+        self.previous_tree = Some(edited_previous_tree);
         self.previous_text = Some(std::mem::replace(&mut self.text, new_text));
         self.tree = Some(new_tree);
     }

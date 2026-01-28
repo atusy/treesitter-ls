@@ -26,14 +26,44 @@ pub fn decide_tokenization_strategy(
     document_len: usize,
 ) -> IncrementalDecision {
     let Some(prev_tree) = previous_tree else {
+        log::debug!(
+            target: "kakehashi::incremental",
+            "Strategy=UseFull: no previous tree"
+        );
         return IncrementalDecision::UseFull;
     };
 
     let changed_ranges = get_changed_ranges(prev_tree, current_tree);
 
-    if is_large_structural_change(&changed_ranges, document_len) {
+    // Log diagnostic information about the change
+    let total_changed: usize = changed_ranges
+        .iter()
+        .map(|r| r.end_byte.saturating_sub(r.start_byte))
+        .sum();
+    let ratio = if document_len > 0 {
+        total_changed as f64 / document_len as f64
+    } else {
+        0.0
+    };
+
+    if is_large_structural_change(&changed_ranges, total_changed, document_len) {
+        log::debug!(
+            target: "kakehashi::incremental",
+            "Strategy=UseFull: large change detected (ranges={}, bytes={}, ratio={:.2}%, doc_len={})",
+            changed_ranges.len(),
+            total_changed,
+            ratio * 100.0,
+            document_len
+        );
         IncrementalDecision::UseFull
     } else {
+        log::debug!(
+            target: "kakehashi::incremental",
+            "Strategy=UseIncremental: small change (ranges={}, bytes={}, ratio={:.2}%)",
+            changed_ranges.len(),
+            total_changed,
+            ratio * 100.0
+        );
         IncrementalDecision::UseIncremental
     }
 }
@@ -44,7 +74,16 @@ pub fn decide_tokenization_strategy(
 /// Heuristics:
 /// - More than 10 changed ranges = likely a large structural change
 /// - Changed bytes exceed 30% of document = significant rewrite
-pub fn is_large_structural_change(ranges: &[TsRange], document_len: usize) -> bool {
+///
+/// # Arguments
+/// * `ranges` - The changed byte ranges
+/// * `total_changed` - Pre-computed total changed bytes (sum of range sizes)
+/// * `document_len` - Total document length in bytes
+pub fn is_large_structural_change(
+    ranges: &[TsRange],
+    total_changed: usize,
+    document_len: usize,
+) -> bool {
     const MAX_RANGES: usize = 10;
     const MAX_CHANGE_RATIO: f64 = 0.30;
 
@@ -52,12 +91,6 @@ pub fn is_large_structural_change(ranges: &[TsRange], document_len: usize) -> bo
     if ranges.len() > MAX_RANGES {
         return true;
     }
-
-    // Calculate total changed bytes
-    let total_changed: usize = ranges
-        .iter()
-        .map(|r| r.end_byte.saturating_sub(r.start_byte))
-        .sum();
 
     // More than 30% of document changed
     if document_len > 0 {
@@ -80,8 +113,12 @@ pub fn get_changed_ranges(old_tree: &Tree, new_tree: &Tree) -> Vec<TsRange> {
 
 /// Convert byte ranges to the set of affected line numbers.
 /// Returns a set of line indices that overlap with any of the changed byte ranges.
+///
+/// Handles edge cases where Tree-sitter returns invalid ranges (start > end)
+/// by treating them as covering the entire document.
 pub fn changed_ranges_to_lines(text: &str, ranges: &[TsRange]) -> std::collections::HashSet<usize> {
     let mut affected_lines = std::collections::HashSet::new();
+    let text_len = text.len();
 
     // Build a mapping of byte offset -> line number
     let line_starts: Vec<usize> = std::iter::once(0)
@@ -91,14 +128,38 @@ pub fn changed_ranges_to_lines(text: &str, ranges: &[TsRange]) -> std::collectio
             },
         ))
         .collect();
+    let total_lines = line_starts.len();
 
     // For each range, find which lines it touches
     for range in ranges {
+        // Validate range: start_byte must be <= end_byte
+        // Invalid ranges can occur when trees are from mismatched document states,
+        // which is possible during rapid edits. This is not necessarily a bug -
+        // tree-sitter's changed_ranges() may produce invalid ranges when the old
+        // tree was not properly edited via tree.edit() before comparison.
+        if range.start_byte > range.end_byte {
+            log::debug!(
+                target: "kakehashi::incremental",
+                "Invalid range from changed_ranges(): start_byte {} > end_byte {} - treating as full document change",
+                range.start_byte,
+                range.end_byte
+            );
+            // Treat invalid range as affecting all lines
+            for line in 0..total_lines {
+                affected_lines.insert(line);
+            }
+            continue;
+        }
+
+        // Clamp byte positions to text bounds
+        let start_byte = range.start_byte.min(text_len);
+        let end_byte = range.end_byte.min(text_len);
+
         let start_line = line_starts
-            .partition_point(|&start| start <= range.start_byte)
+            .partition_point(|&start| start <= start_byte)
             .saturating_sub(1);
         let end_line = line_starts
-            .partition_point(|&start| start <= range.end_byte)
+            .partition_point(|&start| start <= end_byte)
             .saturating_sub(1);
 
         for line in start_line..=end_line {
@@ -220,19 +281,22 @@ pub fn merge_tokens(
     }
 
     // 2. Add new tokens from the changed region
+    // Both changed_lines and new_tokens use new text coordinates,
+    // so we compare directly without adjustment
     for token in new_tokens {
         let line = token.line as usize;
-        // Include tokens from min_changed_line up to (max_changed_line + line_delta)
-        // because the changed region in new_tokens may span more/fewer lines
-        let new_max_line = (max_changed_line as i32 + line_delta) as usize;
-        if line >= min_changed_line && line <= new_max_line {
+        if line >= min_changed_line && line <= max_changed_line {
             result.push(token.clone());
         }
     }
 
     // 3. Keep tokens after the changed region, adjusting their line numbers
+    // old_tokens have line numbers in old text coordinates.
+    // max_changed_line is in new text coordinates.
+    // Convert to old coordinates: max_changed_line_old = max_changed_line - line_delta
+    let max_changed_line_old = (max_changed_line as i32 - line_delta).max(0) as usize;
     for token in old_tokens {
-        if (token.line as usize) > max_changed_line {
+        if (token.line as usize) > max_changed_line_old {
             let mut adjusted = token.clone();
             adjusted.line = ((token.line as i32) + line_delta) as u32;
             result.push(adjusted);
@@ -328,23 +392,35 @@ mod tests {
         }
     }
 
+    // Helper to calculate total changed bytes for a range list
+    fn calc_total_changed(ranges: &[TsRange]) -> usize {
+        ranges
+            .iter()
+            .map(|r| r.end_byte.saturating_sub(r.start_byte))
+            .sum()
+    }
+
     #[test]
     fn test_heuristic_large_change_triggers_full_recompute() {
         // Test 1: Few small changes - should NOT be large
         let small_changes = vec![make_range(0, 10), make_range(50, 60)];
-        assert!(!is_large_structural_change(&small_changes, 1000));
+        let total = calc_total_changed(&small_changes); // 20 bytes
+        assert!(!is_large_structural_change(&small_changes, total, 1000));
 
         // Test 2: More than 10 ranges - should be large
         let many_ranges: Vec<_> = (0..15).map(|i| make_range(i * 10, i * 10 + 5)).collect();
-        assert!(is_large_structural_change(&many_ranges, 1000));
+        let total = calc_total_changed(&many_ranges); // 75 bytes, but too many ranges
+        assert!(is_large_structural_change(&many_ranges, total, 1000));
 
         // Test 3: >30% of document changed - should be large
         let large_change = vec![make_range(0, 400)]; // 400 bytes out of 1000 = 40%
-        assert!(is_large_structural_change(&large_change, 1000));
+        let total = calc_total_changed(&large_change);
+        assert!(is_large_structural_change(&large_change, total, 1000));
 
         // Test 4: Exactly 30% - should NOT be large (boundary)
         let boundary_change = vec![make_range(0, 300)]; // 300 bytes out of 1000 = 30%
-        assert!(!is_large_structural_change(&boundary_change, 1000));
+        let total = calc_total_changed(&boundary_change);
+        assert!(!is_large_structural_change(&boundary_change, total, 1000));
     }
 
     #[test]

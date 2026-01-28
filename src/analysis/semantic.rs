@@ -407,6 +407,33 @@ fn collect_host_tokens(
 ///
 /// This struct captures all the information needed to process an injection
 /// before the actual parsing step.
+/// Validate injection node bounds before slicing text.
+///
+/// Returns `Some((start_byte, end_byte))` if the bounds are valid,
+/// or `None` if the injection should be skipped due to invalid bounds.
+///
+/// Invalid bounds can occur when trees become stale relative to the text,
+/// which is possible during rapid edits (race condition).
+fn validate_injection_bounds(
+    content_node: &tree_sitter::Node,
+    text_len: usize,
+) -> Option<(usize, usize)> {
+    let start = content_node.start_byte();
+    let end = content_node.end_byte();
+    if start > end || end > text_len {
+        log::debug!(
+            target: "kakehashi::semantic",
+            "Skipping injection with invalid bounds: start={}, end={}, text_len={}",
+            start,
+            end,
+            text_len
+        );
+        None
+    } else {
+        Some((start, end))
+    }
+}
+
 struct InjectionContext<'a> {
     resolved_lang: String,
     highlight_query: std::sync::Arc<Query>,
@@ -442,9 +469,14 @@ fn collect_injection_contexts<'a>(
     let mut contexts = Vec::with_capacity(injections.len());
 
     for injection in injections {
+        let Some((inj_start, inj_end)) =
+            validate_injection_bounds(&injection.content_node, text.len())
+        else {
+            continue;
+        };
+
         // Extract injection content for first-line detection (shebang, mode line)
-        let injection_content =
-            &text[injection.content_node.start_byte()..injection.content_node.end_byte()];
+        let injection_content = &text[inj_start..inj_end];
 
         // Resolve injection language with unified detection
         let Some((resolved_lang, _)) =
@@ -620,9 +652,14 @@ fn collect_injection_languages_recursive(
     };
 
     for injection in injections {
+        let Some((inj_start, inj_end)) =
+            validate_injection_bounds(&injection.content_node, text.len())
+        else {
+            continue;
+        };
+
         // Extract injection content for first-line detection (shebang, mode line)
-        let injection_content =
-            &text[injection.content_node.start_byte()..injection.content_node.end_byte()];
+        let injection_content = &text[inj_start..inj_end];
 
         // Resolve the injection language
         let Some((resolved_lang, _)) =
