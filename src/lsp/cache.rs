@@ -44,6 +44,7 @@ use crate::analysis::{InjectionMap, InjectionTokenCache, SemanticTokenCache};
 use crate::language::LanguageCoordinator;
 use crate::language::RegionIdTracker;
 use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
+use crate::text::fnv1a_hash;
 
 use super::semantic_request_tracker::SemanticRequestTracker;
 
@@ -145,7 +146,7 @@ impl CacheCoordinator {
                 target: "kakehashi::semantic_cache",
                 "Invalidating semantic cache for {} (result_id was '{}')",
                 uri.path(),
-                cached.result_id.as_deref().unwrap_or("<none>")
+                cached.tokens.result_id.as_deref().unwrap_or("<none>")
             );
         }
         self.semantic_cache.remove(uri);
@@ -300,40 +301,77 @@ impl CacheCoordinator {
     ) -> Option<SemanticTokens> {
         let result = self.semantic_cache.get_if_valid(uri, expected_result_id);
 
-        // Diagnostic logging to understand cache validation failures
-        if result.is_none() {
-            // Check if the URI exists in cache at all
-            if let Some(cached) = self.semantic_cache.get(uri) {
-                log::debug!(
-                    target: "kakehashi::semantic_cache",
-                    "Cache MISS: result_id mismatch for {} - expected '{}', cached '{}'",
-                    uri.path(),
-                    expected_result_id,
-                    cached.result_id.as_deref().unwrap_or("<none>")
-                );
-            } else {
-                log::debug!(
-                    target: "kakehashi::semantic_cache",
-                    "Cache MISS: no entry for {} (expected result_id '{}')",
-                    uri.path(),
-                    expected_result_id
-                );
-            }
-        } else {
+        if result.is_some() {
             log::debug!(
                 target: "kakehashi::semantic_cache",
                 "Cache HIT: found tokens for {} with result_id '{}'",
                 uri.path(),
                 expected_result_id
             );
+        } else {
+            self.log_cache_miss(uri, expected_result_id);
         }
 
-        result
+        result.map(|cached| cached.tokens)
+    }
+
+    /// Get cached semantic tokens if both result_id and text_hash match.
+    ///
+    /// Returns None if:
+    /// - No tokens are cached for this URI
+    /// - The cached result_id doesn't match the expected one
+    /// - The cached text_hash doesn't match the expected one
+    pub(crate) fn get_tokens_if_valid_with_text_hash(
+        &self,
+        uri: &Url,
+        expected_result_id: &str,
+        expected_text_hash: u64,
+    ) -> Option<SemanticTokens> {
+        let result = self.semantic_cache.get_if_valid(uri, expected_result_id);
+
+        if let Some(cached) = result {
+            if cached.text_hash == expected_text_hash {
+                return Some(cached.tokens);
+            }
+
+            log::debug!(
+                target: "kakehashi::semantic_cache",
+                "Cache MISS: text_hash mismatch for {} - expected '{}', cached '{}'",
+                uri.path(),
+                expected_text_hash,
+                cached.text_hash
+            );
+            return None;
+        }
+
+        self.log_cache_miss(uri, expected_result_id);
+        None
+    }
+
+    /// Log diagnostic information for cache misses.
+    fn log_cache_miss(&self, uri: &Url, expected_result_id: &str) {
+        if let Some(cached) = self.semantic_cache.get(uri) {
+            log::debug!(
+                target: "kakehashi::semantic_cache",
+                "Cache MISS: result_id mismatch for {} - expected '{}', cached '{}'",
+                uri.path(),
+                expected_result_id,
+                cached.tokens.result_id.as_deref().unwrap_or("<none>")
+            );
+        } else {
+            log::debug!(
+                target: "kakehashi::semantic_cache",
+                "Cache MISS: no entry for {} (expected result_id '{}')",
+                uri.path(),
+                expected_result_id
+            );
+        }
     }
 
     /// Store semantic tokens for a document.
-    pub(crate) fn store_tokens(&self, uri: Url, tokens: SemanticTokens) {
-        self.semantic_cache.store(uri, tokens);
+    pub(crate) fn store_tokens(&self, uri: Url, tokens: SemanticTokens, text: &str) {
+        let text_hash = calculate_text_hash(text);
+        self.semantic_cache.store(uri, tokens, text_hash);
     }
 
     // ========================================================================
@@ -367,6 +405,10 @@ impl CacheCoordinator {
     }
 }
 
+pub(crate) fn calculate_text_hash(text: &str) -> u64 {
+    fnv1a_hash(text)
+}
+
 impl Default for CacheCoordinator {
     fn default() -> Self {
         Self::new()
@@ -398,7 +440,7 @@ mod tests {
                 token_modifiers_bitset: 0,
             }],
         };
-        cache.store_tokens(uri.clone(), tokens);
+        cache.store_tokens(uri.clone(), tokens, "fn main() {}");
 
         // Start a request
         let _request_id = cache.start_request(&uri);
@@ -421,7 +463,7 @@ mod tests {
             result_id: Some("test-id".to_string()),
             data: vec![],
         };
-        cache.store_tokens(uri.clone(), tokens);
+        cache.store_tokens(uri.clone(), tokens, "let x = 1");
 
         // Verify stored
         assert!(cache.get_tokens_if_valid(&uri, "test-id").is_some());

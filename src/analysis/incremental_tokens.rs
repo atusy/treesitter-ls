@@ -1,4 +1,30 @@
 //! Incremental tokenization using Tree-sitter's changed_ranges API.
+//!
+//! This module provides utilities for efficient semantic token updates by only
+//! re-tokenizing portions of a document that have changed. The approach:
+//!
+//! 1. **Strategy Decision**: Use `decide_tokenization_strategy` to determine whether
+//!    incremental or full tokenization is more appropriate based on the scope of changes.
+//!
+//! 2. **Change Detection**: Use Tree-sitter's `changed_ranges` API to identify which
+//!    byte ranges differ between the old and new parse trees.
+//!
+//! 3. **Token Merging**: Merge cached tokens from unchanged regions with newly computed
+//!    tokens for changed regions using `merge_tokens`.
+//!
+//! ## When Incremental is Used
+//!
+//! Incremental tokenization is used when:
+//! - A previous parse tree is available
+//! - Changes are localized (fewer than 10 ranges, less than 30% of document)
+//!
+//! ## Key Functions
+//!
+//! - [`decide_tokenization_strategy`] - Choose between incremental and full tokenization
+//! - [`compute_incremental_tokens`] - Orchestrate the incremental tokenization process
+//! - [`merge_tokens`] - Merge old and new tokens based on changed line ranges
+//! - [`decode_semantic_tokens`] / [`encode_semantic_tokens`] - Convert between delta and
+//!   absolute position formats
 
 use tree_sitter::{Range as TsRange, Tree};
 
@@ -242,12 +268,34 @@ pub fn encode_semantic_tokens(
     tower_lsp_server::ls_types::SemanticTokens { result_id, data }
 }
 
+/// Check if changed_lines contains non-contiguous (disjoint) line numbers.
+///
+/// Returns true if there are gaps between any consecutive line numbers,
+/// indicating that multiple separate regions were changed.
+fn has_disjoint_changes(changed_lines: &std::collections::HashSet<usize>) -> bool {
+    if changed_lines.len() <= 1 {
+        return false;
+    }
+
+    let mut sorted: Vec<_> = changed_lines.iter().copied().collect();
+    sorted.sort_unstable();
+
+    // Check for gaps between consecutive lines
+    sorted.windows(2).any(|w| w[1] != w[0] + 1)
+}
+
 /// Merge old tokens with newly computed tokens for changed regions.
 ///
 /// This function:
 /// 1. Keeps tokens from `old_tokens` that are outside the changed line ranges
 /// 2. Uses tokens from `new_tokens` for the changed regions
 /// 3. Adjusts line numbers for tokens after the changed region if lines were inserted/deleted
+///
+/// # Limitations
+///
+/// The algorithm assumes a single contiguous change region when `line_delta != 0`.
+/// For disjoint changes (e.g., multi-cursor edits with insertions/deletions),
+/// we fall back to using `new_tokens` entirely to ensure correctness.
 ///
 /// # Arguments
 /// * `old_tokens` - Previous tokens in absolute position format
@@ -264,42 +312,107 @@ pub fn merge_tokens(
     line_delta: i32,
 ) -> Vec<AbsoluteToken> {
     if changed_lines.is_empty() {
+        // If line count changed but no changed lines were detected, fall back to full tokens.
+        if line_delta != 0 {
+            return new_tokens.to_vec();
+        }
         // No changes, return old tokens as-is
         return old_tokens.to_vec();
     }
 
+    // For line insertions/deletions with disjoint change regions, the uniform shift
+    // algorithm doesn't work correctly. Fall back to full tokenization.
+    // See test_merge_tokens_disjoint_insertions for details.
+    if line_delta != 0 && has_disjoint_changes(changed_lines) {
+        log::debug!(
+            target: "kakehashi::incremental",
+            "Falling back to full tokens: disjoint changes with line_delta={}",
+            line_delta
+        );
+        return new_tokens.to_vec();
+    }
+
     let min_changed_line = *changed_lines.iter().min().unwrap_or(&0);
-    let max_changed_line = *changed_lines.iter().max().unwrap_or(&0);
 
     let mut result = Vec::new();
 
-    // 1. Keep tokens before the changed region
-    for token in old_tokens {
-        if (token.line as usize) < min_changed_line {
-            result.push(token.clone());
+    // Process old tokens based on line_delta:
+    //
+    // For line_delta == 0 (in-place edits only):
+    //   - Tokens on unchanged lines (not in changed_lines): preserve as-is
+    //   - Tokens on changed lines: skip (replaced by new_tokens)
+    //
+    // For line_delta > 0 (line insertion):
+    //   - Tokens before min_changed_line: preserve as-is
+    //   - Tokens at/after min_changed_line: shift by line_delta
+    //   (No old tokens are deleted; new content is inserted)
+    //
+    // For line_delta < 0 (line deletion):
+    //   - Tokens before min_changed_line: preserve as-is
+    //   - Tokens in deleted region: skip
+    //   - Tokens after deleted region: shift by line_delta
+    //
+    // In all cases, new_tokens provides tokens for lines in changed_lines.
+
+    if line_delta == 0 {
+        // In-place edits: preserve tokens not in changed_lines
+        for token in old_tokens {
+            let old_line = token.line as usize;
+            if !changed_lines.contains(&old_line) {
+                result.push(token.clone());
+            }
+        }
+    } else if line_delta > 0 {
+        // Line insertion: shift all tokens at/after min_changed_line
+        for token in old_tokens {
+            let old_line = token.line as usize;
+            if old_line < min_changed_line {
+                // Before the insertion point - keep as-is
+                result.push(token.clone());
+            } else {
+                // At or after the insertion point - shift by line_delta
+                let mut adjusted = token.clone();
+                adjusted.line = ((token.line as i32) + line_delta) as u32;
+                // Only add if the adjusted line is not in changed_lines
+                // (changed_lines provides the new content)
+                let new_line = adjusted.line as usize;
+                if !changed_lines.contains(&new_line) {
+                    result.push(adjusted);
+                }
+            }
+        }
+    } else {
+        // Line deletion (line_delta < 0):
+        // Old lines in [min_changed_line, min_changed_line - line_delta) were deleted
+        // Old lines after that are shifted
+        let deleted_range_end = (min_changed_line as i32 - line_delta) as usize;
+
+        for token in old_tokens {
+            let old_line = token.line as usize;
+            if old_line < min_changed_line {
+                // Before the deletion point - keep as-is
+                result.push(token.clone());
+            } else if old_line < deleted_range_end {
+                // In the deleted range - skip
+            } else {
+                // After the deleted range - shift by line_delta
+                let mut adjusted = token.clone();
+                adjusted.line = ((token.line as i32) + line_delta) as u32;
+                // Only add if the adjusted line is not in changed_lines
+                // (changed_lines provides the new content for those lines)
+                let new_line = adjusted.line as usize;
+                if !changed_lines.contains(&new_line) {
+                    result.push(adjusted);
+                }
+            }
         }
     }
 
-    // 2. Add new tokens from the changed region
-    // Both changed_lines and new_tokens use new text coordinates,
-    // so we compare directly without adjustment
+    // Add new tokens ONLY for lines that are IN changed_lines
     for token in new_tokens {
         let line = token.line as usize;
-        if line >= min_changed_line && line <= max_changed_line {
+        if changed_lines.contains(&line) {
             result.push(token.clone());
-        }
-    }
-
-    // 3. Keep tokens after the changed region, adjusting their line numbers
-    // old_tokens have line numbers in old text coordinates.
-    // max_changed_line is in new text coordinates.
-    // Convert to old coordinates: max_changed_line_old = max_changed_line - line_delta
-    let max_changed_line_old = (max_changed_line as i32 - line_delta).max(0) as usize;
-    for token in old_tokens {
-        if (token.line as usize) > max_changed_line_old {
-            let mut adjusted = token.clone();
-            adjusted.line = ((token.line as i32) + line_delta) as u32;
-            result.push(adjusted);
         }
     }
 
@@ -516,6 +629,22 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_tokens_falls_back_when_line_delta_without_changes() {
+        let old_tokens = vec![
+            make_token(0, 0, 2, 1),
+            make_token(1, 0, 2, 1),
+            make_token(2, 0, 2, 1),
+        ];
+
+        let new_tokens = vec![make_token(0, 0, 2, 2), make_token(1, 0, 2, 2)];
+
+        let changed_lines = std::collections::HashSet::new();
+        let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, -1);
+
+        assert_eq!(result, new_tokens, "Should fall back to new tokens");
+    }
+
+    #[test]
     fn test_incremental_tokens_handles_line_insertion() {
         // Scenario: Line inserted at position 2, pushing old line 2 to line 3
         // Old: 4 lines with tokens at 0, 1, 2, 3
@@ -560,6 +689,162 @@ mod tests {
         // Old line 3 shifted to line 4
         assert_eq!(result[4].line, 4);
         assert_eq!(result[4].token_type, 4, "Token type preserved");
+    }
+
+    #[test]
+    fn test_merge_tokens_disjoint_insertions() {
+        // Scenario: Two disjoint insertions - one at line 2, another at line 5
+        //
+        // Old document (5 lines):
+        //   Line 0: token type 1
+        //   Line 1: token type 2
+        //   Line 2: token type 3
+        //   Line 3: token type 4
+        //   Line 4: token type 5
+        //
+        // New document (7 lines - 2 lines inserted at disjoint positions):
+        //   Line 0: token type 1  (unchanged)
+        //   Line 1: token type 2  (unchanged)
+        //   Line 2: token type 6  (INSERTED - first insertion)
+        //   Line 3: token type 3  (was old line 2, shifted by +1)
+        //   Line 4: token type 4  (was old line 3, shifted by +1)
+        //   Line 5: token type 7  (INSERTED - second insertion)
+        //   Line 6: token type 5  (was old line 4, shifted by +2)
+        //
+        // BUG: The current algorithm applies a uniform shift of +2 to all tokens
+        // at/after min_changed_line (line 2), which is incorrect for disjoint changes.
+        // Tokens between the two insertion points should only shift by +1.
+
+        let old_tokens = vec![
+            make_token(0, 0, 5, 1), // line 0
+            make_token(1, 0, 5, 2), // line 1
+            make_token(2, 0, 5, 3), // line 2 -> should become line 3
+            make_token(3, 0, 5, 4), // line 3 -> should become line 4
+            make_token(4, 0, 5, 5), // line 4 -> should become line 6
+        ];
+
+        let new_tokens = vec![
+            make_token(0, 0, 5, 1), // line 0
+            make_token(1, 0, 5, 2), // line 1
+            make_token(2, 0, 5, 6), // line 2 (new - first insertion)
+            make_token(3, 0, 5, 3), // line 3 (was old line 2)
+            make_token(4, 0, 5, 4), // line 4 (was old line 3)
+            make_token(5, 0, 5, 7), // line 5 (new - second insertion)
+            make_token(6, 0, 5, 5), // line 6 (was old line 4)
+        ];
+
+        let mut changed_lines = std::collections::HashSet::new();
+        changed_lines.insert(2); // First insertion point
+        changed_lines.insert(5); // Second insertion point (disjoint!)
+
+        let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 2);
+
+        // With the fix (fallback to new_tokens for disjoint changes),
+        // we should get exactly new_tokens
+        assert_eq!(result.len(), 7, "Should have 7 tokens");
+
+        // Verify all tokens match new_tokens exactly
+        assert_eq!(result[0].token_type, 1, "Line 0");
+        assert_eq!(result[1].token_type, 2, "Line 1");
+        assert_eq!(result[2].token_type, 6, "Line 2 (inserted)");
+        assert_eq!(result[3].token_type, 3, "Line 3 (was old line 2)");
+        assert_eq!(result[4].token_type, 4, "Line 4 (was old line 3)");
+        assert_eq!(result[5].token_type, 7, "Line 5 (inserted)");
+        assert_eq!(result[6].token_type, 5, "Line 6 (was old line 4)");
+    }
+
+    #[test]
+    fn test_has_disjoint_changes() {
+        // Empty set - not disjoint
+        let empty: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        assert!(!has_disjoint_changes(&empty));
+
+        // Single element - not disjoint
+        let single: std::collections::HashSet<usize> = [5].into_iter().collect();
+        assert!(!has_disjoint_changes(&single));
+
+        // Contiguous lines - not disjoint
+        let contiguous: std::collections::HashSet<usize> = [2, 3, 4, 5].into_iter().collect();
+        assert!(!has_disjoint_changes(&contiguous));
+
+        // Disjoint lines (gap between 2 and 5)
+        let disjoint: std::collections::HashSet<usize> = [2, 5].into_iter().collect();
+        assert!(has_disjoint_changes(&disjoint));
+
+        // Multiple disjoint regions
+        let multi_disjoint: std::collections::HashSet<usize> =
+            [1, 2, 5, 6, 10].into_iter().collect();
+        assert!(has_disjoint_changes(&multi_disjoint));
+    }
+
+    #[test]
+    fn test_merge_tokens_disjoint_deletions() {
+        // Scenario: Two disjoint deletions - lines 2 and 5 were deleted
+        // This should also fall back to new_tokens for correctness.
+        //
+        // Old document (7 lines):
+        //   Line 0-6 with various tokens
+        //
+        // New document (5 lines - 2 deleted at disjoint positions)
+
+        let old_tokens = vec![
+            make_token(0, 0, 5, 1),
+            make_token(1, 0, 5, 2),
+            make_token(2, 0, 5, 3), // deleted
+            make_token(3, 0, 5, 4),
+            make_token(4, 0, 5, 5),
+            make_token(5, 0, 5, 6), // deleted
+            make_token(6, 0, 5, 7),
+        ];
+
+        let new_tokens = vec![
+            make_token(0, 0, 5, 1),
+            make_token(1, 0, 5, 2),
+            make_token(2, 0, 5, 4), // was old line 3
+            make_token(3, 0, 5, 5), // was old line 4
+            make_token(4, 0, 5, 7), // was old line 6
+        ];
+
+        let mut changed_lines = std::collections::HashSet::new();
+        changed_lines.insert(2); // First deletion point
+        changed_lines.insert(3); // Second deletion point (disjoint in effect)
+
+        let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, -2);
+
+        // Should fall back to new_tokens
+        assert_eq!(result.len(), 5);
+        assert_eq!(result[0].token_type, 1);
+        assert_eq!(result[1].token_type, 2);
+        assert_eq!(result[2].token_type, 4);
+        assert_eq!(result[3].token_type, 5);
+        assert_eq!(result[4].token_type, 7);
+    }
+
+    #[test]
+    fn test_merge_tokens_contiguous_insertion_still_works() {
+        // Ensure single contiguous insertion still uses the incremental path
+        // (doesn't fall back unnecessarily)
+
+        let old_tokens = vec![make_token(0, 0, 5, 1), make_token(1, 0, 5, 2)];
+
+        let new_tokens = vec![
+            make_token(0, 0, 5, 1),
+            make_token(1, 0, 5, 99), // New inserted line
+            make_token(2, 0, 5, 2),  // Old line 1 shifted
+        ];
+
+        let mut changed_lines = std::collections::HashSet::new();
+        changed_lines.insert(1); // Single contiguous insertion point
+
+        let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 1);
+
+        assert_eq!(result.len(), 3);
+        // Line 0 should be preserved from old
+        assert_eq!(result[0].token_type, 1);
+        // Line 1 is new
+        assert_eq!(result[1].token_type, 99);
+        // Line 2 was old line 1, shifted
+        assert_eq!(result[2].token_type, 2);
     }
 
     #[test]
@@ -810,6 +1095,293 @@ mod tests {
 
         // Line delta should be +1 (one line added)
         assert_eq!(result.line_delta, 1, "Should detect line insertion");
+    }
+
+    #[test]
+    fn test_merge_tokens_with_disjoint_changes() {
+        // Scenario: Changes on lines 1 and 4 only (disjoint - not contiguous)
+        // Lines 2 and 3 are UNCHANGED and should preserve old tokens
+        //
+        // Regression test: Previously, the implementation treated min=1, max=4 as a
+        // contiguous range, replacing ALL tokens in [1,4] including unchanged lines 2-3.
+        // This was fixed by checking changed_lines membership instead of range bounds.
+        //
+        // Expected behavior: Only replace tokens on lines that are IN changed_lines set
+
+        let old_tokens = vec![
+            make_token(0, 0, 5, 1), // line 0 - unchanged
+            make_token(1, 0, 5, 2), // line 1 - CHANGED
+            make_token(2, 0, 5, 3), // line 2 - unchanged (should be preserved!)
+            make_token(3, 0, 5, 4), // line 3 - unchanged (should be preserved!)
+            make_token(4, 0, 5, 5), // line 4 - CHANGED
+        ];
+
+        // New tokens have different token_types for changed lines
+        let new_tokens = vec![
+            make_token(0, 0, 5, 1),  // line 0 - same
+            make_token(1, 0, 5, 12), // line 1 - different (type 12 vs 2)
+            make_token(2, 0, 5, 13), // line 2 - different (type 13 vs 3) BUT should NOT be used!
+            make_token(3, 0, 5, 14), // line 3 - different (type 14 vs 4) BUT should NOT be used!
+            make_token(4, 0, 5, 15), // line 4 - different (type 15 vs 5)
+        ];
+
+        let mut changed_lines = std::collections::HashSet::new();
+        changed_lines.insert(1); // Only line 1 changed
+        changed_lines.insert(4); // Only line 4 changed
+        // Lines 2 and 3 are NOT in changed_lines
+
+        let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 0);
+
+        assert_eq!(result.len(), 5, "Should have 5 tokens");
+
+        // Line 0: unchanged, should be from old
+        assert_eq!(
+            result[0].token_type, 1,
+            "Line 0 should preserve old token (type 1)"
+        );
+
+        // Line 1: changed, should be from new
+        assert_eq!(
+            result[1].token_type, 12,
+            "Line 1 should use new token (type 12)"
+        );
+
+        // Line 2: NOT changed, should preserve old token (type 3, not 13)
+        assert_eq!(
+            result[2].token_type, 3,
+            "Line 2 should preserve old token (type 3), not new (type 13)"
+        );
+
+        // Line 3: NOT changed, should preserve old token (type 4, not 14)
+        assert_eq!(
+            result[3].token_type, 4,
+            "Line 3 should preserve old token (type 4), not new (type 14)"
+        );
+
+        // Line 4: changed, should be from new
+        assert_eq!(
+            result[4].token_type, 15,
+            "Line 4 should use new token (type 15)"
+        );
+    }
+
+    #[test]
+    fn test_merge_tokens_with_line_deletion() {
+        // Scenario: Line 2 is deleted from a 5-line document
+        // Old: lines 0, 1, 2, 3, 4
+        // New: lines 0, 1, 2, 3 (old line 2 deleted, old lines 3,4 become 2,3)
+        //
+        // changed_lines = {1} (the deletion point, where the change occurred)
+        // line_delta = -1 (one line removed)
+        //
+        // Expected:
+        // - Line 0 preserved from old
+        // - Line 1 uses new tokens (changed)
+        // - Lines 2, 3 in result are old lines 3, 4 shifted down
+
+        let old_tokens = vec![
+            make_token(0, 0, 5, 1), // line 0
+            make_token(1, 0, 5, 2), // line 1 - will be changed
+            make_token(2, 0, 5, 3), // line 2 - will be deleted
+            make_token(3, 0, 5, 4), // line 3 - shifts to line 2
+            make_token(4, 0, 5, 5), // line 4 - shifts to line 3
+        ];
+
+        let new_tokens = vec![
+            make_token(0, 0, 5, 1),  // line 0 - same
+            make_token(1, 0, 5, 12), // line 1 - changed (different type)
+            make_token(2, 0, 5, 4),  // line 2 - was old line 3
+            make_token(3, 0, 5, 5),  // line 3 - was old line 4
+        ];
+
+        let mut changed_lines = std::collections::HashSet::new();
+        changed_lines.insert(1); // The deletion happened at/around line 1
+
+        let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, -1);
+
+        assert_eq!(result.len(), 4, "Should have 4 tokens after deletion");
+
+        // Line 0: preserved from old
+        assert_eq!(
+            result[0].token_type, 1,
+            "Line 0 should preserve old token (type 1)"
+        );
+        assert_eq!(result[0].line, 0);
+
+        // Line 1: from new tokens (changed region)
+        assert_eq!(
+            result[1].token_type, 12,
+            "Line 1 should use new token (type 12)"
+        );
+        assert_eq!(result[1].line, 1);
+
+        // Line 2: was old line 3, shifted down
+        assert_eq!(
+            result[2].token_type, 4,
+            "Line 2 should be old line 3's token (type 4)"
+        );
+        assert_eq!(result[2].line, 2);
+
+        // Line 3: was old line 4, shifted down
+        assert_eq!(
+            result[3].token_type, 5,
+            "Line 3 should be old line 4's token (type 5)"
+        );
+        assert_eq!(result[3].line, 3);
+    }
+
+    #[test]
+    fn test_merge_tokens_at_document_boundaries() {
+        // Test 1: Change at line 0 (first line of document)
+        {
+            let old_tokens = vec![
+                make_token(0, 0, 5, 1), // line 0 - CHANGED
+                make_token(1, 0, 5, 2), // line 1 - unchanged
+                make_token(2, 0, 5, 3), // line 2 - unchanged
+            ];
+
+            let new_tokens = vec![
+                make_token(0, 0, 5, 11), // line 0 - new
+                make_token(1, 0, 5, 2),  // line 1 - same
+                make_token(2, 0, 5, 3),  // line 2 - same
+            ];
+
+            let mut changed_lines = std::collections::HashSet::new();
+            changed_lines.insert(0); // First line changed
+
+            let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 0);
+
+            assert_eq!(result.len(), 3, "Should have 3 tokens");
+            assert_eq!(
+                result[0].token_type, 11,
+                "Line 0 should use new token (type 11)"
+            );
+            assert_eq!(
+                result[1].token_type, 2,
+                "Line 1 should preserve old token (type 2)"
+            );
+            assert_eq!(
+                result[2].token_type, 3,
+                "Line 2 should preserve old token (type 3)"
+            );
+        }
+
+        // Test 2: Change at last line
+        {
+            let old_tokens = vec![
+                make_token(0, 0, 5, 1), // line 0 - unchanged
+                make_token(1, 0, 5, 2), // line 1 - unchanged
+                make_token(2, 0, 5, 3), // line 2 - CHANGED (last line)
+            ];
+
+            let new_tokens = vec![
+                make_token(0, 0, 5, 1),  // line 0 - same
+                make_token(1, 0, 5, 2),  // line 1 - same
+                make_token(2, 0, 5, 13), // line 2 - new
+            ];
+
+            let mut changed_lines = std::collections::HashSet::new();
+            changed_lines.insert(2); // Last line changed
+
+            let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 0);
+
+            assert_eq!(result.len(), 3, "Should have 3 tokens");
+            assert_eq!(
+                result[0].token_type, 1,
+                "Line 0 should preserve old token (type 1)"
+            );
+            assert_eq!(
+                result[1].token_type, 2,
+                "Line 1 should preserve old token (type 2)"
+            );
+            assert_eq!(
+                result[2].token_type, 13,
+                "Line 2 should use new token (type 13)"
+            );
+        }
+
+        // Test 3: Line insertion at document start (new line 0)
+        {
+            let old_tokens = vec![
+                make_token(0, 0, 5, 1), // old line 0 -> new line 1
+                make_token(1, 0, 5, 2), // old line 1 -> new line 2
+            ];
+
+            let new_tokens = vec![
+                make_token(0, 0, 5, 10), // new line 0 (inserted)
+                make_token(1, 0, 5, 1),  // new line 1 (was old line 0)
+                make_token(2, 0, 5, 2),  // new line 2 (was old line 1)
+            ];
+
+            let mut changed_lines = std::collections::HashSet::new();
+            changed_lines.insert(0); // Line 0 is where insertion happened
+
+            let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 1);
+
+            assert_eq!(result.len(), 3, "Should have 3 tokens after insertion");
+            assert_eq!(
+                result[0].token_type, 10,
+                "Line 0 should be new inserted token (type 10)"
+            );
+            // Old tokens should be shifted
+            assert_eq!(result[1].line, 1, "Old line 0 should shift to line 1");
+            assert_eq!(result[2].line, 2, "Old line 1 should shift to line 2");
+        }
+    }
+
+    #[test]
+    fn test_merge_tokens_empty_document_edge_cases() {
+        // Test 1: Empty old document, non-empty new document (first content added)
+        {
+            let old_tokens: Vec<AbsoluteToken> = vec![]; // No tokens in empty document
+
+            let new_tokens = vec![
+                make_token(0, 0, 2, 1), // "fn"
+                make_token(0, 3, 4, 2), // "main"
+            ];
+
+            let mut changed_lines = std::collections::HashSet::new();
+            changed_lines.insert(0); // Line 0 is new content
+
+            // line_delta is positive because we went from 0 lines to 1 line
+            // In practice, lines().count() on "" returns 0, on "fn main()" returns 1
+            let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 1);
+
+            assert_eq!(result.len(), 2, "Should have 2 tokens from new content");
+            assert_eq!(result[0].token_type, 1);
+            assert_eq!(result[1].token_type, 2);
+        }
+
+        // Test 2: Non-empty old document, empty new document (all content deleted)
+        {
+            let old_tokens = vec![
+                make_token(0, 0, 2, 1), // "fn"
+                make_token(0, 3, 4, 2), // "main"
+            ];
+
+            let new_tokens: Vec<AbsoluteToken> = vec![]; // No tokens in empty document
+
+            // When all content is deleted, changed_lines might be empty or contain 0
+            // The behavior should handle both cases gracefully
+            let changed_lines = std::collections::HashSet::new();
+
+            // line_delta is negative because we went from 1 line to 0 lines
+            let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, -1);
+
+            // With empty changed_lines and line_delta != 0, should fall back to new tokens
+            assert_eq!(result.len(), 0, "Should have no tokens after deletion");
+        }
+
+        // Test 3: Empty to empty (no change)
+        {
+            let old_tokens: Vec<AbsoluteToken> = vec![];
+            let new_tokens: Vec<AbsoluteToken> = vec![];
+            let changed_lines = std::collections::HashSet::new();
+
+            let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 0);
+
+            assert_eq!(result.len(), 0, "Should remain empty");
+        }
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use crate::language::LanguageCoordinator;
 use crate::language::predicate_accessor::{UnifiedPredicate, get_all_predicates};
 use crate::language::region_id_tracker::RegionIdTracker;
+use crate::text::fnv1a_hash;
 use tree_sitter::{Node, Query, QueryCursor, QueryMatch, StreamingIterator, Tree};
 use ulid::Ulid;
 use url::Url;
@@ -270,17 +271,8 @@ impl CacheableInjectionRegion {
     }
 
     /// Compute a simple hash of content bytes for stable matching.
-    /// Uses FNV-1a for speed and good distribution.
     fn hash_content(content: &str) -> u64 {
-        // FNV-1a hash
-        const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-        const FNV_PRIME: u64 = 0x100000001b3;
-        let mut hash = FNV_OFFSET;
-        for byte in content.bytes() {
-            hash ^= byte as u64;
-            hash = hash.wrapping_mul(FNV_PRIME);
-        }
-        hash
+        fnv1a_hash(content)
     }
 
     /// Check if a byte offset falls within this injection region's byte range.
