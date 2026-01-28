@@ -299,8 +299,6 @@ pub fn merge_tokens(
     }
 
     let min_changed_line = *changed_lines.iter().min().unwrap_or(&0);
-    // Note: max_changed_line is not used in the current algorithm, but kept for potential future use
-    let _max_changed_line = *changed_lines.iter().max().unwrap_or(&0);
 
     let mut result = Vec::new();
 
