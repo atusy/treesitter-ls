@@ -833,6 +833,73 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_tokens_with_disjoint_changes() {
+        // Scenario: Changes on lines 1 and 4 only (disjoint - not contiguous)
+        // Lines 2 and 3 are UNCHANGED and should preserve old tokens
+        //
+        // Bug: Current implementation treats min=1, max=4 as a contiguous range,
+        // replacing ALL tokens in [1,4] including unchanged lines 2-3
+        //
+        // Expected behavior: Only replace tokens on lines that are IN changed_lines set
+
+        let old_tokens = vec![
+            make_token(0, 0, 5, 1), // line 0 - unchanged
+            make_token(1, 0, 5, 2), // line 1 - CHANGED
+            make_token(2, 0, 5, 3), // line 2 - unchanged (should be preserved!)
+            make_token(3, 0, 5, 4), // line 3 - unchanged (should be preserved!)
+            make_token(4, 0, 5, 5), // line 4 - CHANGED
+        ];
+
+        // New tokens have different token_types for changed lines
+        let new_tokens = vec![
+            make_token(0, 0, 5, 1),  // line 0 - same
+            make_token(1, 0, 5, 12), // line 1 - different (type 12 vs 2)
+            make_token(2, 0, 5, 13), // line 2 - different (type 13 vs 3) BUT should NOT be used!
+            make_token(3, 0, 5, 14), // line 3 - different (type 14 vs 4) BUT should NOT be used!
+            make_token(4, 0, 5, 15), // line 4 - different (type 15 vs 5)
+        ];
+
+        let mut changed_lines = std::collections::HashSet::new();
+        changed_lines.insert(1); // Only line 1 changed
+        changed_lines.insert(4); // Only line 4 changed
+        // Lines 2 and 3 are NOT in changed_lines
+
+        let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 0);
+
+        assert_eq!(result.len(), 5, "Should have 5 tokens");
+
+        // Line 0: unchanged, should be from old
+        assert_eq!(
+            result[0].token_type, 1,
+            "Line 0 should preserve old token (type 1)"
+        );
+
+        // Line 1: changed, should be from new
+        assert_eq!(
+            result[1].token_type, 12,
+            "Line 1 should use new token (type 12)"
+        );
+
+        // Line 2: NOT changed, should preserve old token (type 3, not 13)
+        assert_eq!(
+            result[2].token_type, 3,
+            "Line 2 should preserve old token (type 3), not new (type 13)"
+        );
+
+        // Line 3: NOT changed, should preserve old token (type 4, not 14)
+        assert_eq!(
+            result[3].token_type, 4,
+            "Line 3 should preserve old token (type 4), not new (type 14)"
+        );
+
+        // Line 4: changed, should be from new
+        assert_eq!(
+            result[4].token_type, 15,
+            "Line 4 should use new token (type 15)"
+        );
+    }
+
+    #[test]
     fn test_incremental_tokenization_performance() {
         use std::time::Instant;
 
