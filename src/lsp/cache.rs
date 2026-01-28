@@ -128,6 +128,15 @@ impl CacheCoordinator {
     ///
     /// Called during did_change to ensure fresh tokens for delta calculations.
     pub(crate) fn invalidate_semantic(&self, uri: &Url) {
+        // Log the result_id being invalidated (if any) for debugging cache behavior
+        if let Some(cached) = self.semantic_cache.get(uri) {
+            log::debug!(
+                target: "kakehashi::semantic_cache",
+                "Invalidating semantic cache for {} (result_id was '{}')",
+                uri.path(),
+                cached.result_id.as_deref().unwrap_or("<none>")
+            );
+        }
         self.semantic_cache.remove(uri);
     }
 
@@ -278,7 +287,37 @@ impl CacheCoordinator {
         uri: &Url,
         expected_result_id: &str,
     ) -> Option<SemanticTokens> {
-        self.semantic_cache.get_if_valid(uri, expected_result_id)
+        let result = self.semantic_cache.get_if_valid(uri, expected_result_id);
+
+        // Diagnostic logging to understand cache validation failures
+        if result.is_none() {
+            // Check if the URI exists in cache at all
+            if let Some(cached) = self.semantic_cache.get(uri) {
+                log::debug!(
+                    target: "kakehashi::semantic_cache",
+                    "Cache MISS: result_id mismatch for {} - expected '{}', cached '{}'",
+                    uri.path(),
+                    expected_result_id,
+                    cached.result_id.as_deref().unwrap_or("<none>")
+                );
+            } else {
+                log::debug!(
+                    target: "kakehashi::semantic_cache",
+                    "Cache MISS: no entry for {} (expected result_id '{}')",
+                    uri.path(),
+                    expected_result_id
+                );
+            }
+        } else {
+            log::debug!(
+                target: "kakehashi::semantic_cache",
+                "Cache HIT: found tokens for {} with result_id '{}'",
+                uri.path(),
+                expected_result_id
+            );
+        }
+
+        result
     }
 
     /// Store semantic tokens for a document.
