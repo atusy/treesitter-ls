@@ -913,6 +913,71 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_tokens_with_line_deletion() {
+        // Scenario: Line 2 is deleted from a 5-line document
+        // Old: lines 0, 1, 2, 3, 4
+        // New: lines 0, 1, 2, 3 (old line 2 deleted, old lines 3,4 become 2,3)
+        //
+        // changed_lines = {1} (the deletion point, where the change occurred)
+        // line_delta = -1 (one line removed)
+        //
+        // Expected:
+        // - Line 0 preserved from old
+        // - Line 1 uses new tokens (changed)
+        // - Lines 2, 3 in result are old lines 3, 4 shifted down
+
+        let old_tokens = vec![
+            make_token(0, 0, 5, 1), // line 0
+            make_token(1, 0, 5, 2), // line 1 - will be changed
+            make_token(2, 0, 5, 3), // line 2 - will be deleted
+            make_token(3, 0, 5, 4), // line 3 - shifts to line 2
+            make_token(4, 0, 5, 5), // line 4 - shifts to line 3
+        ];
+
+        let new_tokens = vec![
+            make_token(0, 0, 5, 1),  // line 0 - same
+            make_token(1, 0, 5, 12), // line 1 - changed (different type)
+            make_token(2, 0, 5, 4),  // line 2 - was old line 3
+            make_token(3, 0, 5, 5),  // line 3 - was old line 4
+        ];
+
+        let mut changed_lines = std::collections::HashSet::new();
+        changed_lines.insert(1); // The deletion happened at/around line 1
+
+        let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, -1);
+
+        assert_eq!(result.len(), 4, "Should have 4 tokens after deletion");
+
+        // Line 0: preserved from old
+        assert_eq!(
+            result[0].token_type, 1,
+            "Line 0 should preserve old token (type 1)"
+        );
+        assert_eq!(result[0].line, 0);
+
+        // Line 1: from new tokens (changed region)
+        assert_eq!(
+            result[1].token_type, 12,
+            "Line 1 should use new token (type 12)"
+        );
+        assert_eq!(result[1].line, 1);
+
+        // Line 2: was old line 3, shifted down
+        assert_eq!(
+            result[2].token_type, 4,
+            "Line 2 should be old line 3's token (type 4)"
+        );
+        assert_eq!(result[2].line, 2);
+
+        // Line 3: was old line 4, shifted down
+        assert_eq!(
+            result[3].token_type, 5,
+            "Line 3 should be old line 4's token (type 5)"
+        );
+        assert_eq!(result[3].line, 3);
+    }
+
+    #[test]
     fn test_incremental_tokenization_performance() {
         use std::time::Instant;
 
