@@ -26,14 +26,44 @@ pub fn decide_tokenization_strategy(
     document_len: usize,
 ) -> IncrementalDecision {
     let Some(prev_tree) = previous_tree else {
+        log::debug!(
+            target: "kakehashi::incremental",
+            "Strategy=UseFull: no previous tree"
+        );
         return IncrementalDecision::UseFull;
     };
 
     let changed_ranges = get_changed_ranges(prev_tree, current_tree);
 
+    // Log diagnostic information about the change
+    let total_changed: usize = changed_ranges
+        .iter()
+        .map(|r| r.end_byte.saturating_sub(r.start_byte))
+        .sum();
+    let ratio = if document_len > 0 {
+        total_changed as f64 / document_len as f64
+    } else {
+        0.0
+    };
+
     if is_large_structural_change(&changed_ranges, document_len) {
+        log::debug!(
+            target: "kakehashi::incremental",
+            "Strategy=UseFull: large change detected (ranges={}, bytes={}, ratio={:.2}%, doc_len={})",
+            changed_ranges.len(),
+            total_changed,
+            ratio * 100.0,
+            document_len
+        );
         IncrementalDecision::UseFull
     } else {
+        log::debug!(
+            target: "kakehashi::incremental",
+            "Strategy=UseIncremental: small change (ranges={}, bytes={}, ratio={:.2}%)",
+            changed_ranges.len(),
+            total_changed,
+            ratio * 100.0
+        );
         IncrementalDecision::UseIncremental
     }
 }
