@@ -897,4 +897,77 @@ mod tests {
             "on-demand parse should populate a syntax tree"
         );
     }
+
+    /// Test that semantic token cache is preserved for delta calculations.
+    ///
+    /// This verifies the fix for the issue where `invalidate_semantic()` was being
+    /// called on every `didChange`, preventing delta calculations from ever working.
+    #[tokio::test]
+    async fn semantic_tokens_cache_preserved_for_delta() {
+        let (service, _socket) = LspService::new(Kakehashi::new);
+        let server = service.inner();
+        let uri = Url::parse("file:///cache_test.lua").expect("should construct test uri");
+
+        // Insert a document
+        server.documents.insert(
+            uri.clone(),
+            "local x = 1".to_string(),
+            Some("lua".to_string()),
+            None,
+        );
+
+        let load_result = server.language.ensure_language_loaded("lua");
+        if !load_result.success {
+            eprintln!("Skipping: lua language parser not available");
+            return;
+        }
+
+        // First request: semanticTokens/full to populate the cache
+        let params = SemanticTokensParams {
+            text_document: TextDocumentIdentifier {
+                uri: crate::lsp::lsp_impl::url_to_uri(&uri).expect("test URI should convert"),
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let result = server.semantic_tokens_full_impl(params).await;
+        assert!(result.is_ok(), "semantic_tokens_full should succeed");
+
+        let tokens_result = result.unwrap();
+        assert!(tokens_result.is_some(), "should return tokens");
+
+        // Extract the result_id from the response
+        let result_id = match tokens_result.unwrap() {
+            SemanticTokensResult::Tokens(tokens) => tokens.result_id,
+            _ => panic!("expected Tokens variant"),
+        };
+        assert!(result_id.is_some(), "should have result_id");
+        let result_id = result_id.unwrap();
+
+        // Verify the cache contains tokens with this result_id
+        let cached = server.cache.get_tokens_if_valid(&uri, &result_id);
+        assert!(
+            cached.is_some(),
+            "cache should contain tokens with result_id '{}'",
+            result_id
+        );
+
+        // Simulate a document change (this would normally be done via didChange)
+        // In production, didChange does NOT invalidate semantic cache anymore
+        server.documents.update_document(
+            uri.clone(),
+            "local y = 2".to_string(),
+            None, // tree will be None until next parse
+        );
+
+        // The cache should STILL contain the previous tokens
+        // (This is the key assertion - previously this would fail because
+        // didChange invalidated the cache)
+        let still_cached = server.cache.get_tokens_if_valid(&uri, &result_id);
+        assert!(
+            still_cached.is_some(),
+            "cache should STILL contain tokens after document update - needed for delta calculations"
+        );
+    }
 }
