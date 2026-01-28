@@ -148,8 +148,8 @@ impl DocumentStore {
                     doc.update_tree_and_text(tree, text);
                     true
                 } else {
-                    // No new tree provided - just update text
-                    // Note: This clears the tree, which may not be desired
+                    // No new tree provided - clear existing tree and update text only.
+                    // This path is used when text changes without re-parsing (rare edge case).
                     doc.update_text(text);
                     false
                 }
