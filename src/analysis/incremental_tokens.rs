@@ -658,6 +658,68 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_tokens_disjoint_insertions() {
+        // Scenario: Two disjoint insertions - one at line 2, another at line 5
+        //
+        // Old document (5 lines):
+        //   Line 0: token type 1
+        //   Line 1: token type 2
+        //   Line 2: token type 3
+        //   Line 3: token type 4
+        //   Line 4: token type 5
+        //
+        // New document (7 lines - 2 lines inserted at disjoint positions):
+        //   Line 0: token type 1  (unchanged)
+        //   Line 1: token type 2  (unchanged)
+        //   Line 2: token type 6  (INSERTED - first insertion)
+        //   Line 3: token type 3  (was old line 2, shifted by +1)
+        //   Line 4: token type 4  (was old line 3, shifted by +1)
+        //   Line 5: token type 7  (INSERTED - second insertion)
+        //   Line 6: token type 5  (was old line 4, shifted by +2)
+        //
+        // BUG: The current algorithm applies a uniform shift of +2 to all tokens
+        // at/after min_changed_line (line 2), which is incorrect for disjoint changes.
+        // Tokens between the two insertion points should only shift by +1.
+
+        let old_tokens = vec![
+            make_token(0, 0, 5, 1), // line 0
+            make_token(1, 0, 5, 2), // line 1
+            make_token(2, 0, 5, 3), // line 2 -> should become line 3
+            make_token(3, 0, 5, 4), // line 3 -> should become line 4
+            make_token(4, 0, 5, 5), // line 4 -> should become line 6
+        ];
+
+        let new_tokens = vec![
+            make_token(0, 0, 5, 1), // line 0
+            make_token(1, 0, 5, 2), // line 1
+            make_token(2, 0, 5, 6), // line 2 (new - first insertion)
+            make_token(3, 0, 5, 3), // line 3 (was old line 2)
+            make_token(4, 0, 5, 4), // line 4 (was old line 3)
+            make_token(5, 0, 5, 7), // line 5 (new - second insertion)
+            make_token(6, 0, 5, 5), // line 6 (was old line 4)
+        ];
+
+        let mut changed_lines = std::collections::HashSet::new();
+        changed_lines.insert(2); // First insertion point
+        changed_lines.insert(5); // Second insertion point (disjoint!)
+
+        let result = merge_tokens(&old_tokens, &new_tokens, &changed_lines, 2);
+
+        // With the fix (fallback to new_tokens for disjoint changes),
+        // we should get exactly new_tokens
+        assert_eq!(result.len(), 7, "Should have 7 tokens");
+
+        // Verify all tokens match new_tokens exactly
+        assert_eq!(result[0].token_type, 1, "Line 0");
+        assert_eq!(result[1].token_type, 2, "Line 1");
+        assert_eq!(result[2].token_type, 6, "Line 2 (inserted)");
+        assert_eq!(result[3].token_type, 3, "Line 3 (was old line 2)");
+        assert_eq!(result[4].token_type, 4, "Line 4 (was old line 3)");
+        assert_eq!(result[5].token_type, 7, "Line 5 (inserted)");
+        assert_eq!(result[6].token_type, 5, "Line 6 (was old line 4)");
+    }
+
+    #[test]
     fn test_encode_decode_roundtrip() {
         use tower_lsp_server::ls_types::{SemanticToken, SemanticTokens};
 
