@@ -35,7 +35,6 @@
 //! - Invalidating on edit would prevent delta calculations entirely
 
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 
 use tower_lsp_server::ls_types::SemanticTokens;
 use tree_sitter::{InputEdit, Tree};
@@ -406,9 +405,15 @@ impl CacheCoordinator {
 }
 
 pub(crate) fn calculate_text_hash(text: &str) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    text.hash(&mut hasher);
-    hasher.finish()
+    // FNV-1a hash, consistent with `CacheableInjectionRegion::hash_content`
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut hash = FNV_OFFSET;
+    for byte in text.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
 }
 
 impl Default for CacheCoordinator {
