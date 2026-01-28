@@ -657,8 +657,22 @@ impl Kakehashi {
                 // Get previous tokens from cache for delta computation in full path.
                 // This lookup is deferred until here to avoid redundant cache access
                 // when taking the incremental path (which uses get_tokens_if_valid_with_text_hash).
-                let previous_tokens_for_delta =
-                    self.cache.get_tokens_if_valid(&uri, &previous_result_id);
+                //
+                // If we have incremental_state with previous_text, also validate text hash
+                // to avoid computing deltas against stale cached tokens from a different
+                // text snapshot.
+                let previous_tokens_for_delta = match &incremental_state {
+                    Some(state) => {
+                        let previous_text_hash =
+                            crate::lsp::cache::calculate_text_hash(&state.previous_text);
+                        self.cache.get_tokens_if_valid_with_text_hash(
+                            &uri,
+                            &previous_result_id,
+                            previous_text_hash,
+                        )
+                    }
+                    None => self.cache.get_tokens_if_valid(&uri, &previous_result_id),
+                };
 
                 log::debug!(
                     target: "kakehashi::semantic",
