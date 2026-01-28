@@ -1,4 +1,30 @@
 //! Incremental tokenization using Tree-sitter's changed_ranges API.
+//!
+//! This module provides utilities for efficient semantic token updates by only
+//! re-tokenizing portions of a document that have changed. The approach:
+//!
+//! 1. **Strategy Decision**: Use `decide_tokenization_strategy` to determine whether
+//!    incremental or full tokenization is more appropriate based on the scope of changes.
+//!
+//! 2. **Change Detection**: Use Tree-sitter's `changed_ranges` API to identify which
+//!    byte ranges differ between the old and new parse trees.
+//!
+//! 3. **Token Merging**: Merge cached tokens from unchanged regions with newly computed
+//!    tokens for changed regions using `merge_tokens`.
+//!
+//! ## When Incremental is Used
+//!
+//! Incremental tokenization is used when:
+//! - A previous parse tree is available
+//! - Changes are localized (fewer than 10 ranges, less than 30% of document)
+//!
+//! ## Key Functions
+//!
+//! - [`decide_tokenization_strategy`] - Choose between incremental and full tokenization
+//! - [`compute_incremental_tokens`] - Orchestrate the incremental tokenization process
+//! - [`merge_tokens`] - Merge old and new tokens based on changed line ranges
+//! - [`decode_semantic_tokens`] / [`encode_semantic_tokens`] - Convert between delta and
+//!   absolute position formats
 
 use tree_sitter::{Range as TsRange, Tree};
 
