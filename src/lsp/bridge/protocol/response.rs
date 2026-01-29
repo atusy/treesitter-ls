@@ -3426,6 +3426,58 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_response_filters_all_related_info_with_virtual_uris() {
+        // When all relatedInformation entries have virtual URIs, the array should become empty
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 10 }
+                        },
+                        "message": "unused variable",
+                        "relatedInformation": [
+                            {
+                                "location": {
+                                    "uri": "file:///.kakehashi/lua/region-0/test.lua",
+                                    "range": {
+                                        "start": { "line": 5, "character": 0 },
+                                        "end": { "line": 5, "character": 5 }
+                                    }
+                                },
+                                "message": "first virtual URI"
+                            },
+                            {
+                                "location": {
+                                    "uri": "file:///.kakehashi/python/region-1/main.py",
+                                    "range": {
+                                        "start": { "line": 10, "character": 0 },
+                                        "end": { "line": 10, "character": 5 }
+                                    }
+                                },
+                                "message": "second virtual URI"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        let context = test_context("unused", "unused", 3);
+
+        let transformed = transform_diagnostic_response_to_host(response, &context);
+
+        let items = transformed["result"]["items"].as_array().unwrap();
+        let related = items[0]["relatedInformation"].as_array().unwrap();
+
+        // All entries had virtual URIs, so the array should be empty
+        assert!(related.is_empty());
+    }
+
+    #[test]
     fn position_transformation_with_large_line_numbers_uses_saturating_add() {
         // Test that position transformation uses saturating_add for large line numbers
         // This prevents panic from overflow when line + region_start_line > u64::MAX
