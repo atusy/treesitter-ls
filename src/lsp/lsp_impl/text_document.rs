@@ -6,7 +6,6 @@ mod completion;
 mod declaration;
 mod definition;
 mod diagnostic;
-mod diagnostic_common;
 mod publish_diagnostic;
 #[cfg(feature = "experimental")]
 mod document_color;

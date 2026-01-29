@@ -38,7 +38,7 @@ use crate::language::InjectionResolver;
 use crate::lsp::bridge::{LanguageServerPool, UpstreamId};
 
 use super::super::Kakehashi;
-use super::diagnostic_common::{send_diagnostic_with_timeout, DiagnosticRequestInfo, DIAGNOSTIC_REQUEST_TIMEOUT};
+use super::diagnostic::{send_diagnostic_with_timeout, DiagnosticRequestInfo, DIAGNOSTIC_REQUEST_TIMEOUT};
 
 /// Logging target for synthetic push diagnostics.
 const LOG_TARGET: &str = "kakehashi::synthetic_diag";
