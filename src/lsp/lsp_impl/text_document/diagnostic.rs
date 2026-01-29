@@ -134,9 +134,9 @@ impl Kakehashi {
         // Sprint 17: Process ALL injection regions with parallel fan-out
         // Collect request info for regions that have bridge configs
         // Group by server_name to share Arc<BridgeServerConfig> across regions using the same server
-        // Pre-allocate with capacity based on number of regions (upper bound for unique languages)
+        // Pre-allocate with small capacity (typically 1-2 unique servers per document)
         let mut config_cache: std::collections::HashMap<String, Arc<BridgeServerConfig>> =
-            std::collections::HashMap::with_capacity(all_regions.len());
+            std::collections::HashMap::with_capacity(2);
         let mut request_infos: Vec<DiagnosticRequestInfo> = Vec::with_capacity(all_regions.len());
 
         for resolved in &all_regions {
