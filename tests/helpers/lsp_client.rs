@@ -355,19 +355,33 @@ impl LspClient {
     }
 
     /// Try to receive a message with a timeout, returning None if no message available.
+    ///
+    /// # Known Limitation
+    ///
+    /// The `fill_buf()` call can potentially block on pipes if no data is available,
+    /// which may cause the timeout to be approximate rather than exact. In practice,
+    /// this works well for test scenarios where:
+    /// 1. The server is expected to respond (tests wait after sending requests)
+    /// 2. The server process eventually terminates (EOF triggers return)
+    ///
+    /// For truly non-blocking behavior, platform-specific non-blocking I/O or async
+    /// would be required, but this adds significant complexity for test helper code.
     fn try_receive_message(&mut self, timeout: Duration) -> Option<Value> {
         let start_time = Instant::now();
 
-        // Set non-blocking mode for polling (platform-specific)
-        // For simplicity, we'll use a spin loop with short sleeps
+        // Polling loop with short sleeps between buffer checks.
+        // Note: fill_buf() may block briefly if the pipe has no data, making
+        // the timeout approximate. This is acceptable for test code where we
+        // expect the server to respond or terminate.
         while start_time.elapsed() < timeout {
-            // Check if data is available by peeking at the buffer
+            // Check if data is already available in the buffer
             if !self.stdout.buffer().is_empty() {
-                // Data available, read the message
                 return Some(self.receive_message());
             }
 
-            // Try to fill the buffer with available data
+            // Try to fill the buffer with available data.
+            // This may block briefly on pipes, but typically returns quickly
+            // if data is being sent or the server has terminated.
             let _ = self.stdout.fill_buf();
             if !self.stdout.buffer().is_empty() {
                 return Some(self.receive_message());
