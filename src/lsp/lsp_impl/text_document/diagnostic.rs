@@ -144,6 +144,64 @@ pub(crate) async fn send_diagnostic_with_timeout(
     serde_json::from_value::<Vec<Diagnostic>>(items.clone()).ok()
 }
 
+/// Fan-out diagnostic requests to downstream servers.
+///
+/// Spawns parallel requests to all injection regions and aggregates results.
+/// Uses JoinSet for structured concurrency with automatic cleanup on drop.
+///
+/// This is the shared implementation used by both synthetic push diagnostics
+/// (didSave/didOpen triggered) and debounced diagnostics (didChange triggered).
+///
+/// # Arguments
+/// * `pool` - The language server pool for sending requests
+/// * `uri` - The host document URI
+/// * `request_infos` - Request info for each injection region
+/// * `log_target` - Logging target (e.g., "kakehashi::synthetic_diag")
+pub(crate) async fn fan_out_diagnostic_requests(
+    pool: &Arc<LanguageServerPool>,
+    uri: &Url,
+    request_infos: Vec<DiagnosticRequestInfo>,
+    log_target: &'static str,
+) -> Vec<Diagnostic> {
+    let mut join_set = tokio::task::JoinSet::new();
+
+    for info in request_infos {
+        let pool = Arc::clone(pool);
+        let uri = uri.clone();
+
+        join_set.spawn(async move {
+            send_diagnostic_with_timeout(
+                &pool,
+                &info,
+                &uri,
+                UpstreamId::Null, // No upstream request for background tasks
+                None,             // No previous_result_id
+                DIAGNOSTIC_REQUEST_TIMEOUT,
+                log_target,
+            )
+            .await
+        });
+    }
+
+    // Collect results from all regions
+    let mut all_diagnostics: Vec<Diagnostic> = Vec::new();
+    while let Some(result) = join_set.join_next().await {
+        match result {
+            Ok(Some(diagnostics)) => all_diagnostics.extend(diagnostics),
+            Ok(None) => {}
+            Err(e) => {
+                log::error!(
+                    target: log_target,
+                    "Diagnostic task panicked: {}",
+                    e
+                );
+            }
+        }
+    }
+
+    all_diagnostics
+}
+
 // ============================================================================
 // Pull diagnostics implementation (textDocument/diagnostic)
 // ============================================================================

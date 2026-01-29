@@ -44,10 +44,13 @@ use std::time::Duration;
 use dashmap::DashMap;
 use tokio::task::AbortHandle;
 use tower_lsp_server::Client;
-use tower_lsp_server::ls_types::{Diagnostic, Uri};
+use tower_lsp_server::ls_types::Uri;
 use url::Url;
 
 use super::bridge::LanguageServerPool;
+use super::lsp_impl::text_document::diagnostic::{
+    DiagnosticRequestInfo, fan_out_diagnostic_requests,
+};
 use super::synthetic_diagnostics::SyntheticDiagnosticsManager;
 
 /// Default debounce duration for `didChange` events (500ms).
@@ -71,7 +74,7 @@ struct DebouncedDiagnosticData {
     /// LSP client for publishing diagnostics
     client: Client,
     /// Pre-captured snapshot data (None if document has no injections)
-    snapshot_data: Option<Vec<super::lsp_impl::text_document::diagnostic::DiagnosticRequestInfo>>,
+    snapshot_data: Option<Vec<DiagnosticRequestInfo>>,
     /// Bridge pool for sending diagnostic requests
     bridge_pool: Arc<LanguageServerPool>,
     /// Reference to synthetic diagnostics manager for task registration
@@ -134,9 +137,7 @@ impl DebouncedDiagnosticsManager {
         uri: Url,
         lsp_uri: Uri,
         client: Client,
-        snapshot_data: Option<
-            Vec<super::lsp_impl::text_document::diagnostic::DiagnosticRequestInfo>,
-        >,
+        snapshot_data: Option<Vec<DiagnosticRequestInfo>>,
         bridge_pool: Arc<LanguageServerPool>,
         synthetic_diagnostics: Arc<SyntheticDiagnosticsManager>,
     ) {
@@ -263,9 +264,10 @@ async fn execute_debounced_diagnostic(data: DebouncedDiagnosticData) {
             return;
         }
 
-        // Fan-out diagnostic requests
+        // Fan-out diagnostic requests (using shared implementation)
         let diagnostics =
-            fan_out_diagnostic_requests(&bridge_pool, &uri_clone, request_infos).await;
+            fan_out_diagnostic_requests(&bridge_pool, &uri_clone, request_infos, LOG_TARGET)
+                .await;
 
         log::debug!(
             target: LOG_TARGET,
@@ -282,59 +284,6 @@ async fn execute_debounced_diagnostic(data: DebouncedDiagnosticData) {
     // If a didSave or another debounced didChange triggers while this is running,
     // the new task will supersede this one
     synthetic_diagnostics.register_task(uri, task.abort_handle());
-}
-
-/// Fan-out diagnostic requests to downstream servers.
-///
-/// Spawns parallel requests to all injection regions and aggregates results.
-/// Uses JoinSet for structured concurrency with automatic cleanup on drop.
-async fn fan_out_diagnostic_requests(
-    pool: &Arc<LanguageServerPool>,
-    uri: &Url,
-    request_infos: Vec<super::lsp_impl::text_document::diagnostic::DiagnosticRequestInfo>,
-) -> Vec<Diagnostic> {
-    use super::bridge::UpstreamId;
-    use super::lsp_impl::text_document::diagnostic::{
-        DIAGNOSTIC_REQUEST_TIMEOUT, send_diagnostic_with_timeout,
-    };
-
-    let mut join_set = tokio::task::JoinSet::new();
-
-    for info in request_infos {
-        let pool = Arc::clone(pool);
-        let uri = uri.clone();
-
-        join_set.spawn(async move {
-            send_diagnostic_with_timeout(
-                &pool,
-                &info,
-                &uri,
-                UpstreamId::Null, // No upstream request for background tasks
-                None,             // No previous_result_id
-                DIAGNOSTIC_REQUEST_TIMEOUT,
-                LOG_TARGET,
-            )
-            .await
-        });
-    }
-
-    // Collect results from all regions
-    let mut all_diagnostics: Vec<Diagnostic> = Vec::new();
-    while let Some(result) = join_set.join_next().await {
-        match result {
-            Ok(Some(diagnostics)) => all_diagnostics.extend(diagnostics),
-            Ok(None) => {}
-            Err(e) => {
-                log::error!(
-                    target: LOG_TARGET,
-                    "Diagnostic task panicked: {}",
-                    e
-                );
-            }
-        }
-    }
-
-    all_diagnostics
 }
 
 #[cfg(test)]
