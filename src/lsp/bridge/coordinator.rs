@@ -287,6 +287,53 @@ impl BridgeCoordinator {
             .forward_didchange_to_opened_docs(uri, injections)
             .await;
     }
+
+    // ========================================
+    // Eager spawn (warmup)
+    // ========================================
+
+    /// Eagerly spawn language servers for detected injection languages.
+    ///
+    /// This method looks up each injection language in the settings, finds the
+    /// corresponding language server config, and spawns the server if not already
+    /// running. The LSP handshake runs in a background task.
+    ///
+    /// Call this after parsing a document to warm up servers for code blocks,
+    /// eliminating first-request latency for hover, completion, etc.
+    ///
+    /// # Arguments
+    /// * `settings` - Current workspace settings
+    /// * `host_language` - Language of the host document (e.g., "markdown")
+    /// * `injection_languages` - Set of detected injection languages (e.g., {"lua", "python"})
+    pub(crate) async fn eager_spawn_servers(
+        &self,
+        settings: &WorkspaceSettings,
+        host_language: &str,
+        injection_languages: impl IntoIterator<Item = impl AsRef<str>>,
+    ) {
+        for lang in injection_languages {
+            let lang = lang.as_ref();
+
+            // Look up server config for this injection language
+            if let Some(resolved) = self.get_config_for_language(settings, host_language, lang) {
+                log::debug!(
+                    target: "kakehashi::bridge",
+                    "Warming up {} server for {} injection",
+                    resolved.server_name,
+                    lang
+                );
+
+                // Fire-and-forget spawn - handshake runs in background
+                let pool = self.pool_arc();
+                let server_name = resolved.server_name.clone();
+                let config = resolved.config.clone();
+
+                tokio::spawn(async move {
+                    let _ = pool.ensure_server_ready(&server_name, &config).await;
+                });
+            }
+        }
+    }
 }
 
 impl Default for BridgeCoordinator {

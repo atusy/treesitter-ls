@@ -29,6 +29,7 @@ mod shutdown_timeout;
 #[cfg(test)]
 pub(super) mod test_helpers;
 
+pub(crate) use connection_action::BridgeError;
 use connection_action::{ConnectionAction, decide_connection_action};
 use handshake::perform_lsp_handshake;
 
@@ -53,9 +54,13 @@ use super::protocol::{VirtualDocumentUri, build_bridge_didopen_notification};
 
 /// Timeout for LSP initialize handshake (ADR-0018 Tier 0: 30-60s recommended).
 ///
+/// Used for:
+/// - Handshake timeout when spawning new server connections
+/// - Wait-for-ready timeout when diagnostic requests wait for initializing servers
+///
 /// If a downstream language server does not respond to the initialize request
 /// within this duration, the connection attempt fails with a timeout error.
-const INIT_TIMEOUT_SECS: u64 = 30;
+pub(crate) const INIT_TIMEOUT_SECS: u64 = 30;
 
 use super::actor::{ResponseRouter, spawn_reader_task_for_language};
 use super::connection::AsyncBridgeConnection;
@@ -475,6 +480,102 @@ impl LanguageServerPool {
         )
         .await
     }
+
+    /// Eagerly ensure a server is spawned and its handshake is in progress.
+    ///
+    /// This method spawns the language server process and starts the LSP handshake
+    /// in a background task, but does NOT:
+    /// - Wait for the handshake to complete
+    /// - Send didOpen notifications
+    /// - Block on any response
+    ///
+    /// Use this to warm up language servers proactively when injections are detected,
+    /// eliminating first-request latency for downstream LSP features.
+    ///
+    /// This method is idempotent - calling it multiple times for the same server
+    /// will only spawn the server once.
+    ///
+    /// # Arguments
+    /// * `server_name` - The server name from config (e.g., "lua-ls", "pyright")
+    /// * `server_config` - The server configuration containing command
+    pub(crate) async fn ensure_server_ready(
+        &self,
+        server_name: &str,
+        server_config: &crate::config::settings::BridgeServerConfig,
+    ) {
+        // Fire-and-forget: spawn the server if needed, ignore result
+        // Errors (spawn failure, connection exists) are logged internally
+        let _ = self
+            .get_or_create_connection_with_timeout(
+                server_name,
+                server_config,
+                Duration::from_secs(INIT_TIMEOUT_SECS),
+            )
+            .await;
+    }
+
+    /// Get or create a connection, waiting for it to be ready if initializing.
+    ///
+    /// Unlike `get_or_create_connection()` which fails fast for initializing servers,
+    /// this method waits for the server to become Ready before returning.
+    ///
+    /// This is useful for diagnostic requests where waiting for server initialization
+    /// provides a better UX than immediately returning empty results.
+    ///
+    /// # Arguments
+    /// * `server_name` - The server name from config (e.g., "tsgo", "rust-analyzer")
+    /// * `server_config` - The server configuration containing command and options
+    /// * `timeout` - Maximum time to wait for the server to become ready
+    ///
+    /// # Returns
+    /// * `Ok(handle)` - Connection is Ready
+    /// * `Err` - Spawn failed, initialization failed, or timeout waiting for Ready
+    pub(crate) async fn get_or_create_connection_wait_ready(
+        &self,
+        server_name: &str,
+        server_config: &crate::config::settings::BridgeServerConfig,
+        timeout: Duration,
+    ) -> io::Result<Arc<ConnectionHandle>> {
+        // First, try to get or create the connection
+        match self
+            .get_or_create_connection(server_name, server_config)
+            .await
+        {
+            Ok(handle) => {
+                // Ensure the connection is Ready before returning
+                // (get_or_create_connection may return Initializing state for new connections)
+                handle.wait_for_ready(timeout).await?;
+                Ok(handle)
+            }
+            Err(e) => {
+                // Check if error is due to server still initializing using type-safe matching
+                let is_initializing = e
+                    .get_ref()
+                    .and_then(|inner| inner.downcast_ref::<BridgeError>())
+                    .is_some_and(BridgeError::is_initializing);
+
+                if is_initializing {
+                    // Get the handle from pool and wait for it to be ready
+                    let handle = {
+                        let connections = self.connections.lock().await;
+                        connections
+                            .get(server_name)
+                            .map(Arc::clone)
+                            .ok_or_else(|| {
+                                io::Error::other("bridge: connection disappeared during wait")
+                            })?
+                    };
+
+                    // Wait for Ready state
+                    handle.wait_for_ready(timeout).await?;
+                    Ok(handle)
+                } else {
+                    // Other error - propagate it
+                    Err(e)
+                }
+            }
+        }
+    }
 }
 
 impl LanguageServerPool {
@@ -528,9 +629,9 @@ impl LanguageServerPool {
                     "Invariant violation: Connection expected for ReturnExisting action",
                 )));
             }
-            ConnectionAction::FailFast(msg) => {
+            ConnectionAction::FailFast(err) => {
                 // Log once when server is disabled due to repeated panics
-                if msg.contains("repeated handshake failures") {
+                if matches!(err, BridgeError::Disabled) {
                     log::error!(
                         target: "kakehashi::bridge::connection",
                         "[{}] Server disabled after {} consecutive handshake panics (max: {})",
@@ -539,7 +640,7 @@ impl LanguageServerPool {
                         connection_action::MAX_CONSECUTIVE_PANICS
                     );
                 }
-                return Err(io::Error::other(msg));
+                return Err(err.into());
             }
             ConnectionAction::SpawnNew => {
                 // Remove stale connection if present (Failed or Closed state)
@@ -2814,5 +2915,259 @@ mod tests {
                 "Connection should remain Ready after close_host_document"
             );
         }
+    }
+
+    // ============================================================
+    // Eager Spawn Tests
+    // ============================================================
+
+    /// Test that ensure_server_ready spawns a server and stores it in the pool.
+    ///
+    /// This test verifies the eager spawn behavior:
+    /// 1. Connection entry is created and stored in pool
+    /// 2. State may be Initializing or Failed (devnull doesn't respond, so it times out)
+    /// 3. No didOpen is sent (that happens lazily on first request)
+    ///
+    /// Note: With devnull_config, the handshake will fail because the mock server
+    /// doesn't respond. This test verifies that spawning happens, not handshake success.
+    /// The real-server test below verifies the full Ready transition.
+    ///
+    /// Uses a short timeout to avoid test slowness with devnull
+    /// (ensure_server_ready uses 30s which causes slow test runtime).
+    #[tokio::test]
+    async fn ensure_server_ready_spawns_connection_entry() {
+        let pool = LanguageServerPool::new();
+        let config = devnull_config();
+        let short_timeout = Duration::from_millis(100);
+
+        // Before: no connection exists
+        {
+            let connections = pool.connections.lock().await;
+            assert!(!connections.contains_key("test-server"));
+        }
+
+        // Spawn server (ignoring errors like ensure_server_ready does)
+        let _ = pool
+            .get_or_create_connection_with_timeout("test-server", &config, short_timeout)
+            .await;
+
+        // After: connection entry exists (state may be Initializing or Failed)
+        // With devnull, the handshake times out quickly, so it transitions to Failed
+        {
+            let connections = pool.connections.lock().await;
+            assert!(
+                connections.contains_key("test-server"),
+                "Connection entry should be created by ensure_server_ready"
+            );
+            // We don't assert specific state because devnull's behavior varies:
+            // - May be Initializing if timeout hasn't elapsed yet
+            // - May be Failed if handshake timed out
+        }
+    }
+
+    /// Test that ensure_server_ready is idempotent - calling twice doesn't spawn a second server.
+    ///
+    /// Uses a short timeout (100ms) instead of `ensure_server_ready` (which uses 30s default)
+    /// to avoid test slowness with devnull config where handshake always times out.
+    #[tokio::test]
+    async fn ensure_server_ready_is_idempotent() {
+        let pool = LanguageServerPool::new();
+        let config = devnull_config();
+
+        // Use short timeout to avoid test slowness with devnull
+        // (ensure_server_ready uses 30s which causes ~60s test runtime)
+        let short_timeout = Duration::from_millis(100);
+
+        // Call twice (ignoring errors like ensure_server_ready does)
+        let _ = pool
+            .get_or_create_connection_with_timeout("test-server", &config, short_timeout)
+            .await;
+        let _ = pool
+            .get_or_create_connection_with_timeout("test-server", &config, short_timeout)
+            .await;
+
+        // Should still have exactly one connection
+        {
+            let connections = pool.connections.lock().await;
+            assert_eq!(connections.len(), 1, "Should have exactly one connection");
+        }
+    }
+
+    /// Test that ensure_server_ready with a real server eventually transitions to Ready.
+    #[tokio::test]
+    async fn ensure_server_ready_with_real_server_transitions_to_ready() {
+        if !lua_ls_available() {
+            return;
+        }
+
+        let pool = LanguageServerPool::new();
+        let config = lua_ls_config();
+
+        // Spawn server eagerly
+        pool.ensure_server_ready("lua-ls", &config).await;
+
+        // Wait for handshake to complete (up to 10 seconds)
+        let handle = {
+            let connections = pool.connections.lock().await;
+            connections
+                .get("lua-ls")
+                .cloned()
+                .expect("Connection handle should exist after ensure_server_ready")
+        };
+        let ready = handle.wait_for_ready(Duration::from_secs(10)).await.is_ok();
+
+        assert!(
+            ready,
+            "Server should transition to Ready state after handshake"
+        );
+    }
+
+    // ============================================================
+    // Wait-for-Ready Tests
+    // ============================================================
+
+    /// Test that get_or_create_connection_wait_ready waits for initializing server.
+    ///
+    /// This tests the wait-for-ready behavior:
+    /// 1. Connection is in Initializing state
+    /// 2. get_or_create_connection would fail fast
+    /// 3. get_or_create_connection_wait_ready waits and returns once Ready
+    #[tokio::test]
+    async fn get_or_create_connection_wait_ready_waits_for_initializing_server() {
+        use std::sync::Arc;
+
+        let pool = Arc::new(LanguageServerPool::new());
+        let config = devnull_config();
+
+        // Insert a connection in Initializing state
+        let handle = create_handle_with_state(ConnectionState::Initializing).await;
+        let handle_clone = Arc::clone(&handle);
+        pool.connections
+            .lock()
+            .await
+            .insert("test-server".to_string(), handle);
+
+        // Spawn a task that will transition to Ready after a delay
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            handle_clone.set_state(ConnectionState::Ready);
+        });
+
+        // Call get_or_create_connection_wait_ready - should wait and succeed
+        let result = pool
+            .get_or_create_connection_wait_ready("test-server", &config, Duration::from_secs(1))
+            .await;
+
+        // Should succeed after waiting for Ready state
+        assert!(
+            result.is_ok(),
+            "Should succeed after waiting for Ready: {:?}",
+            result.err()
+        );
+
+        let handle = result.unwrap();
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "Returned handle should be in Ready state"
+        );
+    }
+
+    /// Test that get_or_create_connection_wait_ready fails when server fails during wait.
+    #[tokio::test]
+    async fn get_or_create_connection_wait_ready_fails_when_server_fails() {
+        use std::sync::Arc;
+
+        let pool = Arc::new(LanguageServerPool::new());
+        let config = devnull_config();
+
+        // Insert a connection in Initializing state
+        let handle = create_handle_with_state(ConnectionState::Initializing).await;
+        let handle_clone = Arc::clone(&handle);
+        pool.connections
+            .lock()
+            .await
+            .insert("test-server".to_string(), handle);
+
+        // Spawn a task that will transition to Failed after a delay
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            handle_clone.set_state(ConnectionState::Failed);
+        });
+
+        // Call get_or_create_connection_wait_ready - should fail
+        let result = pool
+            .get_or_create_connection_wait_ready("test-server", &config, Duration::from_secs(1))
+            .await;
+
+        // Should fail due to Failed state transition
+        assert!(
+            result.is_err(),
+            "Should fail when server transitions to Failed"
+        );
+        let err = result.err().expect("Should have error");
+        assert!(
+            err.to_string().contains("failed during initialization"),
+            "Error should mention initialization failure: {}",
+            err
+        );
+    }
+
+    /// Test that get_or_create_connection_wait_ready times out properly.
+    #[tokio::test]
+    async fn get_or_create_connection_wait_ready_times_out() {
+        let pool = LanguageServerPool::new();
+        let config = devnull_config();
+
+        // Insert a connection in Initializing state that won't transition
+        let handle = create_handle_with_state(ConnectionState::Initializing).await;
+        pool.connections
+            .lock()
+            .await
+            .insert("test-server".to_string(), handle);
+
+        // Call with short timeout - should timeout
+        let result = pool
+            .get_or_create_connection_wait_ready("test-server", &config, Duration::from_millis(50))
+            .await;
+
+        // Should fail with timeout
+        assert!(result.is_err(), "Should timeout");
+        let err = result.err().expect("Should have error");
+        assert_eq!(
+            err.kind(),
+            io::ErrorKind::TimedOut,
+            "Error should be TimedOut"
+        );
+    }
+
+    /// Test that get_or_create_connection_wait_ready returns immediately when Ready.
+    #[tokio::test]
+    async fn get_or_create_connection_wait_ready_returns_immediately_when_ready() {
+        if !lua_ls_available() {
+            return;
+        }
+
+        let pool = LanguageServerPool::new();
+        let config = lua_ls_config();
+
+        // First call establishes Ready connection
+        let handle1 = pool
+            .get_or_create_connection("lua", &config)
+            .await
+            .expect("should establish connection");
+        assert_eq!(handle1.state(), ConnectionState::Ready);
+
+        // Second call via wait_ready should return immediately
+        let start = std::time::Instant::now();
+        let handle2 = pool
+            .get_or_create_connection_wait_ready("lua", &config, Duration::from_secs(1))
+            .await
+            .expect("should return Ready connection");
+        assert!(
+            start.elapsed() < Duration::from_millis(100),
+            "Should return immediately for Ready connection"
+        );
+        assert_eq!(handle2.state(), ConnectionState::Ready);
     }
 }

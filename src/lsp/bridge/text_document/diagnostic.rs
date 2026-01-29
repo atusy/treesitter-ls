@@ -9,11 +9,12 @@
 //! Implements ADR-0020 Phase 1: Pull-first diagnostic forwarding.
 
 use std::io;
+use std::time::Duration;
 
 use crate::config::settings::BridgeServerConfig;
 use url::Url;
 
-use super::super::pool::{LanguageServerPool, UpstreamId};
+use super::super::pool::{INIT_TIMEOUT_SECS, LanguageServerPool, UpstreamId};
 use super::super::protocol::{
     ResponseTransformContext, VirtualDocumentUri, build_bridge_diagnostic_request,
     transform_diagnostic_response_to_host,
@@ -23,7 +24,7 @@ impl LanguageServerPool {
     /// Send a diagnostic request and wait for the response.
     ///
     /// This is a convenience method that handles the full request/response cycle:
-    /// 1. Get or create a connection (state check is atomic with lookup - ADR-0015)
+    /// 1. Get or create a connection, waiting for initialization if needed
     /// 2. Send a textDocument/didOpen notification if needed
     /// 3. Send the diagnostic request
     /// 4. Wait for and return the response
@@ -33,6 +34,13 @@ impl LanguageServerPool {
     ///
     /// The `upstream_request_id` enables $/cancelRequest forwarding.
     /// See [`LanguageServerPool::register_upstream_request()`] for the full flow.
+    ///
+    /// # Wait-for-Ready Behavior
+    ///
+    /// Unlike other request types that fail fast when a server is initializing,
+    /// diagnostic requests wait for the server to become Ready. This provides
+    /// better UX - users see diagnostics appear once the server is ready rather
+    /// than seeing empty results.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_diagnostic_request(
         &self,
@@ -46,9 +54,15 @@ impl LanguageServerPool {
         upstream_request_id: UpstreamId,
         previous_result_id: Option<&str>,
     ) -> io::Result<serde_json::Value> {
-        // Get or create connection - state check is atomic with lookup (ADR-0015)
+        // Get or create connection, waiting for Ready state if initializing.
+        // Unlike other requests that fail fast, diagnostics wait for initialization
+        // to provide better UX (diagnostics appear once server is ready).
         let handle = self
-            .get_or_create_connection(server_name, server_config)
+            .get_or_create_connection_wait_ready(
+                server_name,
+                server_config,
+                Duration::from_secs(INIT_TIMEOUT_SECS),
+            )
             .await?;
 
         // Convert host_uri to lsp_types::Uri for bridge protocol functions

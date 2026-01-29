@@ -3,6 +3,8 @@
 //! This module extracts pure decision logic from `get_or_create_connection_with_timeout`,
 //! enabling unit testing without spawning real processes.
 
+use std::io;
+
 use super::ConnectionState;
 
 /// Maximum consecutive panics before giving up on a server.
@@ -10,6 +12,56 @@ use super::ConnectionState;
 /// After this many consecutive handshake task panics for a server,
 /// we stop retrying and return an error to prevent infinite retry loops.
 pub(super) const MAX_CONSECUTIVE_PANICS: u32 = 3;
+
+/// Bridge-specific errors that can be matched by type.
+///
+/// This enum provides type-safe error handling for bridge connection operations,
+/// avoiding fragile string comparison. Each variant converts to an appropriate
+/// `io::Error` while preserving the ability to match on specific error conditions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BridgeError {
+    /// Server is currently initializing; request should wait or retry later.
+    Initializing,
+    /// Server is closing and cannot accept new requests.
+    Closing,
+    /// Server disabled after repeated handshake failures.
+    Disabled,
+}
+
+impl BridgeError {
+    /// Check if this error indicates the server is still initializing.
+    ///
+    /// This enables callers to decide whether to wait for the server
+    /// instead of failing immediately.
+    pub(crate) fn is_initializing(&self) -> bool {
+        matches!(self, BridgeError::Initializing)
+    }
+}
+
+impl std::fmt::Display for BridgeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BridgeError::Initializing => {
+                write!(f, "bridge: downstream server initializing")
+            }
+            BridgeError::Closing => write!(f, "bridge: connection closing"),
+            BridgeError::Disabled => {
+                write!(
+                    f,
+                    "bridge: server disabled after repeated handshake failures"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for BridgeError {}
+
+impl From<BridgeError> for io::Error {
+    fn from(err: BridgeError) -> Self {
+        io::Error::other(err)
+    }
+}
 
 /// Action to take when requesting a connection for a language.
 ///
@@ -21,8 +73,8 @@ pub(super) enum ConnectionAction {
     ReturnExisting,
     /// Spawn a new connection (no connection exists, or previous was Failed/Closed)
     SpawnNew,
-    /// Fail fast with error message (state is Initializing or Closing)
-    FailFast(&'static str),
+    /// Fail fast with typed error (state is Initializing, Closing, or too many panics)
+    FailFast(BridgeError),
 }
 
 /// Decide what action to take based on existing connection state and panic history.
@@ -47,19 +99,17 @@ pub(super) fn decide_connection_action(
 ) -> ConnectionAction {
     // Check for too many consecutive panics first
     if consecutive_panic_count >= MAX_CONSECUTIVE_PANICS {
-        return ConnectionAction::FailFast(
-            "bridge: server disabled after repeated handshake failures",
-        );
+        return ConnectionAction::FailFast(BridgeError::Disabled);
     }
 
     match state {
         None => ConnectionAction::SpawnNew,
         Some(ConnectionState::Ready) => ConnectionAction::ReturnExisting,
         Some(ConnectionState::Initializing) => {
-            ConnectionAction::FailFast("bridge: downstream server initializing")
+            ConnectionAction::FailFast(BridgeError::Initializing)
         }
         Some(ConnectionState::Failed) => ConnectionAction::SpawnNew,
-        Some(ConnectionState::Closing) => ConnectionAction::FailFast("bridge: connection closing"),
+        Some(ConnectionState::Closing) => ConnectionAction::FailFast(BridgeError::Closing),
         Some(ConnectionState::Closed) => ConnectionAction::SpawnNew,
     }
 }
@@ -95,7 +145,7 @@ mod tests {
         let action = decide_connection_action(Some(ConnectionState::Initializing), 0);
         assert_eq!(
             action,
-            ConnectionAction::FailFast("bridge: downstream server initializing")
+            ConnectionAction::FailFast(BridgeError::Initializing)
         );
     }
 
@@ -116,10 +166,7 @@ mod tests {
     #[test]
     fn closing_state_fails_fast() {
         let action = decide_connection_action(Some(ConnectionState::Closing), 0);
-        assert_eq!(
-            action,
-            ConnectionAction::FailFast("bridge: connection closing")
-        );
+        assert_eq!(action, ConnectionAction::FailFast(BridgeError::Closing));
     }
 
     /// Test that Closed state triggers respawn.
@@ -140,18 +187,12 @@ mod tests {
     fn too_many_panics_fails_fast() {
         // At the threshold, should fail fast
         let action = decide_connection_action(None, MAX_CONSECUTIVE_PANICS);
-        assert_eq!(
-            action,
-            ConnectionAction::FailFast("bridge: server disabled after repeated handshake failures")
-        );
+        assert_eq!(action, ConnectionAction::FailFast(BridgeError::Disabled));
 
         // Above the threshold, should also fail fast
         let action =
             decide_connection_action(Some(ConnectionState::Failed), MAX_CONSECUTIVE_PANICS + 1);
-        assert_eq!(
-            action,
-            ConnectionAction::FailFast("bridge: server disabled after repeated handshake failures")
-        );
+        assert_eq!(action, ConnectionAction::FailFast(BridgeError::Disabled));
     }
 
     /// Test that below panic threshold allows normal retry.
