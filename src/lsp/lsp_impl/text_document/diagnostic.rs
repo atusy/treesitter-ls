@@ -28,8 +28,35 @@ use crate::config::settings::BridgeServerConfig;
 use crate::language::InjectionResolver;
 use crate::lsp::bridge::{LanguageServerPool, UpstreamId};
 use crate::lsp::get_current_request_id;
+use crate::lsp::request_id::CancelForwarder;
 
 use super::super::{Kakehashi, uri_to_url};
+
+/// RAII guard that ensures cancel subscription is cleaned up on drop.
+///
+/// This guard automatically calls `unsubscribe()` when dropped, preventing
+/// subscription leaks on early return paths. The unsubscribe is idempotent,
+/// so it's safe to call even after the subscription was already cleaned up
+/// by cancel notification.
+struct CancelSubscriptionGuard<'a> {
+    cancel_forwarder: &'a CancelForwarder,
+    upstream_id: UpstreamId,
+}
+
+impl<'a> CancelSubscriptionGuard<'a> {
+    fn new(cancel_forwarder: &'a CancelForwarder, upstream_id: UpstreamId) -> Self {
+        Self {
+            cancel_forwarder,
+            upstream_id,
+        }
+    }
+}
+
+impl Drop for CancelSubscriptionGuard<'_> {
+    fn drop(&mut self) {
+        self.cancel_forwarder.unsubscribe(&self.upstream_id);
+    }
+}
 
 /// Per-request timeout for diagnostic fan-out (ADR-0020)
 const DIAGNOSTIC_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -154,12 +181,20 @@ impl Kakehashi {
         // The receiver completes when $/cancelRequest arrives for this ID
         // AlreadySubscribedError indicates a bug (same request ID subscribed twice)
         // - proceed without cancel support rather than failing the request
-        let cancel_rx = match self
+        //
+        // The guard ensures unsubscribe is called on all return paths (including early returns).
+        let (cancel_rx, _subscription_guard) = match self
             .bridge
             .cancel_forwarder()
             .subscribe(upstream_request_id.clone())
         {
-            Ok(rx) => Some(rx),
+            Ok(rx) => {
+                let guard = CancelSubscriptionGuard::new(
+                    self.bridge.cancel_forwarder(),
+                    upstream_request_id.clone(),
+                );
+                (Some(rx), Some(guard))
+            }
             Err(e) => {
                 log::error!(
                     target: "kakehashi::diagnostic",
@@ -167,7 +202,7 @@ impl Kakehashi {
                      This is a bug - proceeding without cancel support.",
                     e.0
                 );
-                None
+                (None, None)
             }
         };
 
@@ -247,14 +282,10 @@ impl Kakehashi {
         // Per ADR-0020, this would be needed if downstream servers report overlapping
         // diagnostics. Currently each region is isolated so duplicates are unlikely.
         // TODO: Add deduplication when overlapping diagnostics are observed in practice.
-        let result = collect_diagnostics_with_cancel(join_set, cancel_rx).await;
-
-        // Clean up cancel subscription (idempotent - no-op if already cancelled)
-        self.bridge
-            .cancel_forwarder()
-            .unsubscribe(&upstream_request_id);
-
-        result
+        //
+        // Cleanup: _subscription_guard is dropped here, calling unsubscribe automatically.
+        // This ensures cleanup happens on all paths including early returns and panics.
+        collect_diagnostics_with_cancel(join_set, cancel_rx).await
     }
 }
 
