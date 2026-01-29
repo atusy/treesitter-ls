@@ -467,7 +467,10 @@ print(x, y, z)
         }),
     );
 
-    println!("Sent $/cancelRequest for diagnostic request id: {}", request_id);
+    println!(
+        "Sent $/cancelRequest for diagnostic request id: {}",
+        request_id
+    );
 
     // Wait for response
     let response = client.receive_response_for_id_public(request_id);
@@ -499,9 +502,7 @@ print(x, y, z)
     } else {
         // Normal response - diagnostics completed before cancel was processed
         // This is also valid - cancel is "best effort" per LSP spec
-        println!(
-            "✓ E2E: Diagnostic completed normally before cancel processed (racing condition)"
-        );
+        println!("✓ E2E: Diagnostic completed normally before cancel processed (racing condition)");
         // Verify we got a valid diagnostic report
         let result = response.get("result");
         assert!(

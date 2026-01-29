@@ -19,8 +19,8 @@
 //! the subscriber is notified via a oneshot channel. This enables handlers to
 //! immediately abort their work and return `RequestCancelled` error to the client.
 
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
