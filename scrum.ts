@@ -46,50 +46,13 @@ const scrum: ScrumDashboard = {
         { criterion: "Each diagnostic's position is correctly transformed", verification: "Unit tests verify per-region position transformation" },
         { criterion: "Timeout handling for slow downstream servers", verification: "Partial results returned on timeout" },
       ],
-      status: "ready",
+      status: "done",
     },
   ],
-  sprint: {
-    number: 17,
-    pbi_id: "pbi-diagnostic-multi-region",
-    goal: "Implement multi-region diagnostic aggregation with fan-out parallel queries and timeout handling",
-    status: "review",
-    subtasks: [
-      {
-        test: "Test parallel fan-out sends diagnostic requests to all regions concurrently",
-        implementation: "Use tokio::task::JoinSet in diagnostic_impl for parallel fan-out to all injection regions",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: ["ADR-0020: Fan-out queries to downstream servers; JoinSet pattern from shutdown.rs", "Added pool_arc() to BridgeCoordinator for spawned task ownership"],
-      },
-      {
-        test: "Test diagnostic_impl iterates all regions and aggregates diagnostics",
-        implementation: "Change from all_regions[0] to iterate all_regions, collect Vec<Diagnostic>, merge into single response",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: ["Transform each region's positions independently using region_start_line", "DiagnosticRequestInfo struct holds owned data for spawned tasks"],
-      },
-      {
-        test: "Test timeout handling returns partial results when some servers are slow",
-        implementation: "Use tokio::time::timeout per-request (5s), continue aggregation on timeout, log warning",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: ["ADR-0020: Return partial results if some servers timeout", "DIAGNOSTIC_REQUEST_TIMEOUT = 5 seconds per-request"],
-      },
-      {
-        test: "E2E test verifies multi-region aggregation",
-        implementation: "Add test with multiple Lua code blocks to e2e_lsp_lua_diagnostic.rs",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: ["Test document with 3 Lua injection regions verifies aggregated 'full' report with items array"],
-      },
-    ],
-  },
+  sprint: null,
   completed: [
+    // Sprint 17: 4 subtasks, parallel fan-out + aggregation + timeout + E2E
+    { number: 17, pbi_id: "pbi-diagnostic-multi-region", goal: "Implement multi-region diagnostic aggregation with fan-out parallel queries and timeout handling", status: "done", subtasks: [] },
     // Sprint 16: 5 subtasks, diagnostic capability + request/response transformation + E2E test
     { number: 16, pbi_id: "pbi-diagnostic-single-region", goal: "Implement textDocument/diagnostic handler for first virtual document with position transformation", status: "done", subtasks: [] },
     // Sprint 15: 3 phases, 6 subtasks, key commits: a874a7d9, 52d7c3d0, a0c16e97
@@ -109,6 +72,11 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 17, improvements: [
+      { action: "JoinSet pattern reusable for parallel operations: shutdown.rs pattern directly applicable for diagnostic fan-out", timing: "immediate", status: "completed", outcome: "JoinSet with spawn/join_next loop cleanly handles parallel async operations with individual result handling." },
+      { action: "pool_arc() accessor enables spawned task ownership: needed for any parallel operation requiring pool access", timing: "immediate", status: "completed", outcome: "Added to BridgeCoordinator; pattern generalizes to other resources requiring Arc clone for spawned tasks." },
+      { action: "Owned data structs for spawned tasks: DiagnosticRequestInfo pattern cleanly captures data needed by parallel tasks", timing: "immediate", status: "completed", outcome: "Struct holding owned Strings avoids lifetime complexity in spawned async blocks." },
+    ] },
     { sprint: 16, improvements: [
       { action: "Bridge method classification documented: whole-document methods (diagnostic, document_symbol) vs position-specific methods (hover, definition) - helps choose correct request pattern", timing: "immediate", status: "completed", outcome: "Pattern clearly documented in subtask notes; diagnostic follows document_symbol pattern without position." },
       { action: "Sprint 15 retrospective action validated: Clippy collapsible_if caught at review phase; 'make check' after each green phase would catch earlier", timing: "sprint", status: "active", outcome: null },
