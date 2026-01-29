@@ -541,7 +541,12 @@ impl LanguageServerPool {
             .get_or_create_connection(server_name, server_config)
             .await
         {
-            Ok(handle) => Ok(handle),
+            Ok(handle) => {
+                // Ensure the connection is Ready before returning
+                // (get_or_create_connection may return Initializing state for new connections)
+                handle.wait_for_ready(timeout).await?;
+                Ok(handle)
+            }
             Err(e) => {
                 // Check if error is due to server still initializing using type-safe matching
                 let is_initializing = e
