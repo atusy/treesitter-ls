@@ -134,7 +134,9 @@ impl DebouncedDiagnosticsManager {
         uri: Url,
         lsp_uri: Uri,
         client: Client,
-        snapshot_data: Option<Vec<super::lsp_impl::text_document::diagnostic::DiagnosticRequestInfo>>,
+        snapshot_data: Option<
+            Vec<super::lsp_impl::text_document::diagnostic::DiagnosticRequestInfo>,
+        >,
         bridge_pool: Arc<LanguageServerPool>,
         synthetic_diagnostics: Arc<SyntheticDiagnosticsManager>,
     ) {
@@ -292,7 +294,9 @@ async fn fan_out_diagnostic_requests(
     request_infos: Vec<super::lsp_impl::text_document::diagnostic::DiagnosticRequestInfo>,
 ) -> Vec<Diagnostic> {
     use super::bridge::UpstreamId;
-    use super::lsp_impl::text_document::diagnostic::{DIAGNOSTIC_REQUEST_TIMEOUT, send_diagnostic_with_timeout};
+    use super::lsp_impl::text_document::diagnostic::{
+        DIAGNOSTIC_REQUEST_TIMEOUT, send_diagnostic_with_timeout,
+    };
 
     let mut join_set = tokio::task::JoinSet::new();
 
@@ -363,7 +367,9 @@ mod tests {
         let task = tokio::spawn(async {
             tokio::time::sleep(Duration::from_secs(10)).await;
         });
-        manager.active_timers.insert(uri.clone(), task.abort_handle());
+        manager
+            .active_timers
+            .insert(uri.clone(), task.abort_handle());
 
         assert!(manager.has_active_timer(&uri));
 
@@ -431,7 +437,10 @@ mod tests {
         tokio::task::yield_now().await;
 
         assert!(handle1.is_finished(), "first timer should be aborted");
-        assert!(!handle2.is_finished(), "second timer should still be running");
+        assert!(
+            !handle2.is_finished(),
+            "second timer should still be running"
+        );
 
         // Cleanup
         manager.cancel_all();

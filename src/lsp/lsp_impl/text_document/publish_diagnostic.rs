@@ -38,7 +38,9 @@ use crate::language::InjectionResolver;
 use crate::lsp::bridge::{LanguageServerPool, UpstreamId};
 
 use super::super::Kakehashi;
-use super::diagnostic::{send_diagnostic_with_timeout, DiagnosticRequestInfo, DIAGNOSTIC_REQUEST_TIMEOUT};
+use super::diagnostic::{
+    DIAGNOSTIC_REQUEST_TIMEOUT, DiagnosticRequestInfo, send_diagnostic_with_timeout,
+};
 
 /// Logging target for synthetic push diagnostics.
 const LOG_TARGET: &str = "kakehashi::synthetic_diag";
@@ -123,7 +125,10 @@ impl Kakehashi {
     ///
     /// Used by both immediate synthetic diagnostics (didSave/didOpen) and
     /// debounced diagnostics (didChange).
-    pub(crate) fn prepare_diagnostic_snapshot(&self, uri: &Url) -> Option<Vec<DiagnosticRequestInfo>> {
+    pub(crate) fn prepare_diagnostic_snapshot(
+        &self,
+        uri: &Url,
+    ) -> Option<Vec<DiagnosticRequestInfo>> {
         // Get document snapshot
         let snapshot = {
             let doc = self.documents.get(uri)?;

@@ -6,7 +6,6 @@ mod completion;
 mod declaration;
 mod definition;
 pub(crate) mod diagnostic;
-mod publish_diagnostic;
 #[cfg(feature = "experimental")]
 mod document_color;
 mod document_highlight;
@@ -16,6 +15,7 @@ mod hover;
 mod implementation;
 mod inlay_hint;
 mod moniker;
+mod publish_diagnostic;
 mod references;
 mod rename;
 mod selection_range;
