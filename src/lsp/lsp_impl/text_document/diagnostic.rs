@@ -1,10 +1,11 @@
-//! Diagnostic method for Kakehashi.
+//! Pull diagnostics for Kakehashi (textDocument/diagnostic).
 //!
 //! Implements ADR-0020 Phase 1: Pull-first diagnostic forwarding.
 //! Sprint 17: Multi-region diagnostic aggregation with parallel fan-out.
-//! Phase 2: Synthetic push on didSave/didOpen.
 //!
-//! # Cancel Handling (Phase 1)
+//! For synthetic push diagnostics (publishDiagnostics), see `publish_diagnostic.rs`.
+//!
+//! # Cancel Handling
 //!
 //! This module supports immediate cancellation of diagnostic requests:
 //! - When `$/cancelRequest` is received, the handler aborts and returns `RequestCancelled`
@@ -14,17 +15,6 @@
 //! This is achieved using `tokio::select!` to race between:
 //! 1. Cancel notification (via `CancelForwarder::subscribe()`)
 //! 2. Result aggregation (collecting from all downstream tasks)
-//!
-//! # Synthetic Push (Phase 2)
-//!
-//! On `didSave` or `didOpen`, kakehashi proactively collects diagnostics from
-//! downstream servers and publishes them via `textDocument/publishDiagnostics`.
-//! This provides push-like UX for clients that don't support pull diagnostics.
-//!
-//! Key behaviors:
-//! - Uses the same core collection logic as pull (fan-out, aggregation, transformation)
-//! - Supersedes previous in-progress tasks on rapid saves (AbortHandle pattern)
-//! - Fire-and-forget: errors are logged but not returned to client
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -96,19 +86,6 @@ struct DiagnosticRequestInfo {
     /// The extracted content of the injection region, formatted as a virtual document
     /// This is what gets sent to the downstream language server for analysis
     virtual_content: String,
-}
-
-/// Owned version of DiagnosticRequestInfo for background tasks.
-///
-/// This struct is identical to DiagnosticRequestInfo but is public for use
-/// in synthetic diagnostic tasks that run in a separate tokio task.
-pub(crate) struct DiagnosticRequestInfoOwned {
-    pub(crate) server_name: String,
-    pub(crate) config: Arc<BridgeServerConfig>,
-    pub(crate) injection_language: String,
-    pub(crate) region_id: String,
-    pub(crate) region_start_line: u32,
-    pub(crate) virtual_content: String,
 }
 
 impl Kakehashi {
@@ -490,106 +467,4 @@ fn empty_diagnostic_report() -> DocumentDiagnosticReportResult {
             related_documents: None,
         },
     ))
-}
-
-/// Fan-out diagnostic requests to downstream servers (static version for background tasks).
-///
-/// This is a standalone function that can be called from spawned tasks without
-/// needing a reference to `Kakehashi`. It uses `DiagnosticRequestInfoOwned` which
-/// owns all its data.
-///
-/// ADR-0020 Phase 2: Used by synthetic push to collect diagnostics in background.
-pub(crate) async fn fan_out_diagnostic_requests_static(
-    pool: &Arc<LanguageServerPool>,
-    uri: &Url,
-    request_infos: Vec<DiagnosticRequestInfoOwned>,
-) -> Vec<Diagnostic> {
-    let mut join_set = tokio::task::JoinSet::new();
-
-    for info in request_infos {
-        let pool = Arc::clone(pool);
-        let uri = uri.clone();
-
-        join_set.spawn(async move {
-            send_diagnostic_with_timeout_owned(&pool, &info, &uri, DIAGNOSTIC_REQUEST_TIMEOUT).await
-        });
-    }
-
-    // Collect results from all regions
-    let mut all_diagnostics: Vec<Diagnostic> = Vec::new();
-    while let Some(result) = join_set.join_next().await {
-        match result {
-            Ok(Some(diagnostics)) => all_diagnostics.extend(diagnostics),
-            Ok(None) => {}
-            Err(e) => {
-                log::error!(
-                    target: "kakehashi::diagnostic",
-                    "Diagnostic task panicked: {}",
-                    e
-                );
-            }
-        }
-    }
-
-    all_diagnostics
-}
-
-/// Send a diagnostic request with timeout (version for owned info).
-///
-/// Similar to `send_diagnostic_with_timeout` but works with `DiagnosticRequestInfoOwned`.
-async fn send_diagnostic_with_timeout_owned(
-    pool: &LanguageServerPool,
-    info: &DiagnosticRequestInfoOwned,
-    uri: &Url,
-    timeout: Duration,
-) -> Option<Vec<Diagnostic>> {
-    let request_future = pool.send_diagnostic_request(
-        &info.server_name,
-        &info.config,
-        uri,
-        &info.injection_language,
-        &info.region_id,
-        info.region_start_line,
-        &info.virtual_content,
-        UpstreamId::Null, // No upstream request for background tasks
-        None,             // No previous_result_id
-    );
-
-    // Apply timeout per-request (ADR-0020: return partial results on timeout)
-    let response = match tokio::time::timeout(timeout, request_future).await {
-        Ok(Ok(response)) => response,
-        Ok(Err(e)) => {
-            log::warn!(
-                target: "kakehashi::diagnostic",
-                "Diagnostic request failed for region {}: {}",
-                info.region_id,
-                e
-            );
-            return None;
-        }
-        Err(_) => {
-            log::warn!(
-                target: "kakehashi::diagnostic",
-                "Diagnostic request timed out for region {} after {:?}",
-                info.region_id,
-                timeout
-            );
-            return None;
-        }
-    };
-
-    // Parse the diagnostic response
-    let result = response.get("result")?;
-    if result.is_null() {
-        return Some(Vec::new());
-    }
-
-    // Check if it's an "unchanged" report - for multi-region we treat as empty
-    if result.get("kind").and_then(|k| k.as_str()) == Some("unchanged") {
-        return Some(Vec::new());
-    }
-
-    // Parse as full report with diagnostics
-    let items = result.get("items")?;
-    serde_json::from_value::<Vec<Diagnostic>>(items.clone()).ok()
 }
