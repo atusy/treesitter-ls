@@ -1,7 +1,14 @@
-//! Token post-processing and delta encoding.
+//! Token post-processing and LSP encoding.
 //!
 //! This module handles the final steps of semantic token processing:
-//! filtering, sorting, deduplication, and LSP delta encoding.
+//! - Filtering zero-length tokens
+//! - Sorting by position (line, column, depth)
+//! - Deduplicating tokens at the same position
+//! - Converting to LSP SemanticToken format with delta-relative positions
+//!
+//! Note: The term "delta encoding" in this module refers to the LSP protocol's
+//! relative position encoding (delta_line, delta_start), not the
+//! SemanticTokensDelta optimization which is handled by the `delta` module.
 
 use tower_lsp_server::ls_types::{SemanticToken, SemanticTokens, SemanticTokensResult};
 
