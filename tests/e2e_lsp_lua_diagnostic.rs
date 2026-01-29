@@ -17,6 +17,7 @@
 mod helpers;
 
 use helpers::lsp_client::LspClient;
+use helpers::lsp_polling::wait_for_server_ready;
 use helpers::lua_bridge::{create_lua_configured_client, shutdown_client};
 use serde_json::json;
 
@@ -112,9 +113,9 @@ More text.
         }),
     );
 
-    // Give lua-ls time to start and analyze
-    // Increased timeout for slower CI environments
-    std::thread::sleep(std::time::Duration::from_millis(3000));
+    // Wait for lua-ls to start and be ready using exponential backoff polling
+    // Starts at 100ms, doubles each retry, up to 5 attempts (total ~3100ms max)
+    wait_for_server_ready(&mut client, markdown_uri, 5, 100);
 
     // Send diagnostic request
     let response = client.send_request(
@@ -244,8 +245,9 @@ End of document.
         }),
     );
 
-    // Give lua-ls time to start and analyze all regions
-    std::thread::sleep(std::time::Duration::from_millis(3000));
+    // Wait for lua-ls to start and be ready using exponential backoff polling
+    // Starts at 100ms, doubles each retry, up to 5 attempts (total ~3100ms max)
+    wait_for_server_ready(&mut client, markdown_uri, 5, 100);
 
     // Send diagnostic request - should aggregate from all 3 Lua blocks
     let response = client.send_request(

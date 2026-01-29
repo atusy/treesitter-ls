@@ -158,6 +158,135 @@ pub fn poll_for_completions(
     )
 }
 
+/// Poll for diagnostic results with exponential backoff.
+///
+/// This is used for textDocument/diagnostic requests which may need time
+/// for downstream language servers to analyze the document.
+///
+/// Uses exponential backoff starting at `initial_delay_ms`, doubling each retry
+/// up to `max_attempts` attempts.
+///
+/// # Arguments
+/// * `client` - The LSP client to send requests through
+/// * `uri` - The document URI
+/// * `max_attempts` - Maximum number of polling attempts (default: 5)
+/// * `initial_delay_ms` - Initial delay between attempts in milliseconds (default: 100)
+///
+/// # Returns
+/// * `Some(response)` - The full JSON-RPC response with non-empty diagnostics
+/// * `None` - If max_attempts reached without diagnostics
+pub fn poll_for_diagnostics(
+    client: &mut LspClient,
+    uri: &str,
+    max_attempts: u32,
+    initial_delay_ms: u64,
+) -> Option<serde_json::Value> {
+    let mut delay_ms = initial_delay_ms;
+
+    for attempt in 1..=max_attempts {
+        let response = client.send_request(
+            "textDocument/diagnostic",
+            json!({
+                "textDocument": { "uri": uri }
+            }),
+        );
+
+        if response.get("error").is_some() {
+            eprintln!(
+                "textDocument/diagnostic attempt {}/{}: Error: {:?}",
+                attempt,
+                max_attempts,
+                response.get("error")
+            );
+            std::thread::sleep(Duration::from_millis(delay_ms));
+            delay_ms = delay_ms.saturating_mul(2); // Exponential backoff
+            continue;
+        }
+
+        // Check if result has items (diagnostics)
+        if let Some(result) = response.get("result") {
+            // If kind is "full" and items is non-empty, we have diagnostics
+            if let Some(items) = result.get("items").and_then(|i| i.as_array()) {
+                if !items.is_empty() {
+                    eprintln!(
+                        "textDocument/diagnostic succeeded on attempt {}/{} with {} diagnostics",
+                        attempt,
+                        max_attempts,
+                        items.len()
+                    );
+                    return Some(response);
+                }
+            }
+        }
+
+        eprintln!(
+            "textDocument/diagnostic attempt {}/{}: no diagnostics yet, retrying in {}ms...",
+            attempt, max_attempts, delay_ms
+        );
+        std::thread::sleep(Duration::from_millis(delay_ms));
+        delay_ms = delay_ms.saturating_mul(2); // Exponential backoff
+    }
+
+    eprintln!(
+        "textDocument/diagnostic exhausted {} attempts without diagnostics",
+        max_attempts
+    );
+    None
+}
+
+/// Wait for the language server to be ready by polling diagnostics.
+///
+/// Unlike `poll_for_diagnostics`, this waits for the document to be processed
+/// but doesn't require non-empty diagnostics. It just waits for a valid response.
+///
+/// Uses exponential backoff starting at `initial_delay_ms`.
+///
+/// # Arguments
+/// * `client` - The LSP client to send requests through
+/// * `uri` - The document URI
+/// * `max_attempts` - Maximum number of polling attempts (default: 5)
+/// * `initial_delay_ms` - Initial delay between attempts in milliseconds (default: 100)
+pub fn wait_for_server_ready(
+    client: &mut LspClient,
+    uri: &str,
+    max_attempts: u32,
+    initial_delay_ms: u64,
+) {
+    let mut delay_ms = initial_delay_ms;
+
+    for attempt in 1..=max_attempts {
+        let response = client.send_request(
+            "textDocument/diagnostic",
+            json!({
+                "textDocument": { "uri": uri }
+            }),
+        );
+
+        // Any valid response (not error) indicates server is ready
+        if response.get("error").is_none() && response.get("result").is_some() {
+            eprintln!(
+                "Server ready on attempt {}/{} (waited ~{}ms total)",
+                attempt,
+                max_attempts,
+                (0..attempt).map(|i| initial_delay_ms * 2u64.pow(i)).sum::<u64>()
+            );
+            return;
+        }
+
+        eprintln!(
+            "Waiting for server, attempt {}/{}, delay {}ms",
+            attempt, max_attempts, delay_ms
+        );
+        std::thread::sleep(Duration::from_millis(delay_ms));
+        delay_ms = delay_ms.saturating_mul(2);
+    }
+
+    eprintln!(
+        "Server wait exhausted {} attempts, proceeding anyway",
+        max_attempts
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
