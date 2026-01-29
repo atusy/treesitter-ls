@@ -2996,17 +2996,14 @@ mod tests {
         pool.ensure_server_ready("lua-ls", &config).await;
 
         // Wait for handshake to complete (up to 10 seconds)
-        let mut ready = false;
-        for _ in 0..100 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        let handle = {
             let connections = pool.connections.lock().await;
-            if let Some(handle) = connections.get("lua-ls")
-                && handle.state() == ConnectionState::Ready
-            {
-                ready = true;
-                break;
-            }
-        }
+            connections
+                .get("lua-ls")
+                .cloned()
+                .expect("Connection handle should exist after ensure_server_ready")
+        };
+        let ready = handle.wait_for_ready(Duration::from_secs(10)).await.is_ok();
 
         assert!(
             ready,
