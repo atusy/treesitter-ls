@@ -1,5 +1,7 @@
 mod text_document;
 
+use std::collections::HashSet;
+
 use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::ls_types::request::{
     GotoDeclarationParams, GotoDeclarationResponse, GotoImplementationParams,
@@ -686,24 +688,43 @@ impl Kakehashi {
             .await;
     }
 
-    /// Check injected languages and handle missing parsers.
+    /// Process injected languages: auto-install missing parsers and spawn bridge servers.
     ///
-    /// This function:
-    /// 1. Gets unique injected languages from the document
-    /// 2. For each language, checks if it's already loaded
-    /// 3. If not loaded and auto-install is enabled, triggers maybe_auto_install_language()
-    /// 4. If not loaded and auto-install is disabled, notifies user
+    /// This computes the injected language set once and passes it to both:
+    /// 1. Auto-install check for missing parsers
+    /// 2. Eager bridge server spawning for ready servers
     ///
-    /// The InstallingLanguages tracker in maybe_auto_install_language prevents
-    /// duplicate install attempts.
-    async fn check_injected_languages_auto_install(&self, uri: &Url) {
-        // Get unique injected languages from the document
+    /// This must be called AFTER parse_document so we have access to the AST.
+    async fn process_injected_languages(&self, uri: &Url) {
+        // Get unique injected languages from the document (computed once)
         let languages = get_injected_languages(uri, &self.language, &self.documents);
 
         if languages.is_empty() {
             return;
         }
 
+        // Check for missing parsers and trigger auto-install
+        self.check_injected_languages_auto_install(uri, &languages)
+            .await;
+
+        // Eagerly spawn bridge servers for detected injection languages
+        self.eager_spawn_bridge_servers(uri, languages).await;
+    }
+
+    /// Check injected languages and handle missing parsers.
+    ///
+    /// This function:
+    /// 1. For each language, checks if it's already loaded
+    /// 2. If not loaded and auto-install is enabled, triggers maybe_auto_install_language()
+    /// 3. If not loaded and auto-install is disabled, notifies user
+    ///
+    /// The InstallingLanguages tracker in maybe_auto_install_language prevents
+    /// duplicate install attempts.
+    async fn check_injected_languages_auto_install(
+        &self,
+        uri: &Url,
+        languages: &HashSet<String>,
+    ) {
         let auto_install_enabled = self.is_auto_install_enabled();
 
         // Get document text for auto-install (needed by maybe_auto_install_language)
@@ -717,9 +738,9 @@ impl Kakehashi {
         for lang in languages {
             // ADR-0005: Try direct identifier first, then syntect token normalization
             // This ensures "py" -> "python" before auto-install
-            let resolved_lang = if self.language.has_parser_available(&lang) {
+            let resolved_lang = if self.language.has_parser_available(lang) {
                 lang.clone()
-            } else if let Some(normalized) = crate::language::heuristic::detect_from_token(&lang) {
+            } else if let Some(normalized) = crate::language::heuristic::detect_from_token(lang) {
                 normalized
             } else {
                 lang.clone()
@@ -755,21 +776,11 @@ impl Kakehashi {
     /// This warms up language servers (spawn + handshake) in the background for
     /// any injection regions found in the document. The servers will be ready
     /// to handle requests (hover, completion, etc.) without first-request latency.
-    ///
-    /// This must be called AFTER parse_document so we have access to the AST.
-    async fn eager_spawn_bridge_servers(&self, uri: &Url) {
+    async fn eager_spawn_bridge_servers(&self, uri: &Url, languages: HashSet<String>) {
         // Get the host language for this document
-        let host_language = match self.get_language_for_document(uri) {
-            Some(name) => name,
-            None => return,
-        };
-
-        // Get unique injected languages from the document
-        let languages = get_injected_languages(uri, &self.language, &self.documents);
-
-        if languages.is_empty() {
+        let Some(host_language) = self.get_language_for_document(uri) else {
             return;
-        }
+        };
 
         // Get current settings for server config lookup
         let settings = self.settings_manager.load_settings();
@@ -1033,13 +1044,9 @@ impl LanguageServer for Kakehashi {
             self.handle_language_events(&deferred_events).await;
         }
 
-        // Check for injected languages and trigger auto-install for missing parsers
-        // This must be called AFTER parse_document so we have access to the AST
-        self.check_injected_languages_auto_install(&uri).await;
-
-        // Eagerly spawn bridge servers for detected injection languages.
-        // This warms up servers in the background so they're ready for first request.
-        self.eager_spawn_bridge_servers(&uri).await;
+        // Process injected languages: auto-install missing parsers and spawn bridge servers.
+        // This must be called AFTER parse_document so we have access to the AST.
+        self.process_injected_languages(&uri).await;
 
         // NOTE: No semantic_tokens_refresh() on didOpen.
         // Capable LSP clients should request by themselves.
@@ -1157,13 +1164,10 @@ impl LanguageServer for Kakehashi {
         self.close_invalidated_virtual_docs(&uri, &invalidated_ulids)
             .await;
 
-        // Check for injected languages and trigger auto-install for missing parsers
-        // This must be called AFTER parse_document so we have access to the updated AST
-        self.check_injected_languages_auto_install(&uri).await;
-
-        // Eagerly spawn bridge servers for any new injection languages.
-        // When users add new code blocks, the server warms up immediately.
-        self.eager_spawn_bridge_servers(&uri).await;
+        // Process injected languages: auto-install missing parsers and spawn bridge servers.
+        // When users add new code blocks, parsers are installed and servers warm up immediately.
+        // This must be called AFTER parse_document so we have access to the updated AST.
+        self.process_injected_languages(&uri).await;
 
         // NOTE: We intentionally do NOT call semantic_tokens_refresh() here.
         // LSP clients already request new tokens after didChange (via semanticTokens/full/delta).
