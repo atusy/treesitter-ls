@@ -66,6 +66,12 @@ impl Kakehashi {
         let uri_clone = uri.clone();
 
         // Spawn the background task
+        //
+        // Note: There's a brief window between spawn and register_task where the task
+        // could complete before being registered. This is benign because:
+        // 1. AbortHandle.abort() is a no-op for already-completed tasks
+        // 2. The superseding logic still works correctly (abort on stale handle is safe)
+        // 3. Completing tasks don't need cleanup since they ran to completion
         let task = tokio::spawn(async move {
             // Collect diagnostics
             let Some(request_infos) = snapshot_data else {
