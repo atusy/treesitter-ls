@@ -144,13 +144,16 @@ fn transform_completion_item_range(item: &mut serde_json::Value, region_start_li
 }
 
 /// Transform a range's line numbers from virtual to host coordinates.
+///
+/// Uses saturating_add to prevent overflow for large line numbers, consistent
+/// with saturating_sub used elsewhere in the codebase.
 fn transform_range(range: &mut serde_json::Value, region_start_line: u32) {
     // Transform start position
     if let Some(start) = range.get_mut("start")
         && let Some(line) = start.get_mut("line")
         && let Some(line_num) = line.as_u64()
     {
-        *line = serde_json::json!(line_num + region_start_line as u64);
+        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
     }
 
     // Transform end position
@@ -158,7 +161,7 @@ fn transform_range(range: &mut serde_json::Value, region_start_line: u32) {
         && let Some(line) = end.get_mut("line")
         && let Some(line_num) = line.as_u64()
     {
-        *line = serde_json::json!(line_num + region_start_line as u64);
+        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
     }
 }
 
@@ -462,7 +465,7 @@ fn transform_position(position: &mut serde_json::Value, region_start_line: u32) 
     if let Some(line) = position.get_mut("line")
         && let Some(line_num) = line.as_u64()
     {
-        *line = serde_json::json!(line_num + region_start_line as u64);
+        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
     }
 }
 
@@ -555,6 +558,123 @@ pub(crate) fn transform_color_presentation_response_to_host(
     }
 
     response
+}
+
+/// Transform a diagnostic response from virtual to host document coordinates.
+///
+/// Transforms diagnostic items in a DocumentDiagnosticReport by adding the region_start_line
+/// offset to the range's line numbers. Also transforms relatedInformation locations if present.
+///
+/// Handles both "full" and "unchanged" report kinds:
+/// - Full: Contains items array with Diagnostic objects to transform
+/// - Unchanged: Contains only resultId, no transformation needed
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `context` - Contains region_start_line and URI information for transformation
+pub(crate) fn transform_diagnostic_response_to_host(
+    mut response: serde_json::Value,
+    context: &ResponseTransformContext,
+) -> serde_json::Value {
+    // Get mutable reference to result
+    let Some(result) = response.get_mut("result") else {
+        return response;
+    };
+
+    // Null result - pass through unchanged
+    if result.is_null() {
+        return response;
+    }
+
+    // Check the report kind
+    let kind = result.get("kind").and_then(|k| k.as_str());
+    match kind {
+        Some("unchanged") => {
+            // Unchanged report has no items to transform
+            return response;
+        }
+        Some("full") | None => {
+            // Full report or missing kind (treat as full) - transform items
+        }
+        Some(other) => {
+            log::warn!(
+                target: "kakehashi::bridge",
+                "Unknown diagnostic report kind: {}",
+                other
+            );
+            return response;
+        }
+    }
+
+    // Transform diagnostic items
+    if let Some(items) = result.get_mut("items").and_then(|i| i.as_array_mut()) {
+        for item in items.iter_mut() {
+            transform_diagnostic_item(
+                item,
+                context.request_region_start_line,
+                &context.request_host_uri,
+            );
+        }
+    }
+
+    // Transform relatedDocuments if present (for related diagnostic reports)
+    // Note: relatedDocuments contains reports keyed by URI, which may reference
+    // different virtual documents. For now, we skip these as they require
+    // cross-region URI resolution which is out of scope for Phase 1.
+
+    response
+}
+
+/// Transform a single Diagnostic item by adding region_start_line to its range.
+///
+/// Also transforms relatedInformation locations if present, filtering out entries
+/// that reference virtual URIs (which clients cannot resolve).
+///
+/// # Arguments
+/// * `item` - The diagnostic item to transform
+/// * `region_start_line` - Line offset to add to ranges
+/// * `host_uri` - The host document URI; only related info matching this URI gets transformed
+fn transform_diagnostic_item(item: &mut serde_json::Value, region_start_line: u32, host_uri: &str) {
+    // Transform the main diagnostic range
+    if let Some(range) = item.get_mut("range") {
+        transform_range(range, region_start_line);
+    }
+
+    // Transform relatedInformation locations if present
+    // Filter out entries with virtual URIs - clients cannot resolve these
+    if let Some(related_info) = item.get_mut("relatedInformation")
+        && let Some(info_arr) = related_info.as_array_mut()
+    {
+        // Filter out entries with virtual URIs, transform matching host URIs
+        info_arr.retain_mut(|info| {
+            // Check if the URI is a virtual URI - if so, filter it out
+            if let Some(location) = info.get("location")
+                && let Some(uri) = location.get("uri")
+                && let Some(uri_str) = uri.as_str()
+            {
+                if is_virtual_uri(uri_str) {
+                    // Virtual URI - filter out this entry
+                    return false;
+                }
+
+                // Only transform ranges for entries that reference the same host document.
+                // Related info pointing to other files (e.g., imported modules) should
+                // keep their original coordinates since they're not in the injection region.
+                if uri_str != host_uri {
+                    // Different file - keep entry but don't transform its range
+                    return true;
+                }
+            }
+
+            // Transform the range for entries matching the host document
+            if let Some(location) = info.get_mut("location")
+                && let Some(range) = location.get_mut("range")
+            {
+                transform_range(range, region_start_line);
+            }
+            true
+        });
+    }
 }
 
 /// Transform a moniker response from virtual to host document coordinates.
@@ -2976,6 +3096,199 @@ mod tests {
     }
 
     // ==========================================================================
+    // Diagnostic response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn diagnostic_response_transforms_range_to_host_coordinates() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 5 },
+                            "end": { "line": 0, "character": 10 }
+                        },
+                        "message": "syntax error",
+                        "severity": 1
+                    },
+                    {
+                        "range": {
+                            "start": { "line": 2, "character": 0 },
+                            "end": { "line": 3, "character": 5 }
+                        },
+                        "message": "undefined variable",
+                        "severity": 2
+                    }
+                ]
+            }
+        });
+        let context = test_context("unused", "unused", 5);
+
+        let transformed = transform_diagnostic_response_to_host(response, &context);
+
+        let items = transformed["result"]["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+
+        // First diagnostic: line 0 + 5 = 5
+        assert_eq!(items[0]["range"]["start"]["line"], 5);
+        assert_eq!(items[0]["range"]["end"]["line"], 5);
+        assert_eq!(items[0]["range"]["start"]["character"], 5); // character unchanged
+        assert_eq!(items[0]["message"], "syntax error");
+
+        // Second diagnostic: lines 2,3 + 5 = 7,8
+        assert_eq!(items[1]["range"]["start"]["line"], 7);
+        assert_eq!(items[1]["range"]["end"]["line"], 8);
+    }
+
+    #[test]
+    fn diagnostic_response_transforms_related_information_locations_for_same_host() {
+        // Related info pointing to same file as host should be transformed
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 10 }
+                        },
+                        "message": "unused variable 'x'",
+                        "relatedInformation": [
+                            {
+                                "location": {
+                                    "uri": "file:///test.md",
+                                    "range": {
+                                        "start": { "line": 5, "character": 0 },
+                                        "end": { "line": 5, "character": 5 }
+                                    }
+                                },
+                                "message": "'x' is declared here"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        // Host URI matches the related info URI
+        let context = test_context("unused", "file:///test.md", 3);
+
+        let transformed = transform_diagnostic_response_to_host(response, &context);
+
+        let items = transformed["result"]["items"].as_array().unwrap();
+        let related = items[0]["relatedInformation"].as_array().unwrap();
+        assert_eq!(related.len(), 1);
+
+        // Main diagnostic range transformed
+        assert_eq!(items[0]["range"]["start"]["line"], 3);
+
+        // Related information location range transformed (same host file)
+        assert_eq!(related[0]["location"]["range"]["start"]["line"], 8); // 5 + 3
+        assert_eq!(related[0]["location"]["range"]["end"]["line"], 8);
+    }
+
+    #[test]
+    fn diagnostic_response_preserves_related_info_for_different_file() {
+        // Related info pointing to a different file should NOT be transformed
+        // (e.g., referencing an imported module)
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 10 }
+                        },
+                        "message": "type mismatch",
+                        "relatedInformation": [
+                            {
+                                "location": {
+                                    "uri": "file:///other_module.lua",
+                                    "range": {
+                                        "start": { "line": 5, "character": 0 },
+                                        "end": { "line": 5, "character": 5 }
+                                    }
+                                },
+                                "message": "expected type defined here"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        // Host URI is different from related info URI
+        let context = test_context("unused", "file:///test.md", 3);
+
+        let transformed = transform_diagnostic_response_to_host(response, &context);
+
+        let items = transformed["result"]["items"].as_array().unwrap();
+        let related = items[0]["relatedInformation"].as_array().unwrap();
+        assert_eq!(related.len(), 1);
+
+        // Main diagnostic range transformed
+        assert_eq!(items[0]["range"]["start"]["line"], 3);
+
+        // Related info pointing to different file should NOT be transformed
+        assert_eq!(related[0]["location"]["uri"], "file:///other_module.lua");
+        assert_eq!(related[0]["location"]["range"]["start"]["line"], 5); // unchanged!
+        assert_eq!(related[0]["location"]["range"]["end"]["line"], 5);
+    }
+
+    #[test]
+    fn diagnostic_response_unchanged_kind_passes_through() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "unchanged",
+                "resultId": "prev-123"
+            }
+        });
+        let context = test_context("unused", "unused", 5);
+
+        let transformed = transform_diagnostic_response_to_host(response.clone(), &context);
+
+        // Unchanged report should pass through as-is
+        assert_eq!(transformed["result"]["kind"], "unchanged");
+        assert_eq!(transformed["result"]["resultId"], "prev-123");
+    }
+
+    #[test]
+    fn diagnostic_response_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+        let context = test_context("unused", "unused", 5);
+
+        let transformed = transform_diagnostic_response_to_host(response.clone(), &context);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn diagnostic_response_empty_items_passes_through() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": []
+            }
+        });
+        let context = test_context("unused", "unused", 5);
+
+        let transformed = transform_diagnostic_response_to_host(response, &context);
+
+        let items = transformed["result"]["items"].as_array().unwrap();
+        assert!(items.is_empty());
+    }
+
+    // ==========================================================================
     // Moniker response tests
     // ==========================================================================
 
@@ -3023,5 +3336,193 @@ mod tests {
         let transformed = transform_moniker_response_to_host(response.clone(), 5);
         let result = transformed["result"].as_array().unwrap();
         assert!(result.is_empty());
+    }
+
+    // ==========================================================================
+    // Edge case tests for diagnostic response transformation
+    // ==========================================================================
+
+    #[test]
+    fn diagnostic_response_missing_range_in_item_passes_through() {
+        // Diagnostic item without a range should be preserved (not panic)
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "message": "syntax error without range",
+                        "severity": 1
+                    }
+                ]
+            }
+        });
+        let context = test_context("unused", "unused", 5);
+
+        let transformed = transform_diagnostic_response_to_host(response, &context);
+
+        // Item should still exist with original message
+        let items = transformed["result"]["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["message"], "syntax error without range");
+        // No range was present, so none should be added
+        assert!(items[0].get("range").is_none());
+    }
+
+    #[test]
+    fn diagnostic_response_filters_related_info_with_virtual_uris() {
+        // Related information with virtual URIs should be filtered out
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 10 }
+                        },
+                        "message": "unused variable",
+                        "relatedInformation": [
+                            {
+                                "location": {
+                                    "uri": "file:///.kakehashi/lua/region-0/test.lua",
+                                    "range": {
+                                        "start": { "line": 5, "character": 0 },
+                                        "end": { "line": 5, "character": 5 }
+                                    }
+                                },
+                                "message": "this is a virtual URI - should be filtered"
+                            },
+                            {
+                                "location": {
+                                    "uri": "file:///real/file.lua",
+                                    "range": {
+                                        "start": { "line": 10, "character": 0 },
+                                        "end": { "line": 10, "character": 5 }
+                                    }
+                                },
+                                "message": "this is a real file URI - should be kept"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        let context = test_context("unused", "unused", 3);
+
+        let transformed = transform_diagnostic_response_to_host(response, &context);
+
+        let items = transformed["result"]["items"].as_array().unwrap();
+        let related = items[0]["relatedInformation"].as_array().unwrap();
+
+        // Only the real file URI entry should remain
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0]["location"]["uri"], "file:///real/file.lua");
+        // The range for real file entry is NOT transformed (different from host URI)
+        assert_eq!(related[0]["location"]["range"]["start"]["line"], 10); // unchanged
+    }
+
+    #[test]
+    fn diagnostic_response_filters_all_related_info_with_virtual_uris() {
+        // When all relatedInformation entries have virtual URIs, the array should become empty
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 10 }
+                        },
+                        "message": "unused variable",
+                        "relatedInformation": [
+                            {
+                                "location": {
+                                    "uri": "file:///.kakehashi/lua/region-0/test.lua",
+                                    "range": {
+                                        "start": { "line": 5, "character": 0 },
+                                        "end": { "line": 5, "character": 5 }
+                                    }
+                                },
+                                "message": "first virtual URI"
+                            },
+                            {
+                                "location": {
+                                    "uri": "file:///.kakehashi/python/region-1/main.py",
+                                    "range": {
+                                        "start": { "line": 10, "character": 0 },
+                                        "end": { "line": 10, "character": 5 }
+                                    }
+                                },
+                                "message": "second virtual URI"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        let context = test_context("unused", "unused", 3);
+
+        let transformed = transform_diagnostic_response_to_host(response, &context);
+
+        let items = transformed["result"]["items"].as_array().unwrap();
+        let related = items[0]["relatedInformation"].as_array().unwrap();
+
+        // All entries had virtual URIs, so the array should be empty
+        assert!(related.is_empty());
+    }
+
+    #[test]
+    fn position_transformation_with_large_line_numbers_uses_saturating_add() {
+        // Test that position transformation uses saturating_add for large line numbers
+        // This prevents panic from overflow when line + region_start_line > u64::MAX
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": u64::MAX - 10, "character": 0 },
+                            "end": { "line": u64::MAX - 5, "character": 10 }
+                        },
+                        "message": "diagnostic at very large line number"
+                    }
+                ]
+            }
+        });
+        let context = test_context("unused", "unused", 100);
+
+        // This should not panic due to overflow
+        let transformed = transform_diagnostic_response_to_host(response, &context);
+
+        // Values should saturate at u64::MAX
+        let items = transformed["result"]["items"].as_array().unwrap();
+        assert_eq!(items[0]["range"]["start"]["line"], u64::MAX);
+        assert_eq!(items[0]["range"]["end"]["line"], u64::MAX);
+    }
+
+    #[test]
+    fn range_transformation_with_near_max_line_saturates() {
+        // Test transform_range directly with values that would overflow
+        let mut range = json!({
+            "start": { "line": u64::MAX - 5, "character": 0 },
+            "end": { "line": u64::MAX - 3, "character": 10 }
+        });
+
+        // Adding 10 would overflow, should saturate to MAX
+        transform_range(&mut range, 10);
+
+        assert_eq!(range["start"]["line"], u64::MAX);
+        assert_eq!(range["end"]["line"], u64::MAX);
+        // Characters should be unchanged
+        assert_eq!(range["start"]["character"], 0);
+        assert_eq!(range["end"]["character"], 10);
     }
 }

@@ -9,20 +9,52 @@ const userStoryRoles = [
 
 const scrum: ScrumDashboard = {
   product_goal: {
-    statement: "Reliable connection lifecycle for embedded language servers",
+    statement: "Pull-first diagnostic forwarding for embedded language regions (ADR-0020 Phase 1)",
     success_metrics: [
-      { metric: "Connection state machine completeness", target: "ConnectionState includes Initializing, Ready, Failed, Closing, Closed with all Phase 1 transitions implemented" },
-      { metric: "LSP shutdown handshake compliance", target: "Graceful shutdown sends shutdown request, waits for response, sends exit notification per LSP spec" },
-      { metric: "Timeout hierarchy implementation", target: "Init timeout (30-60s), Liveness timeout (30-120s), Global shutdown timeout (5-15s) with correct precedence" },
-      { metric: "Cancellation forwarding", target: "$/cancelRequest notifications forwarded to downstream servers while keeping pending request entries" },
+      { metric: "textDocument/diagnostic handler exists", target: "Handler receives DocumentDiagnosticParams and returns DocumentDiagnosticReport" },
+      { metric: "Single-region diagnostic bridging works", target: "Request forwarded to downstream LS for first virtual document, response transformed to host coordinates" },
+      { metric: "Multi-region diagnostic aggregation works", target: "Fan-out queries to all injection regions, diagnostics aggregated and position-transformed" },
+      { metric: "E2E test coverage", target: "E2E test exists for diagnostic bridging with lua-language-server" },
     ],
   },
   product_backlog: [
-    // All current PBIs are done - Product Goal achieved!
-    // Done PBIs: pbi-liveness-timeout (Sprint 14), pbi-cancellation-forwarding (Sprint 15)
+    {
+      id: "pbi-diagnostic-single-region",
+      story: {
+        role: "developer using tree-sitter-ls with multiple embedded languages",
+        capability: "receive diagnostics from the first injection region in my document",
+        benefit: "I can see errors in embedded code without leaving the host document",
+      },
+      acceptance_criteria: [
+        { criterion: "textDocument/diagnostic handler advertises capability", verification: "ServerCapabilities includes diagnosticProvider" },
+        { criterion: "Handler forwards request to downstream LS for first virtual document", verification: "Unit test verifies request transformation" },
+        { criterion: "Diagnostic positions transformed from virtual to host coordinates", verification: "Unit test verifies position mapping" },
+        { criterion: "E2E test verifies diagnostic bridging", verification: "tests/e2e_lsp_lua_diagnostic.rs exists and passes" },
+      ],
+      status: "done",
+    },
+    {
+      id: "pbi-diagnostic-multi-region",
+      story: {
+        role: "developer using tree-sitter-ls with multiple embedded languages",
+        capability: "receive diagnostics from all injection regions aggregated into a single response",
+        benefit: "I can see all errors across all embedded code blocks in one diagnostic report",
+      },
+      acceptance_criteria: [
+        { criterion: "Handler queries all injection regions in parallel", verification: "Implementation uses fan-out pattern" },
+        { criterion: "Diagnostics from all regions are aggregated", verification: "Response includes diagnostics from multiple regions" },
+        { criterion: "Each diagnostic's position is correctly transformed", verification: "Unit tests verify per-region position transformation" },
+        { criterion: "Timeout handling for slow downstream servers", verification: "Partial results returned on timeout" },
+      ],
+      status: "done",
+    },
   ],
   sprint: null,
   completed: [
+    // Sprint 17: 4 subtasks, parallel fan-out + aggregation + timeout + E2E
+    { number: 17, pbi_id: "pbi-diagnostic-multi-region", goal: "Implement multi-region diagnostic aggregation with fan-out parallel queries and timeout handling", status: "done", subtasks: [] },
+    // Sprint 16: 5 subtasks, diagnostic capability + request/response transformation + E2E test
+    { number: 16, pbi_id: "pbi-diagnostic-single-region", goal: "Implement textDocument/diagnostic handler for first virtual document with position transformation", status: "done", subtasks: [] },
     // Sprint 15: 3 phases, 6 subtasks, key commits: a874a7d9, 52d7c3d0, a0c16e97
     { number: 15, pbi_id: "pbi-cancellation-forwarding", goal: "Implement $/cancelRequest notification forwarding to downstream servers while preserving pending request entries", status: "done", subtasks: [] },
     // Sprint 14: 4 phases, 6 acceptance criteria, key commits: eefa609a, 67b9db3d, b2721d65, cfe5cd33
@@ -40,6 +72,16 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 17, improvements: [
+      { action: "JoinSet pattern reusable for parallel operations: shutdown.rs pattern directly applicable for diagnostic fan-out", timing: "immediate", status: "completed", outcome: "JoinSet with spawn/join_next loop cleanly handles parallel async operations with individual result handling." },
+      { action: "pool_arc() accessor enables spawned task ownership: needed for any parallel operation requiring pool access", timing: "immediate", status: "completed", outcome: "Added to BridgeCoordinator; pattern generalizes to other resources requiring Arc clone for spawned tasks." },
+      { action: "Owned data structs for spawned tasks: DiagnosticRequestInfo pattern cleanly captures data needed by parallel tasks", timing: "immediate", status: "completed", outcome: "Struct holding owned Strings avoids lifetime complexity in spawned async blocks." },
+    ] },
+    { sprint: 16, improvements: [
+      { action: "Bridge method classification documented: whole-document methods (diagnostic, document_symbol) vs position-specific methods (hover, definition) - helps choose correct request pattern", timing: "immediate", status: "completed", outcome: "Pattern clearly documented in subtask notes; diagnostic follows document_symbol pattern without position." },
+      { action: "Sprint 15 retrospective action validated: Clippy collapsible_if caught at review phase; 'make check' after each green phase would catch earlier", timing: "sprint", status: "active", outcome: null },
+      { action: "First-region-only scoping enables incremental delivery: Sprint 16 delivers value while Sprint 17 adds aggregation", timing: "immediate", status: "completed", outcome: "Clean separation allowed focused implementation; all_regions[0] pattern makes Sprint 17 extension clear." },
+    ] },
     { sprint: 15, improvements: [
       { action: "Document BridgeCoordinator delegation pattern: handlers access pool directly, delegating methods added to coordinator are unused - clarify API design expectations upfront", timing: "immediate", status: "completed", outcome: "Added API Design Pattern section to coordinator.rs documenting two access patterns: direct pool access (preferred) vs delegating methods (convenience). Clarifies YAGNI principle for new features." },
       { action: "Run 'make check' after each green phase, not just at review - catches Clippy issues (missing Default impl, nested if) earlier", timing: "sprint", status: "active", outcome: null },

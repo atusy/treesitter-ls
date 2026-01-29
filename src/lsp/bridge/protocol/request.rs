@@ -24,12 +24,12 @@ use super::virtual_uri::VirtualDocumentUri;
 /// * `request_id` - The JSON-RPC request ID
 /// * `method` - The LSP method name (e.g., "textDocument/hover")
 ///
-/// # Preconditions
+/// # Defensive Arithmetic
 ///
-/// **`host_position.line >= region_start_line`** - The host position must be within or after
-/// the injection region. This is guaranteed by callers which only invoke bridge requests
-/// when the cursor position falls within a detected injection region's line range.
-/// Violation would cause underflow in debug builds (wrapping in release).
+/// Uses `saturating_sub` for line translation to prevent panic on underflow.
+/// This can occur during race conditions when document edits invalidate region
+/// data while an LSP request is in flight. In such cases, the request will use
+/// line 0, which may produce incorrect results but won't crash the server.
 fn build_position_based_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
     host_position: tower_lsp_server::ls_types::Position,
@@ -43,8 +43,10 @@ fn build_position_based_request(
     let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
 
     // Translate position from host to virtual coordinates
+    // Uses saturating_sub to prevent panic on race conditions where stale region data
+    // has region_start_line > host_position.line after a document edit
     let virtual_position = tower_lsp_server::ls_types::Position {
-        line: host_position.line - region_start_line,
+        line: host_position.line.saturating_sub(region_start_line),
         character: host_position.character,
     };
 
@@ -374,6 +376,44 @@ pub(crate) fn build_bridge_document_symbol_request(
     )
 }
 
+/// Build a JSON-RPC diagnostic request for a downstream language server.
+///
+/// Like DocumentSymbolParams, DocumentDiagnosticParams operates on the entire document.
+/// The request may include an optional previousResultId for incremental updates.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `request_id` - The JSON-RPC request ID
+/// * `previous_result_id` - Optional previous result ID for incremental updates
+pub(crate) fn build_bridge_diagnostic_request(
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    injection_language: &str,
+    region_id: &str,
+    request_id: RequestId,
+    previous_result_id: Option<&str>,
+) -> serde_json::Value {
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    let mut params = serde_json::json!({
+        "textDocument": {
+            "uri": virtual_uri.to_uri_string()
+        }
+    });
+
+    if let Some(prev_id) = previous_result_id {
+        params["previousResultId"] = serde_json::json!(prev_id);
+    }
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id.as_i64(),
+        "method": "textDocument/diagnostic",
+        "params": params
+    })
+}
+
 /// Build a JSON-RPC inlay hint request for a downstream language server.
 ///
 /// Unlike position-based requests (hover, definition, etc.), InlayHintParams
@@ -389,11 +429,10 @@ pub(crate) fn build_bridge_document_symbol_request(
 /// * `region_start_line` - The starting line of the injection region in the host document
 /// * `request_id` - The JSON-RPC request ID
 ///
-/// # Preconditions
+/// # Defensive Arithmetic
 ///
-/// **`host_range.start.line >= region_start_line`** - The host range must be within or after
-/// the injection region. This is guaranteed by callers which only invoke bridge requests
-/// when the range falls within a detected injection region's line range.
+/// Uses `saturating_sub` for line translation to prevent panic on underflow during
+/// race conditions when document edits invalidate region data.
 pub(crate) fn build_bridge_inlay_hint_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
     host_range: tower_lsp_server::ls_types::Range,
@@ -406,13 +445,14 @@ pub(crate) fn build_bridge_inlay_hint_request(
     let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
 
     // Translate range from host to virtual coordinates
+    // Uses saturating_sub to prevent panic on race conditions
     let virtual_range = tower_lsp_server::ls_types::Range {
         start: tower_lsp_server::ls_types::Position {
-            line: host_range.start.line - region_start_line,
+            line: host_range.start.line.saturating_sub(region_start_line),
             character: host_range.start.character,
         },
         end: tower_lsp_server::ls_types::Position {
-            line: host_range.end.line - region_start_line,
+            line: host_range.end.line.saturating_sub(region_start_line),
             character: host_range.end.character,
         },
     };
@@ -453,11 +493,10 @@ pub(crate) fn build_bridge_inlay_hint_request(
 /// * `region_start_line` - The starting line of the injection region in the host document
 /// * `request_id` - The JSON-RPC request ID
 ///
-/// # Preconditions
+/// # Defensive Arithmetic
 ///
-/// **`host_range.start.line >= region_start_line`** - The host range must be within or after
-/// the injection region. This is guaranteed by callers which only invoke bridge requests
-/// when the range falls within a detected injection region's line range.
+/// Uses `saturating_sub` for line translation to prevent panic on underflow during
+/// race conditions when document edits invalidate region data.
 #[cfg(feature = "experimental")]
 pub(crate) fn build_bridge_color_presentation_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
@@ -472,13 +511,14 @@ pub(crate) fn build_bridge_color_presentation_request(
     let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
 
     // Translate range from host to virtual coordinates
+    // Uses saturating_sub to prevent panic on race conditions
     let virtual_range = tower_lsp_server::ls_types::Range {
         start: tower_lsp_server::ls_types::Position {
-            line: host_range.start.line - region_start_line,
+            line: host_range.start.line.saturating_sub(region_start_line),
             character: host_range.start.character,
         },
         end: tower_lsp_server::ls_types::Position {
-            line: host_range.end.line - region_start_line,
+            line: host_range.end.line.saturating_sub(region_start_line),
             character: host_range.end.character,
         },
     };
@@ -745,6 +785,121 @@ mod tests {
         assert_eq!(
             request["params"]["position"]["line"], 5,
             "With region_start_line=0, virtual line equals host line"
+        );
+    }
+
+    // ==========================================================================
+    // Underflow regression tests (saturating_sub)
+    // ==========================================================================
+    // These tests verify that position translation doesn't panic when
+    // host_position.line < region_start_line, which can occur during race
+    // conditions when document edits invalidate region data.
+
+    #[test]
+    fn position_translation_saturates_on_underflow_for_position_request() {
+        // Simulate race condition: host_position.line (2) < region_start_line (5)
+        // This should NOT panic, instead saturate to line 0
+        let host_position = Position {
+            line: 2, // Less than region_start_line
+            character: 10,
+        };
+
+        let request = build_bridge_hover_request(
+            &test_host_uri(),
+            host_position,
+            "lua",
+            "region-0",
+            5, // region_start_line > host_position.line
+            test_request_id(),
+        );
+
+        assert_eq!(
+            request["params"]["position"]["line"], 0,
+            "Underflow should saturate to line 0, not panic"
+        );
+        assert_eq!(
+            request["params"]["position"]["character"], 10,
+            "Character should remain unchanged"
+        );
+    }
+
+    #[test]
+    fn range_translation_saturates_on_underflow_for_inlay_hint() {
+        use tower_lsp_server::ls_types::Range;
+
+        // Simulate race condition: range lines < region_start_line
+        let host_range = Range {
+            start: Position {
+                line: 1, // Less than region_start_line
+                character: 0,
+            },
+            end: Position {
+                line: 3, // Less than region_start_line
+                character: 20,
+            },
+        };
+
+        let request = build_bridge_inlay_hint_request(
+            &test_host_uri(),
+            host_range,
+            "lua",
+            "region-0",
+            5, // region_start_line > both range lines
+            test_request_id(),
+        );
+
+        let range = &request["params"]["range"];
+        assert_eq!(
+            range["start"]["line"], 0,
+            "Start line underflow should saturate to 0"
+        );
+        assert_eq!(
+            range["end"]["line"], 0,
+            "End line underflow should saturate to 0"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "experimental")]
+    fn range_translation_saturates_on_underflow_for_color_presentation() {
+        use tower_lsp_server::ls_types::Range;
+
+        // Simulate race condition: range lines < region_start_line
+        let host_range = Range {
+            start: Position {
+                line: 2,
+                character: 5,
+            },
+            end: Position {
+                line: 2,
+                character: 12,
+            },
+        };
+        let color = serde_json::json!({
+            "red": 1.0,
+            "green": 0.0,
+            "blue": 0.0,
+            "alpha": 1.0
+        });
+
+        let request = build_bridge_color_presentation_request(
+            &test_host_uri(),
+            host_range,
+            &color,
+            "lua",
+            "region-0",
+            10, // region_start_line > range lines
+            test_request_id(),
+        );
+
+        let range = &request["params"]["range"];
+        assert_eq!(
+            range["start"]["line"], 0,
+            "Start line underflow should saturate to 0"
+        );
+        assert_eq!(
+            range["end"]["line"], 0,
+            "End line underflow should saturate to 0"
         );
     }
 
@@ -1225,6 +1380,61 @@ mod tests {
             request["params"].get("position").is_none(),
             "DocumentSymbol request should not have position parameter"
         );
+    }
+
+    // ==========================================================================
+    // Diagnostic request tests
+    // ==========================================================================
+
+    #[test]
+    fn diagnostic_request_uses_virtual_uri() {
+        let request = build_bridge_diagnostic_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            test_request_id(),
+            None,
+        );
+
+        assert_uses_virtual_uri(&request, "lua");
+    }
+
+    #[test]
+    fn diagnostic_request_has_correct_method_and_structure() {
+        let request = build_bridge_diagnostic_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            RequestId::new(123),
+            None,
+        );
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 123);
+        assert_eq!(request["method"], "textDocument/diagnostic");
+        // Diagnostic request has no position parameter (whole-document operation)
+        assert!(
+            request["params"].get("position").is_none(),
+            "Diagnostic request should not have position parameter"
+        );
+        // Without previous_result_id, there should be no previousResultId field
+        assert!(
+            request["params"].get("previousResultId").is_none(),
+            "Diagnostic request without previous_result_id should not have previousResultId"
+        );
+    }
+
+    #[test]
+    fn diagnostic_request_includes_previous_result_id_when_provided() {
+        let request = build_bridge_diagnostic_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            RequestId::new(123),
+            Some("prev-result-123"),
+        );
+
+        assert_eq!(request["params"]["previousResultId"], "prev-result-123");
     }
 
     // ==========================================================================

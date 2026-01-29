@@ -294,12 +294,15 @@ impl CacheableInjectionRegion {
     ///
     /// Subtracts the injection region's start line from the host position's line.
     /// Character (column) remains unchanged.
+    ///
+    /// Uses `saturating_sub` to prevent panic on underflow during race conditions
+    /// when document edits invalidate region data while an LSP request is in flight.
     pub fn translate_host_to_virtual(
         &self,
         host_pos: tower_lsp_server::ls_types::Position,
     ) -> tower_lsp_server::ls_types::Position {
         tower_lsp_server::ls_types::Position {
-            line: host_pos.line - self.line_range.start,
+            line: host_pos.line.saturating_sub(self.line_range.start),
             character: host_pos.character,
         }
     }
@@ -313,7 +316,7 @@ impl CacheableInjectionRegion {
         virtual_pos: tower_lsp_server::ls_types::Position,
     ) -> tower_lsp_server::ls_types::Position {
         tower_lsp_server::ls_types::Position {
-            line: virtual_pos.line + self.line_range.start,
+            line: virtual_pos.line.saturating_add(self.line_range.start),
             character: virtual_pos.character,
         }
     }
@@ -1165,6 +1168,42 @@ mod tests {
             "Line should be virtual_line + region_start_line"
         );
         assert_eq!(host_pos.character, 3, "Character should remain unchanged");
+    }
+
+    #[test]
+    fn test_translate_host_to_virtual_saturates_on_underflow() {
+        use tower_lsp_server::ls_types::Position;
+
+        // Simulate race condition: host position line < region start line
+        // This can happen when document edits invalidate region data while
+        // an LSP request is in flight.
+
+        let region = CacheableInjectionRegion {
+            language: "rust".to_string(),
+            byte_range: 50..100,
+            line_range: 10..20, // Region starts at line 10
+            region_id: "test-region".to_string(),
+            content_hash: 12345,
+        };
+
+        // Host position at line 5, which is BEFORE the region start (line 10)
+        // This would cause underflow without saturating_sub
+        let host_pos = Position {
+            line: 5, // Less than region_start_line (10)
+            character: 8,
+        };
+
+        // Should NOT panic, should saturate to line 0
+        let virtual_pos = region.translate_host_to_virtual(host_pos);
+
+        assert_eq!(
+            virtual_pos.line, 0,
+            "Underflow should saturate to line 0, not panic"
+        );
+        assert_eq!(
+            virtual_pos.character, 8,
+            "Character should remain unchanged"
+        );
     }
 
     // ============================================================
