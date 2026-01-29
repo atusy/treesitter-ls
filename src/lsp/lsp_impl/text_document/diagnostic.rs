@@ -24,13 +24,27 @@ use super::super::{Kakehashi, uri_to_url};
 const DIAGNOSTIC_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Information needed to send a diagnostic request for one injection region.
-/// Uses Arc for config to avoid cloning large structs for each region.
+///
+/// This struct captures all the data required to make a single diagnostic request
+/// to a downstream language server. It's used during parallel fan-out (Sprint 17)
+/// where multiple injection regions are processed concurrently.
+///
+/// Uses Arc for config to avoid cloning large structs for each region - multiple
+/// regions using the same language server share the same config Arc.
 struct DiagnosticRequestInfo {
+    /// Name of the downstream language server (e.g., "lua-language-server")
     server_name: String,
+    /// Shared reference to the bridge server configuration
     config: Arc<BridgeServerConfig>,
+    /// Language of the injection region (e.g., "lua", "python")
     injection_language: String,
+    /// Unique identifier for this injection region within the host document
     region_id: String,
+    /// Starting line of the injection region in the host document (0-indexed)
+    /// Used to transform diagnostic positions back to host coordinates
     region_start_line: u32,
+    /// The extracted content of the injection region, formatted as a virtual document
+    /// This is what gets sent to the downstream language server for analysis
     virtual_content: String,
 }
 
