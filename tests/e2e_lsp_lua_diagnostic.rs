@@ -67,13 +67,89 @@ fn e2e_diagnostic_capability_advertised() {
     shutdown_client(&mut client);
 }
 
-/// E2E test: diagnostic request is handled for Lua code block with syntax error
+/// E2E test: diagnostic response has valid structure (DocumentDiagnosticReport)
 ///
-/// Verifies:
-/// 1. Diagnostics are returned for Lua syntax errors
-/// 2. Diagnostic positions are transformed to host document coordinates
+/// Validates the response structure is correct regardless of whether lua-ls
+/// reports any diagnostics. This test always passes if the bridge is working.
+/// Position transformation correctness is tested separately in unit tests.
 #[test]
-fn e2e_diagnostic_request_returns_diagnostics_for_lua_error() {
+fn e2e_diagnostic_response_structure_is_valid() {
+    let mut client = create_lua_configured_client();
+
+    // Open markdown document with Lua code block
+    let markdown_content = r#"# Test Document
+
+```lua
+local x = 1
+```
+"#;
+
+    let markdown_uri = "file:///test_diagnostic_structure.md";
+
+    client.send_notification(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": markdown_uri,
+                "languageId": "markdown",
+                "version": 1,
+                "text": markdown_content
+            }
+        }),
+    );
+
+    // Wait for lua-ls to start and be ready
+    wait_for_server_ready(&mut client, markdown_uri, 5, 100);
+
+    // Send diagnostic request
+    let response = client.send_request(
+        "textDocument/diagnostic",
+        json!({
+            "textDocument": {
+                "uri": markdown_uri
+            }
+        }),
+    );
+
+    println!(
+        "Diagnostic response: {}",
+        serde_json::to_string_pretty(&response).unwrap()
+    );
+
+    // The response should be a DocumentDiagnosticReport
+    let result = response
+        .get("result")
+        .expect("Should have result in diagnostic response");
+
+    // Verify it's a "full" report (not "unchanged")
+    assert!(result.get("kind").is_some(), "Result should have 'kind' field");
+    assert_eq!(
+        result.get("kind").and_then(|k| k.as_str()),
+        Some("full"),
+        "Result should be a 'full' report"
+    );
+
+    // Verify the items array exists (response structure is correct)
+    let items = result.get("items").and_then(|i| i.as_array());
+    assert!(items.is_some(), "Result should have 'items' array");
+
+    println!(
+        "E2E: Diagnostic response structure is valid with {} items",
+        items.unwrap().len()
+    );
+
+    // Clean shutdown
+    shutdown_client(&mut client);
+}
+
+/// E2E test: diagnostic positions are transformed to host document coordinates
+///
+/// When diagnostics are returned, verifies that positions are correctly
+/// transformed from virtual (Lua-only) to host (Markdown) coordinates.
+/// Note: This test may report no diagnostics if lua-ls needs more time,
+/// which is acceptable - position transformation is also tested in unit tests.
+#[test]
+fn e2e_diagnostic_positions_transformed_to_host_coordinates() {
     let mut client = create_lua_configured_client();
 
     // Open markdown document with Lua code block containing a syntax error
@@ -99,7 +175,7 @@ More text.
     // The Lua code block content starts at line 3 (after ```lua)
     let lua_content_start_line: u64 = 3;
 
-    let markdown_uri = "file:///test_diagnostic.md";
+    let markdown_uri = "file:///test_diagnostic_positions.md";
 
     client.send_notification(
         "textDocument/didOpen",
@@ -113,8 +189,7 @@ More text.
         }),
     );
 
-    // Wait for lua-ls to start and be ready using exponential backoff polling
-    // Starts at 100ms, doubles each retry, up to 5 attempts (total ~3100ms max)
+    // Wait for lua-ls to start and be ready
     wait_for_server_ready(&mut client, markdown_uri, 5, 100);
 
     // Send diagnostic request
@@ -132,15 +207,10 @@ More text.
         serde_json::to_string_pretty(&response).unwrap()
     );
 
-    // The response should be a DocumentDiagnosticReport
     let result = response
         .get("result")
         .expect("Should have result in diagnostic response");
 
-    // Verify it's a "full" report (not "unchanged")
-    assert!(result.get("kind").is_some(), "Result should have 'kind' field");
-
-    // Verify the items array exists (response structure is correct)
     let items = result
         .get("items")
         .and_then(|i| i.as_array())
@@ -148,11 +218,10 @@ More text.
 
     // If diagnostics are returned, verify positions are transformed to host coordinates
     // Note: lua-ls should report syntax errors, but timing can be flaky in tests.
-    // The key assertion is that IF diagnostics exist, their positions are correct.
     if items.is_empty() {
         println!(
             "No diagnostics returned (lua-ls may need more time). \
-             Response structure is valid - position transformation tested in unit tests."
+             Position transformation correctness tested in unit tests."
         );
     } else {
         println!("Verifying {} diagnostic position(s)...", items.len());
