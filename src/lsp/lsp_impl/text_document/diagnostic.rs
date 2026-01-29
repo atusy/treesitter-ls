@@ -200,6 +200,10 @@ impl Kakehashi {
         }
 
         // Collect results from all regions, aggregating diagnostics
+        // Note: Deduplication by (range, message, severity) is not implemented yet.
+        // Per ADR-0020, this would be needed if downstream servers report overlapping
+        // diagnostics. Currently each region is isolated so duplicates are unlikely.
+        // TODO: Add deduplication when overlapping diagnostics are observed in practice.
         let mut all_diagnostics: Vec<Diagnostic> = Vec::new();
         while let Some(result) = join_set.join_next().await {
             match result {
