@@ -374,6 +374,44 @@ pub(crate) fn build_bridge_document_symbol_request(
     )
 }
 
+/// Build a JSON-RPC diagnostic request for a downstream language server.
+///
+/// Like DocumentSymbolParams, DocumentDiagnosticParams operates on the entire document.
+/// The request may include an optional previousResultId for incremental updates.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `request_id` - The JSON-RPC request ID
+/// * `previous_result_id` - Optional previous result ID for incremental updates
+pub(crate) fn build_bridge_diagnostic_request(
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    injection_language: &str,
+    region_id: &str,
+    request_id: RequestId,
+    previous_result_id: Option<&str>,
+) -> serde_json::Value {
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    let mut params = serde_json::json!({
+        "textDocument": {
+            "uri": virtual_uri.to_uri_string()
+        }
+    });
+
+    if let Some(prev_id) = previous_result_id {
+        params["previousResultId"] = serde_json::json!(prev_id);
+    }
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id.as_i64(),
+        "method": "textDocument/diagnostic",
+        "params": params
+    })
+}
+
 /// Build a JSON-RPC inlay hint request for a downstream language server.
 ///
 /// Unlike position-based requests (hover, definition, etc.), InlayHintParams
@@ -1225,6 +1263,61 @@ mod tests {
             request["params"].get("position").is_none(),
             "DocumentSymbol request should not have position parameter"
         );
+    }
+
+    // ==========================================================================
+    // Diagnostic request tests
+    // ==========================================================================
+
+    #[test]
+    fn diagnostic_request_uses_virtual_uri() {
+        let request = build_bridge_diagnostic_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            test_request_id(),
+            None,
+        );
+
+        assert_uses_virtual_uri(&request, "lua");
+    }
+
+    #[test]
+    fn diagnostic_request_has_correct_method_and_structure() {
+        let request = build_bridge_diagnostic_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            RequestId::new(123),
+            None,
+        );
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 123);
+        assert_eq!(request["method"], "textDocument/diagnostic");
+        // Diagnostic request has no position parameter (whole-document operation)
+        assert!(
+            request["params"].get("position").is_none(),
+            "Diagnostic request should not have position parameter"
+        );
+        // Without previous_result_id, there should be no previousResultId field
+        assert!(
+            request["params"].get("previousResultId").is_none(),
+            "Diagnostic request without previous_result_id should not have previousResultId"
+        );
+    }
+
+    #[test]
+    fn diagnostic_request_includes_previous_result_id_when_provided() {
+        let request = build_bridge_diagnostic_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            RequestId::new(123),
+            Some("prev-result-123"),
+        );
+
+        assert_eq!(request["params"]["previousResultId"], "prev-result-123");
     }
 
     // ==========================================================================

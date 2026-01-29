@@ -10,6 +10,7 @@ mod color_presentation;
 mod completion;
 mod declaration;
 mod definition;
+mod diagnostic;
 mod did_change;
 mod did_close;
 #[cfg(feature = "experimental")]
