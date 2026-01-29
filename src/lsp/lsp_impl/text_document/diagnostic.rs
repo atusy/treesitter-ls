@@ -24,10 +24,10 @@ use super::super::{Kakehashi, uri_to_url};
 const DIAGNOSTIC_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Information needed to send a diagnostic request for one injection region.
-/// Owned data for moving into spawned tasks.
+/// Uses Arc for config to avoid cloning large structs for each region.
 struct DiagnosticRequestInfo {
     server_name: String,
-    config: BridgeServerConfig,
+    config: Arc<BridgeServerConfig>,
     injection_language: String,
     region_id: String,
     region_start_line: u32,
@@ -103,16 +103,26 @@ impl Kakehashi {
 
         // Sprint 17: Process ALL injection regions with parallel fan-out
         // Collect request info for regions that have bridge configs
+        // Group by server_name to share Arc<BridgeServerConfig> across regions using the same server
+        let mut config_cache: std::collections::HashMap<String, Arc<BridgeServerConfig>> =
+            std::collections::HashMap::new();
         let mut request_infos: Vec<DiagnosticRequestInfo> = Vec::new();
+
         for resolved in &all_regions {
             // Get bridge server config for this language
             // The bridge filter is checked inside get_bridge_config_for_language
             if let Some(resolved_config) =
                 self.get_bridge_config_for_language(&language_name, &resolved.injection_language)
             {
+                // Reuse Arc if we've already seen this server, otherwise create new Arc
+                let config_arc = config_cache
+                    .entry(resolved_config.server_name.clone())
+                    .or_insert_with(|| Arc::new(resolved_config.config.clone()))
+                    .clone();
+
                 request_infos.push(DiagnosticRequestInfo {
                     server_name: resolved_config.server_name.clone(),
-                    config: resolved_config.config.clone(),
+                    config: config_arc,
                     injection_language: resolved.injection_language.clone(),
                     region_id: resolved.region.region_id.clone(),
                     region_start_line: resolved.region.line_range.start,
