@@ -620,7 +620,8 @@ pub(crate) fn transform_diagnostic_response_to_host(
 
 /// Transform a single Diagnostic item by adding region_start_line to its range.
 ///
-/// Also transforms relatedInformation locations if present.
+/// Also transforms relatedInformation locations if present, filtering out entries
+/// that reference virtual URIs (which clients cannot resolve).
 fn transform_diagnostic_item(item: &mut serde_json::Value, region_start_line: u32) {
     // Transform the main diagnostic range
     if let Some(range) = item.get_mut("range") {
@@ -628,20 +629,31 @@ fn transform_diagnostic_item(item: &mut serde_json::Value, region_start_line: u3
     }
 
     // Transform relatedInformation locations if present
+    // Filter out entries with virtual URIs - clients cannot resolve these
     if let Some(related_info) = item.get_mut("relatedInformation")
         && let Some(info_arr) = related_info.as_array_mut()
     {
-        for info in info_arr.iter_mut() {
+        // Filter out entries with virtual URIs, transform the rest
+        info_arr.retain_mut(|info| {
+            // Check if the URI is a virtual URI - if so, filter it out
+            if let Some(location) = info.get("location")
+                && let Some(uri) = location.get("uri")
+                && let Some(uri_str) = uri.as_str()
+            {
+                if is_virtual_uri(uri_str) {
+                    // Virtual URI - filter out this entry
+                    return false;
+                }
+            }
+
+            // Transform the range for entries we keep (real file URIs)
             if let Some(location) = info.get_mut("location")
                 && let Some(range) = location.get_mut("range")
             {
-                // Note: We only transform ranges, not URIs.
-                // The URI in relatedInformation may point to different files.
-                // For same-region references, the URI will be the virtual URI
-                // which we don't need to change for Phase 1.
                 transform_range(range, region_start_line);
             }
-        }
+            true
+        });
     }
 }
 
