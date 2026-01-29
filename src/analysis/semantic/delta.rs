@@ -28,11 +28,7 @@ pub fn calculate_delta_or_full(
 /// Check if two semantic tokens are equal
 #[inline]
 pub(super) fn tokens_equal(a: &SemanticToken, b: &SemanticToken) -> bool {
-    a.delta_line == b.delta_line
-        && a.delta_start == b.delta_start
-        && a.length == b.length
-        && a.token_type == b.token_type
-        && a.token_modifiers_bitset == b.token_modifiers_bitset
+    *a == *b
 }
 
 /// Calculate delta between two sets of semantic tokens using prefix-suffix matching.
