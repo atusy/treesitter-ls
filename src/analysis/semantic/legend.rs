@@ -60,7 +60,7 @@ pub const LEGEND_MODIFIERS: &[SemanticTokenModifier] = &[
 /// # Returns
 /// `Some(mapped_name)` for known token types, `None` for unknown types.
 /// Unknown types (not in LEGEND_TYPES) should not produce semantic tokens.
-pub(crate) fn apply_capture_mapping(
+pub(super) fn apply_capture_mapping(
     capture_name: &str,
     filetype: Option<&str>,
     capture_mappings: Option<&CaptureMappings>,
@@ -104,7 +104,7 @@ pub(crate) fn apply_capture_mapping(
 ///
 /// Returns `None` for unknown token types (not in LEGEND_TYPES).
 /// Unknown modifiers are ignored.
-pub(crate) fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> Option<(u32, u32)> {
+pub(super) fn map_capture_to_token_type_and_modifiers(capture_name: &str) -> Option<(u32, u32)> {
     let parts: Vec<&str> = capture_name.split('.').collect();
     let token_type_name = parts.first().copied().filter(|s| !s.is_empty())?;
 
