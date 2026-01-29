@@ -2992,4 +2992,153 @@ mod tests {
             "Server should transition to Ready state after handshake"
         );
     }
+
+    // ============================================================
+    // Wait-for-Ready Tests
+    // ============================================================
+
+    /// Test that get_or_create_connection_wait_ready waits for initializing server.
+    ///
+    /// This tests the wait-for-ready behavior:
+    /// 1. Connection is in Initializing state
+    /// 2. get_or_create_connection would fail fast
+    /// 3. get_or_create_connection_wait_ready waits and returns once Ready
+    #[tokio::test]
+    async fn get_or_create_connection_wait_ready_waits_for_initializing_server() {
+        use std::sync::Arc;
+
+        let pool = Arc::new(LanguageServerPool::new());
+        let config = devnull_config();
+
+        // Insert a connection in Initializing state
+        let handle = create_handle_with_state(ConnectionState::Initializing).await;
+        let handle_clone = Arc::clone(&handle);
+        pool.connections
+            .lock()
+            .await
+            .insert("test-server".to_string(), handle);
+
+        // Spawn a task that will transition to Ready after a delay
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            handle_clone.set_state(ConnectionState::Ready);
+        });
+
+        // Call get_or_create_connection_wait_ready - should wait and succeed
+        let result = pool
+            .get_or_create_connection_wait_ready("test-server", &config, Duration::from_secs(1))
+            .await;
+
+        // Should succeed after waiting for Ready state
+        assert!(
+            result.is_ok(),
+            "Should succeed after waiting for Ready: {:?}",
+            result.err()
+        );
+
+        let handle = result.unwrap();
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Ready,
+            "Returned handle should be in Ready state"
+        );
+    }
+
+    /// Test that get_or_create_connection_wait_ready fails when server fails during wait.
+    #[tokio::test]
+    async fn get_or_create_connection_wait_ready_fails_when_server_fails() {
+        use std::sync::Arc;
+
+        let pool = Arc::new(LanguageServerPool::new());
+        let config = devnull_config();
+
+        // Insert a connection in Initializing state
+        let handle = create_handle_with_state(ConnectionState::Initializing).await;
+        let handle_clone = Arc::clone(&handle);
+        pool.connections
+            .lock()
+            .await
+            .insert("test-server".to_string(), handle);
+
+        // Spawn a task that will transition to Failed after a delay
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            handle_clone.set_state(ConnectionState::Failed);
+        });
+
+        // Call get_or_create_connection_wait_ready - should fail
+        let result = pool
+            .get_or_create_connection_wait_ready("test-server", &config, Duration::from_secs(1))
+            .await;
+
+        // Should fail due to Failed state transition
+        assert!(
+            result.is_err(),
+            "Should fail when server transitions to Failed"
+        );
+        let err = result.err().expect("Should have error");
+        assert!(
+            err.to_string().contains("failed during initialization"),
+            "Error should mention initialization failure: {}",
+            err
+        );
+    }
+
+    /// Test that get_or_create_connection_wait_ready times out properly.
+    #[tokio::test]
+    async fn get_or_create_connection_wait_ready_times_out() {
+        let pool = LanguageServerPool::new();
+        let config = devnull_config();
+
+        // Insert a connection in Initializing state that won't transition
+        let handle = create_handle_with_state(ConnectionState::Initializing).await;
+        pool.connections
+            .lock()
+            .await
+            .insert("test-server".to_string(), handle);
+
+        // Call with short timeout - should timeout
+        let result = pool
+            .get_or_create_connection_wait_ready("test-server", &config, Duration::from_millis(50))
+            .await;
+
+        // Should fail with timeout
+        assert!(result.is_err(), "Should timeout");
+        let err = result.err().expect("Should have error");
+        assert_eq!(
+            err.kind(),
+            io::ErrorKind::TimedOut,
+            "Error should be TimedOut"
+        );
+    }
+
+    /// Test that get_or_create_connection_wait_ready returns immediately when Ready.
+    #[tokio::test]
+    async fn get_or_create_connection_wait_ready_returns_immediately_when_ready() {
+        if !lua_ls_available() {
+            return;
+        }
+
+        let pool = LanguageServerPool::new();
+        let config = lua_ls_config();
+
+        // First call establishes Ready connection
+        let handle1 = pool
+            .get_or_create_connection("lua", &config)
+            .await
+            .expect("should establish connection");
+        assert_eq!(handle1.state(), ConnectionState::Ready);
+
+        // Second call via wait_ready should return immediately
+        let start = std::time::Instant::now();
+        let handle2 = pool
+            .get_or_create_connection_wait_ready("lua", &config, Duration::from_secs(1))
+            .await
+            .expect("should return Ready connection");
+        assert!(
+            start.elapsed() < Duration::from_millis(100),
+            "Should return immediately for Ready connection"
+        );
+        assert_eq!(handle2.state(), ConnectionState::Ready);
+    }
 }
