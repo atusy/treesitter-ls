@@ -287,6 +287,36 @@ pub(super) enum ParserProvider<'a> {
     Local(&'a mut HashMap<String, tree_sitter::Parser>),
 }
 
+impl ParserProvider<'_> {
+    /// Acquire a parser for the given language.
+    ///
+    /// - For `Pool`: delegates to `DocumentParserPool::acquire`
+    /// - For `Local`: removes the parser from the HashMap (takes ownership)
+    ///
+    /// Returns `None` if no parser is available for the language.
+    #[allow(dead_code)] // TODO: Remove after task 3.3 uses this method
+    pub fn acquire(&mut self, lang: &str) -> Option<tree_sitter::Parser> {
+        match self {
+            Self::Pool(pool) => pool.acquire(lang),
+            Self::Local(map) => map.remove(lang),
+        }
+    }
+
+    /// Release a parser back to its source.
+    ///
+    /// - For `Pool`: delegates to `DocumentParserPool::release`
+    /// - For `Local`: inserts the parser back into the HashMap
+    #[allow(dead_code)] // TODO: Remove after task 3.3 uses this method
+    pub fn release(&mut self, lang: String, parser: tree_sitter::Parser) {
+        match self {
+            Self::Pool(pool) => pool.release(lang, parser),
+            Self::Local(map) => {
+                map.insert(lang, parser);
+            }
+        }
+    }
+}
+
 /// Recursively collect semantic tokens from a document and its injections.
 ///
 /// This function processes the given text and tree, collecting tokens from both
@@ -471,5 +501,55 @@ mod tests {
                 ParserProvider::Local(_) => {}
             }
         }
+    }
+
+    #[test]
+    fn test_parser_provider_local_acquire_release() {
+        // Test that Local variant correctly takes and returns parsers
+        let mut parsers: HashMap<String, tree_sitter::Parser> = HashMap::new();
+        parsers.insert("lua".to_string(), tree_sitter::Parser::new());
+
+        let mut provider = ParserProvider::Local(&mut parsers);
+
+        // Acquire should remove from map
+        let parser = provider.acquire("lua");
+        assert!(
+            parser.is_some(),
+            "acquire should return Some for existing lang"
+        );
+
+        // Map should now be empty
+        if let ParserProvider::Local(map) = &provider {
+            assert!(
+                map.get("lua").is_none(),
+                "parser should be removed from map"
+            );
+        }
+
+        // Acquire again should return None (parser was taken)
+        let parser2 = provider.acquire("lua");
+        assert!(parser2.is_none(), "second acquire should return None");
+
+        // Release should put it back
+        provider.release("lua".to_string(), parser.unwrap());
+
+        // Now acquire should work again
+        let parser3 = provider.acquire("lua");
+        assert!(
+            parser3.is_some(),
+            "acquire after release should return Some"
+        );
+    }
+
+    #[test]
+    fn test_parser_provider_local_acquire_nonexistent() {
+        let mut parsers: HashMap<String, tree_sitter::Parser> = HashMap::new();
+        let mut provider = ParserProvider::Local(&mut parsers);
+
+        let parser = provider.acquire("nonexistent");
+        assert!(
+            parser.is_none(),
+            "acquire for nonexistent lang should return None"
+        );
     }
 }
