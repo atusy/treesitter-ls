@@ -324,9 +324,13 @@ impl BridgeCoordinator {
                 );
 
                 // Fire-and-forget spawn - handshake runs in background
-                self.pool
-                    .ensure_server_ready(&resolved.server_name, &resolved.config)
-                    .await;
+                let pool = self.pool_arc();
+                let server_name = resolved.server_name.clone();
+                let config = resolved.config.clone();
+
+                tokio::spawn(async move {
+                    let _ = pool.ensure_server_ready(&server_name, &config).await;
+                });
             }
         }
     }
