@@ -29,7 +29,8 @@ mod shutdown_timeout;
 #[cfg(test)]
 pub(super) mod test_helpers;
 
-use connection_action::{ConnectionAction, ERR_SERVER_INITIALIZING, decide_connection_action};
+pub(crate) use connection_action::BridgeError;
+use connection_action::{ConnectionAction, decide_connection_action};
 use handshake::perform_lsp_handshake;
 
 pub(crate) use connection_handle::ConnectionHandle;
@@ -538,8 +539,13 @@ impl LanguageServerPool {
         {
             Ok(handle) => Ok(handle),
             Err(e) => {
-                // Check if error is due to server still initializing
-                if e.to_string() == ERR_SERVER_INITIALIZING {
+                // Check if error is due to server still initializing using type-safe matching
+                let is_initializing = e
+                    .get_ref()
+                    .and_then(|inner| inner.downcast_ref::<BridgeError>())
+                    .is_some_and(BridgeError::is_initializing);
+
+                if is_initializing {
                     // Get the handle from pool and wait for it to be ready
                     let handle = {
                         let connections = self.connections.lock().await;
@@ -614,9 +620,9 @@ impl LanguageServerPool {
                     "Invariant violation: Connection expected for ReturnExisting action",
                 )));
             }
-            ConnectionAction::FailFast(msg) => {
+            ConnectionAction::FailFast(err) => {
                 // Log once when server is disabled due to repeated panics
-                if msg.contains("repeated handshake failures") {
+                if matches!(err, BridgeError::Disabled) {
                     log::error!(
                         target: "kakehashi::bridge::connection",
                         "[{}] Server disabled after {} consecutive handshake panics (max: {})",
@@ -625,7 +631,7 @@ impl LanguageServerPool {
                         connection_action::MAX_CONSECUTIVE_PANICS
                     );
                 }
-                return Err(io::Error::other(msg));
+                return Err(err.into());
             }
             ConnectionAction::SpawnNew => {
                 // Remove stale connection if present (Failed or Closed state)
