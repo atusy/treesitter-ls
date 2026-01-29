@@ -35,7 +35,7 @@ use url::Url;
 
 use crate::analysis::{LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::config::WorkspaceSettings;
-use crate::document::DocumentStore;
+use crate::document::{DocumentStore, get_language_for_document};
 use crate::language::LanguageEvent;
 use crate::language::injection::{InjectionResolver, collect_all_injections};
 use crate::language::region_id_tracker::EditInfo;
@@ -749,6 +749,36 @@ impl Kakehashi {
             }
         }
     }
+
+    /// Eagerly spawn bridge servers for detected injection languages.
+    ///
+    /// This warms up language servers (spawn + handshake) in the background for
+    /// any injection regions found in the document. The servers will be ready
+    /// to handle requests (hover, completion, etc.) without first-request latency.
+    ///
+    /// This must be called AFTER parse_document so we have access to the AST.
+    async fn eager_spawn_bridge_servers(&self, uri: &Url) {
+        // Get the host language for this document
+        let host_language = match get_language_for_document(uri, &self.language, &self.documents) {
+            Some(name) => name,
+            None => return,
+        };
+
+        // Get unique injected languages from the document
+        let languages = get_injected_languages(uri, &self.language, &self.documents);
+
+        if languages.is_empty() {
+            return;
+        }
+
+        // Get current settings for server config lookup
+        let settings = self.settings_manager.load_settings();
+
+        // Spawn servers for each detected injection language
+        self.bridge
+            .eager_spawn_servers(&settings, &host_language, languages)
+            .await;
+    }
 }
 
 impl LanguageServer for Kakehashi {
@@ -1007,6 +1037,10 @@ impl LanguageServer for Kakehashi {
         // This must be called AFTER parse_document so we have access to the AST
         self.check_injected_languages_auto_install(&uri).await;
 
+        // Eagerly spawn bridge servers for detected injection languages.
+        // This warms up servers in the background so they're ready for first request.
+        self.eager_spawn_bridge_servers(&uri).await;
+
         // NOTE: No semantic_tokens_refresh() on didOpen.
         // Capable LSP clients should request by themselves.
         // Calling refresh would be redundant and can cause deadlocks with clients
@@ -1126,6 +1160,10 @@ impl LanguageServer for Kakehashi {
         // Check for injected languages and trigger auto-install for missing parsers
         // This must be called AFTER parse_document so we have access to the updated AST
         self.check_injected_languages_auto_install(&uri).await;
+
+        // Eagerly spawn bridge servers for any new injection languages.
+        // When users add new code blocks, the server warms up immediately.
+        self.eager_spawn_bridge_servers(&uri).await;
 
         // NOTE: We intentionally do NOT call semantic_tokens_refresh() here.
         // LSP clients already request new tokens after didChange (via semanticTokens/full/delta).

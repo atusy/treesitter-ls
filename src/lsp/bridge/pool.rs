@@ -475,6 +475,39 @@ impl LanguageServerPool {
         )
         .await
     }
+
+    /// Eagerly ensure a server is spawned and its handshake is in progress.
+    ///
+    /// This method spawns the language server process and starts the LSP handshake
+    /// in a background task, but does NOT:
+    /// - Wait for the handshake to complete
+    /// - Send didOpen notifications
+    /// - Block on any response
+    ///
+    /// Use this to warm up language servers proactively when injections are detected,
+    /// eliminating first-request latency for downstream LSP features.
+    ///
+    /// This method is idempotent - calling it multiple times for the same server
+    /// will only spawn the server once.
+    ///
+    /// # Arguments
+    /// * `server_name` - The server name from config (e.g., "lua-ls", "pyright")
+    /// * `server_config` - The server configuration containing command
+    pub(crate) async fn ensure_server_ready(
+        &self,
+        server_name: &str,
+        server_config: &crate::config::settings::BridgeServerConfig,
+    ) {
+        // Fire-and-forget: spawn the server if needed, ignore result
+        // Errors (spawn failure, connection exists) are logged internally
+        let _ = self
+            .get_or_create_connection_with_timeout(
+                server_name,
+                server_config,
+                Duration::from_secs(INIT_TIMEOUT_SECS),
+            )
+            .await;
+    }
 }
 
 impl LanguageServerPool {
@@ -2814,5 +2847,96 @@ mod tests {
                 "Connection should remain Ready after close_host_document"
             );
         }
+    }
+
+    // ============================================================
+    // Eager Spawn Tests
+    // ============================================================
+
+    /// Test that ensure_server_ready spawns a server and stores it in the pool.
+    ///
+    /// This test verifies the eager spawn behavior:
+    /// 1. Connection entry is created and stored in pool
+    /// 2. State may be Initializing or Failed (devnull doesn't respond, so it times out)
+    /// 3. No didOpen is sent (that happens lazily on first request)
+    ///
+    /// Note: With devnull_config, the handshake will fail because the mock server
+    /// doesn't respond. This test verifies that spawning happens, not handshake success.
+    /// The real-server test below verifies the full Ready transition.
+    #[tokio::test]
+    async fn ensure_server_ready_spawns_connection_entry() {
+        let pool = LanguageServerPool::new();
+        let config = devnull_config();
+
+        // Before: no connection exists
+        {
+            let connections = pool.connections.lock().await;
+            assert!(!connections.contains_key("test-server"));
+        }
+
+        // Call ensure_server_ready - should spawn server
+        pool.ensure_server_ready("test-server", &config).await;
+
+        // After: connection entry exists (state may be Initializing or Failed)
+        // With devnull, the handshake times out quickly, so it transitions to Failed
+        {
+            let connections = pool.connections.lock().await;
+            assert!(
+                connections.contains_key("test-server"),
+                "Connection entry should be created by ensure_server_ready"
+            );
+            // We don't assert specific state because devnull's behavior varies:
+            // - May be Initializing if timeout hasn't elapsed yet
+            // - May be Failed if handshake timed out
+        }
+    }
+
+    /// Test that ensure_server_ready is idempotent - calling twice doesn't spawn a second server.
+    #[tokio::test]
+    async fn ensure_server_ready_is_idempotent() {
+        let pool = LanguageServerPool::new();
+        let config = devnull_config();
+
+        // Call twice
+        pool.ensure_server_ready("test-server", &config).await;
+        pool.ensure_server_ready("test-server", &config).await;
+
+        // Should still have exactly one connection
+        {
+            let connections = pool.connections.lock().await;
+            assert_eq!(connections.len(), 1, "Should have exactly one connection");
+        }
+    }
+
+    /// Test that ensure_server_ready with a real server eventually transitions to Ready.
+    #[tokio::test]
+    async fn ensure_server_ready_with_real_server_transitions_to_ready() {
+        if !lua_ls_available() {
+            return;
+        }
+
+        let pool = LanguageServerPool::new();
+        let config = lua_ls_config();
+
+        // Spawn server eagerly
+        pool.ensure_server_ready("lua-ls", &config).await;
+
+        // Wait for handshake to complete (up to 10 seconds)
+        let mut ready = false;
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let connections = pool.connections.lock().await;
+            if let Some(handle) = connections.get("lua-ls") {
+                if handle.state() == ConnectionState::Ready {
+                    ready = true;
+                    break;
+                }
+            }
+        }
+
+        assert!(
+            ready,
+            "Server should transition to Ready state after handshake"
+        );
     }
 }
