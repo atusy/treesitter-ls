@@ -3268,4 +3268,140 @@ mod tests {
         let result = transformed["result"].as_array().unwrap();
         assert!(result.is_empty());
     }
+
+    // ==========================================================================
+    // Edge case tests for diagnostic response transformation
+    // ==========================================================================
+
+    #[test]
+    fn diagnostic_response_missing_range_in_item_passes_through() {
+        // Diagnostic item without a range should be preserved (not panic)
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "message": "syntax error without range",
+                        "severity": 1
+                    }
+                ]
+            }
+        });
+        let context = test_context("unused", "unused", 5);
+
+        let transformed = transform_diagnostic_response_to_host(response, &context);
+
+        // Item should still exist with original message
+        let items = transformed["result"]["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["message"], "syntax error without range");
+        // No range was present, so none should be added
+        assert!(items[0].get("range").is_none());
+    }
+
+    #[test]
+    fn diagnostic_response_filters_related_info_with_virtual_uris() {
+        // Related information with virtual URIs should be filtered out
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 10 }
+                        },
+                        "message": "unused variable",
+                        "relatedInformation": [
+                            {
+                                "location": {
+                                    "uri": "file:///.kakehashi/lua/region-0/test.lua",
+                                    "range": {
+                                        "start": { "line": 5, "character": 0 },
+                                        "end": { "line": 5, "character": 5 }
+                                    }
+                                },
+                                "message": "this is a virtual URI - should be filtered"
+                            },
+                            {
+                                "location": {
+                                    "uri": "file:///real/file.lua",
+                                    "range": {
+                                        "start": { "line": 10, "character": 0 },
+                                        "end": { "line": 10, "character": 5 }
+                                    }
+                                },
+                                "message": "this is a real file URI - should be kept"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        let context = test_context("unused", "unused", 3);
+
+        let transformed = transform_diagnostic_response_to_host(response, &context);
+
+        let items = transformed["result"]["items"].as_array().unwrap();
+        let related = items[0]["relatedInformation"].as_array().unwrap();
+
+        // Only the real file URI entry should remain
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0]["location"]["uri"], "file:///real/file.lua");
+        // The range for the real file entry should be transformed
+        assert_eq!(related[0]["location"]["range"]["start"]["line"], 13); // 10 + 3
+    }
+
+    #[test]
+    fn position_transformation_with_large_line_numbers_uses_saturating_add() {
+        // Test that position transformation uses saturating_add for large line numbers
+        // This prevents panic from overflow when line + region_start_line > u64::MAX
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": u64::MAX - 10, "character": 0 },
+                            "end": { "line": u64::MAX - 5, "character": 10 }
+                        },
+                        "message": "diagnostic at very large line number"
+                    }
+                ]
+            }
+        });
+        let context = test_context("unused", "unused", 100);
+
+        // This should not panic due to overflow
+        let transformed = transform_diagnostic_response_to_host(response, &context);
+
+        // Values should saturate at u64::MAX
+        let items = transformed["result"]["items"].as_array().unwrap();
+        assert_eq!(items[0]["range"]["start"]["line"], u64::MAX);
+        assert_eq!(items[0]["range"]["end"]["line"], u64::MAX);
+    }
+
+    #[test]
+    fn range_transformation_with_near_max_line_saturates() {
+        // Test transform_range directly with values that would overflow
+        let mut range = json!({
+            "start": { "line": u64::MAX - 5, "character": 0 },
+            "end": { "line": u64::MAX - 3, "character": 10 }
+        });
+
+        // Adding 10 would overflow, should saturate to MAX
+        transform_range(&mut range, 10);
+
+        assert_eq!(range["start"]["line"], u64::MAX);
+        assert_eq!(range["end"]["line"], u64::MAX);
+        // Characters should be unchanged
+        assert_eq!(range["start"]["character"], 0);
+        assert_eq!(range["end"]["character"], 10);
+    }
 }
