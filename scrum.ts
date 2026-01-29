@@ -53,7 +53,7 @@ const scrum: ScrumDashboard = {
     number: 17,
     pbi_id: "pbi-diagnostic-multi-region",
     goal: "Implement multi-region diagnostic aggregation with fan-out parallel queries and timeout handling",
-    status: "in_progress",
+    status: "review",
     subtasks: [
       {
         test: "Test parallel fan-out sends diagnostic requests to all regions concurrently",
@@ -83,9 +83,9 @@ const scrum: ScrumDashboard = {
         test: "E2E test verifies multi-region aggregation",
         implementation: "Add test with multiple Lua code blocks to e2e_lsp_lua_diagnostic.rs",
         type: "behavioral",
-        status: "pending",
+        status: "green",
         commits: [],
-        notes: ["Test document with 2+ Lua injection regions returns aggregated diagnostics"],
+        notes: ["Test document with 3 Lua injection regions verifies aggregated 'full' report with items array"],
       },
     ],
   },
