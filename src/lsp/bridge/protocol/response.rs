@@ -609,7 +609,7 @@ pub(crate) fn transform_diagnostic_response_to_host(
     // Transform diagnostic items
     if let Some(items) = result.get_mut("items").and_then(|i| i.as_array_mut()) {
         for item in items.iter_mut() {
-            transform_diagnostic_item(item, context.request_region_start_line);
+            transform_diagnostic_item(item, context.request_region_start_line, &context.request_host_uri);
         }
     }
 
@@ -625,7 +625,12 @@ pub(crate) fn transform_diagnostic_response_to_host(
 ///
 /// Also transforms relatedInformation locations if present, filtering out entries
 /// that reference virtual URIs (which clients cannot resolve).
-fn transform_diagnostic_item(item: &mut serde_json::Value, region_start_line: u32) {
+///
+/// # Arguments
+/// * `item` - The diagnostic item to transform
+/// * `region_start_line` - Line offset to add to ranges
+/// * `host_uri` - The host document URI; only related info matching this URI gets transformed
+fn transform_diagnostic_item(item: &mut serde_json::Value, region_start_line: u32, host_uri: &str) {
     // Transform the main diagnostic range
     if let Some(range) = item.get_mut("range") {
         transform_range(range, region_start_line);
@@ -636,7 +641,7 @@ fn transform_diagnostic_item(item: &mut serde_json::Value, region_start_line: u3
     if let Some(related_info) = item.get_mut("relatedInformation")
         && let Some(info_arr) = related_info.as_array_mut()
     {
-        // Filter out entries with virtual URIs, transform the rest
+        // Filter out entries with virtual URIs, transform matching host URIs
         info_arr.retain_mut(|info| {
             // Check if the URI is a virtual URI - if so, filter it out
             if let Some(location) = info.get("location")
@@ -647,9 +652,17 @@ fn transform_diagnostic_item(item: &mut serde_json::Value, region_start_line: u3
                     // Virtual URI - filter out this entry
                     return false;
                 }
+
+                // Only transform ranges for entries that reference the same host document.
+                // Related info pointing to other files (e.g., imported modules) should
+                // keep their original coordinates since they're not in the injection region.
+                if uri_str != host_uri {
+                    // Different file - keep entry but don't transform its range
+                    return true;
+                }
             }
 
-            // Transform the range for entries we keep (real file URIs)
+            // Transform the range for entries matching the host document
             if let Some(location) = info.get_mut("location")
                 && let Some(range) = location.get_mut("range")
             {
@@ -3128,7 +3141,8 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_response_transforms_related_information_locations() {
+    fn diagnostic_response_transforms_related_information_locations_for_same_host() {
+        // Related info pointing to same file as host should be transformed
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -3144,7 +3158,7 @@ mod tests {
                         "relatedInformation": [
                             {
                                 "location": {
-                                    "uri": "file:///test.lua",
+                                    "uri": "file:///test.md",
                                     "range": {
                                         "start": { "line": 5, "character": 0 },
                                         "end": { "line": 5, "character": 5 }
@@ -3157,7 +3171,8 @@ mod tests {
                 ]
             }
         });
-        let context = test_context("unused", "unused", 3);
+        // Host URI matches the related info URI
+        let context = test_context("unused", "file:///test.md", 3);
 
         let transformed = transform_diagnostic_response_to_host(response, &context);
 
@@ -3168,9 +3183,59 @@ mod tests {
         // Main diagnostic range transformed
         assert_eq!(items[0]["range"]["start"]["line"], 3);
 
-        // Related information location range transformed
+        // Related information location range transformed (same host file)
         assert_eq!(related[0]["location"]["range"]["start"]["line"], 8); // 5 + 3
         assert_eq!(related[0]["location"]["range"]["end"]["line"], 8);
+    }
+
+    #[test]
+    fn diagnostic_response_preserves_related_info_for_different_file() {
+        // Related info pointing to a different file should NOT be transformed
+        // (e.g., referencing an imported module)
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 10 }
+                        },
+                        "message": "type mismatch",
+                        "relatedInformation": [
+                            {
+                                "location": {
+                                    "uri": "file:///other_module.lua",
+                                    "range": {
+                                        "start": { "line": 5, "character": 0 },
+                                        "end": { "line": 5, "character": 5 }
+                                    }
+                                },
+                                "message": "expected type defined here"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        // Host URI is different from related info URI
+        let context = test_context("unused", "file:///test.md", 3);
+
+        let transformed = transform_diagnostic_response_to_host(response, &context);
+
+        let items = transformed["result"]["items"].as_array().unwrap();
+        let related = items[0]["relatedInformation"].as_array().unwrap();
+        assert_eq!(related.len(), 1);
+
+        // Main diagnostic range transformed
+        assert_eq!(items[0]["range"]["start"]["line"], 3);
+
+        // Related info pointing to different file should NOT be transformed
+        assert_eq!(related[0]["location"]["uri"], "file:///other_module.lua");
+        assert_eq!(related[0]["location"]["range"]["start"]["line"], 5); // unchanged!
+        assert_eq!(related[0]["location"]["range"]["end"]["line"], 5);
     }
 
     #[test]
