@@ -120,13 +120,12 @@ impl SyntheticDiagnosticsManager {
         self.active_tasks.clear();
     }
 
-    /// Remove the entry for a document without aborting.
+    /// Remove the entry for a document and abort any active task.
     ///
-    /// Called when a document is closed - no need to abort since the task
-    /// will check document validity before publishing anyway.
+    /// Called when a document is closed. The task is aborted since publishing
+    /// diagnostics for a closed document would be wasteful.
     pub(crate) fn remove_document(&self, uri: &Url) {
         if let Some((_, handle)) = self.active_tasks.remove(uri) {
-            // Abort the task since the document is closed
             handle.abort();
             log::debug!(
                 target: "kakehashi::synthetic_diag",
