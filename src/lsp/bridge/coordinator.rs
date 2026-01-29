@@ -317,7 +317,7 @@ impl BridgeCoordinator {
             // Look up server config for this injection language
             if let Some(resolved) = self.get_config_for_language(settings, host_language, lang) {
                 log::debug!(
-                    target: "kakehashi::bridge::eager_spawn",
+                    target: "kakehashi::bridge",
                     "Warming up {} server for {} injection",
                     resolved.server_name,
                     lang
