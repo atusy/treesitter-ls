@@ -4,6 +4,7 @@ mod cache;
 mod client;
 pub(crate) mod in_progress_set;
 mod settings_manager;
+mod synthetic_diagnostics;
 mod text_sync;
 
 mod lsp_impl;

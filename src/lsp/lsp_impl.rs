@@ -16,20 +16,21 @@ use tower_lsp_server::ls_types::{
     CompletionOptions, CompletionParams, CompletionResponse, DeclarationCapability,
     DiagnosticOptions, DiagnosticServerCapabilities, DidChangeConfigurationParams,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentDiagnosticParams, DocumentDiagnosticReportResult, DocumentHighlight,
-    DocumentHighlightParams, DocumentLink, DocumentLinkOptions, DocumentLinkParams,
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    Hover, HoverParams, HoverProviderCapability, ImplementationProviderCapability,
-    InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location,
-    Moniker, MonikerParams, OneOf, ReferenceParams, RenameParams, SaveOptions, SelectionRange,
-    SelectionRangeParams, SelectionRangeProviderCapability, SemanticTokenModifier,
-    SemanticTokenType, SemanticTokensDeltaParams, SemanticTokensFullDeltaResult,
-    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
-    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
-    SignatureHelpOptions, SignatureHelpParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TypeDefinitionProviderCapability, Uri,
-    WorkDoneProgressOptions, WorkspaceEdit,
+    DidSaveTextDocumentParams, DocumentDiagnosticParams, DocumentDiagnosticReportResult,
+    DocumentHighlight, DocumentHighlightParams, DocumentLink, DocumentLinkOptions,
+    DocumentLinkParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
+    ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
+    InlayHint, InlayHintParams, Location, Moniker, MonikerParams, OneOf, ReferenceParams,
+    RenameParams, SaveOptions, SelectionRange, SelectionRangeParams,
+    SelectionRangeProviderCapability, SemanticTokenModifier, SemanticTokenType,
+    SemanticTokensDeltaParams, SemanticTokensFullDeltaResult, SemanticTokensFullOptions,
+    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensRangeParams,
+    SemanticTokensRangeResult, SemanticTokensResult, SemanticTokensServerCapabilities,
+    ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, TypeDefinitionProviderCapability, Uri, WorkDoneProgressOptions,
+    WorkspaceEdit,
 };
 use tower_lsp_server::{Client, LanguageServer};
 use tree_sitter::InputEdit;
@@ -54,6 +55,7 @@ use super::auto_install::{
     AutoInstallManager, InstallEvent, InstallingLanguages, get_injected_languages,
 };
 use super::cache::CacheCoordinator;
+use super::synthetic_diagnostics::SyntheticDiagnosticsManager;
 
 /// Convert ls_types::Uri to url::Url
 ///
@@ -115,6 +117,8 @@ pub struct Kakehashi {
     auto_install: AutoInstallManager,
     /// Bridge coordinator for downstream LS pool and region ID tracking
     bridge: BridgeCoordinator,
+    /// Manager for synthetic (background) diagnostic push tasks (ADR-0020 Phase 2)
+    synthetic_diagnostics: SyntheticDiagnosticsManager,
 }
 
 impl std::fmt::Debug for Kakehashi {
@@ -128,6 +132,7 @@ impl std::fmt::Debug for Kakehashi {
             .field("settings_manager", &"SettingsManager")
             .field("auto_install", &"AutoInstallManager")
             .field("bridge", &"BridgeCoordinator")
+            .field("synthetic_diagnostics", &"SyntheticDiagnosticsManager")
             .finish_non_exhaustive()
     }
 }
@@ -150,6 +155,7 @@ impl Kakehashi {
             settings_manager: SettingsManager::new(),
             auto_install,
             bridge: BridgeCoordinator::new(),
+            synthetic_diagnostics: SyntheticDiagnosticsManager::new(),
         }
     }
 
@@ -181,6 +187,7 @@ impl Kakehashi {
             settings_manager: SettingsManager::new(),
             auto_install,
             bridge: BridgeCoordinator::with_cancel_forwarder(pool, cancel_forwarder),
+            synthetic_diagnostics: SyntheticDiagnosticsManager::new(),
         }
     }
 
@@ -786,6 +793,162 @@ impl Kakehashi {
             .eager_spawn_servers(&settings, &host_language, languages)
             .await;
     }
+
+    /// Spawn a background task to collect and publish diagnostics.
+    ///
+    /// ADR-0020 Phase 2: Synthetic push on didSave/didOpen.
+    ///
+    /// The task:
+    /// 1. Registers itself with `SyntheticDiagnosticsManager` (superseding any previous task)
+    /// 2. Collects diagnostics via `collect_diagnostics_for_uri()`
+    /// 3. Verifies document still exists (not closed during collection)
+    /// 4. Publishes diagnostics via `textDocument/publishDiagnostics`
+    ///
+    /// # Arguments
+    /// * `uri` - The document URI (url::Url for internal use)
+    /// * `lsp_uri` - The document URI (ls_types::Uri for LSP notification)
+    fn spawn_synthetic_diagnostic_task(&self, uri: Url, lsp_uri: Uri) {
+        // Clone what we need for the background task
+        let client = self.client.clone();
+
+        // Get snapshot data before spawning (extracts all necessary data synchronously)
+        let snapshot_data = self.prepare_diagnostic_snapshot(&uri);
+        let bridge_pool = self.bridge.pool_arc();
+        let uri_clone = uri.clone();
+
+        // Spawn the background task
+        let task = tokio::spawn(async move {
+            // Collect diagnostics
+            let Some((_language_name, _all_regions, request_infos)) = snapshot_data else {
+                log::debug!(
+                    target: "kakehashi::synthetic_diag",
+                    "No diagnostics to collect for {} (no snapshot data)",
+                    uri_clone
+                );
+                return;
+            };
+
+            if request_infos.is_empty() {
+                log::debug!(
+                    target: "kakehashi::synthetic_diag",
+                    "No bridge configs for any injection regions in {}",
+                    uri_clone
+                );
+                // Publish empty diagnostics to clear any previous
+                client.publish_diagnostics(lsp_uri, Vec::new(), None).await;
+                return;
+            }
+
+            // Fan-out diagnostic requests
+            let diagnostics = text_document::diagnostic::fan_out_diagnostic_requests_static(
+                &bridge_pool,
+                &uri_clone,
+                request_infos,
+            )
+            .await;
+
+            log::debug!(
+                target: "kakehashi::synthetic_diag",
+                "Collected {} diagnostics for {}",
+                diagnostics.len(),
+                uri_clone
+            );
+
+            // Publish diagnostics
+            client.publish_diagnostics(lsp_uri, diagnostics, None).await;
+        });
+
+        // Register the task (superseding any previous task for this document)
+        self.synthetic_diagnostics
+            .register_task(uri, task.abort_handle());
+    }
+
+    /// Prepare diagnostic snapshot data for a background task.
+    ///
+    /// This extracts all necessary data synchronously before spawning,
+    /// avoiding lifetime issues with `self` references in async tasks.
+    ///
+    /// Returns `None` if the document doesn't exist or has no injection regions.
+    fn prepare_diagnostic_snapshot(
+        &self,
+        uri: &Url,
+    ) -> Option<(
+        String,
+        Vec<crate::language::injection::ResolvedInjection>,
+        Vec<text_document::diagnostic::DiagnosticRequestInfoOwned>,
+    )> {
+        // Get document snapshot
+        let snapshot = {
+            let doc = self.documents.get(uri)?;
+            doc.snapshot()?
+        };
+
+        // Get language for document
+        let language_name = self.get_language_for_document(uri)?;
+
+        // Get injection query
+        let injection_query = self.language.get_injection_query(&language_name)?;
+
+        // Collect all injection regions
+        let all_regions = crate::language::InjectionResolver::resolve_all(
+            &self.language,
+            self.bridge.region_id_tracker(),
+            uri,
+            snapshot.tree(),
+            snapshot.text(),
+            injection_query.as_ref(),
+        );
+
+        if all_regions.is_empty() {
+            return Some((language_name, Vec::new(), Vec::new()));
+        }
+
+        // Build request infos (owned version for background task)
+        let request_infos = self.build_diagnostic_request_infos_owned(&language_name, &all_regions);
+
+        Some((language_name, all_regions, request_infos))
+    }
+
+    /// Build owned DiagnosticRequestInfo for background tasks.
+    ///
+    /// Similar to `build_diagnostic_request_infos` but returns owned data
+    /// that can be moved to a background task.
+    fn build_diagnostic_request_infos_owned(
+        &self,
+        language_name: &str,
+        all_regions: &[crate::language::injection::ResolvedInjection],
+    ) -> Vec<text_document::diagnostic::DiagnosticRequestInfoOwned> {
+        use std::sync::Arc;
+
+        let mut config_cache: std::collections::HashMap<
+            String,
+            Arc<crate::config::settings::BridgeServerConfig>,
+        > = std::collections::HashMap::with_capacity(2);
+        let mut request_infos = Vec::with_capacity(all_regions.len());
+
+        for resolved in all_regions {
+            if let Some(resolved_config) =
+                self.get_bridge_config_for_language(language_name, &resolved.injection_language)
+            {
+                let server_name = resolved_config.server_name.clone();
+                let config_arc = config_cache
+                    .entry(server_name.clone())
+                    .or_insert_with(|| Arc::new(resolved_config.config.clone()))
+                    .clone();
+
+                request_infos.push(text_document::diagnostic::DiagnosticRequestInfoOwned {
+                    server_name,
+                    config: config_arc,
+                    injection_language: resolved.injection_language.clone(),
+                    region_id: resolved.region.region_id.clone(),
+                    region_start_line: resolved.region.line_range.start,
+                    virtual_content: resolved.virtual_content.clone(),
+                });
+            }
+        }
+
+        request_infos
+    }
 }
 
 impl LanguageServer for Kakehashi {
@@ -954,6 +1117,9 @@ impl LanguageServer for Kakehashi {
             );
         }
 
+        // Abort all synthetic diagnostic tasks (ADR-0020 Phase 2)
+        self.synthetic_diagnostics.abort_all();
+
         // Graceful shutdown of all downstream language server connections (ADR-0017)
         // - Transitions to Closing state, sends LSP shutdown/exit handshake
         // - Escalates to SIGTERM/SIGKILL for unresponsive servers (Unix)
@@ -1044,6 +1210,11 @@ impl LanguageServer for Kakehashi {
         // This must be called AFTER parse_document so we have access to the AST.
         self.process_injected_languages(&uri).await;
 
+        // ADR-0020 Phase 2: Trigger synthetic diagnostic push on didOpen
+        // This provides proactive diagnostics for clients that don't support pull diagnostics.
+        // Note: We use the already-cloned lsp_uri here (it was cloned at the start of the method).
+        self.spawn_synthetic_diagnostic_task(uri, lsp_uri);
+
         // NOTE: No semantic_tokens_refresh() on didOpen.
         // Capable LSP clients should request by themselves.
         // Calling refresh would be redundant and can cause deadlocks with clients
@@ -1070,6 +1241,9 @@ impl LanguageServer for Kakehashi {
 
         // Clean up region ID mappings for this document (ADR-0019)
         self.bridge.cleanup(&uri);
+
+        // Abort any in-progress synthetic diagnostic task for this document (ADR-0020 Phase 2)
+        self.synthetic_diagnostics.remove_document(&uri);
 
         // Close all virtual documents associated with this host document
         // This sends didClose notifications to downstream language servers
@@ -1171,6 +1345,31 @@ impl LanguageServer for Kakehashi {
         // like vim-lsp on Vim, which cannot respond to server requests while processing.
 
         self.notifier().log_info("file changed!").await;
+    }
+
+    /// Handle textDocument/didSave notification.
+    ///
+    /// ADR-0020 Phase 2: Triggers synthetic diagnostic push.
+    /// Collects diagnostics from downstream servers and publishes via publishDiagnostics.
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        let lsp_uri = params.text_document.uri;
+
+        // Convert ls_types::Uri to url::Url for internal use
+        let Ok(uri) = uri_to_url(&lsp_uri) else {
+            log::warn!("Invalid URI in didSave: {}", lsp_uri.as_str());
+            return;
+        };
+
+        log::debug!(
+            target: "kakehashi::synthetic_diag",
+            "didSave received for {}",
+            uri
+        );
+
+        // Spawn background task for synthetic diagnostic collection
+        self.spawn_synthetic_diagnostic_task(uri, lsp_uri);
+
+        self.notifier().log_info("file saved!").await;
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {

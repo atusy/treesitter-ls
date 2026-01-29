@@ -314,6 +314,72 @@ impl LspClient {
         self.receive_response_for_id(expected_id)
     }
 
+    /// Wait for a notification with a specific method name.
+    ///
+    /// Returns the notification params if received within the timeout,
+    /// or None if timeout occurs without receiving the expected notification.
+    /// Skips other notifications and server-to-client requests while waiting.
+    pub(crate) fn wait_for_notification(
+        &mut self,
+        expected_method: &str,
+        timeout: Duration,
+    ) -> Option<Value> {
+        let start_time = Instant::now();
+
+        loop {
+            // Check timeout
+            if start_time.elapsed() > timeout {
+                return None;
+            }
+
+            // Use a short poll timeout to check the overall timeout frequently
+            let remaining = timeout.saturating_sub(start_time.elapsed());
+            if remaining.is_zero() {
+                return None;
+            }
+
+            // Try to read a message with remaining timeout
+            if let Some(message) =
+                self.try_receive_message(remaining.min(Duration::from_millis(100)))
+            {
+                // Check if this is the notification we're waiting for
+                // Notifications have no "id" field and must match the expected method
+                if message.get("id").is_none()
+                    && message.get("method").and_then(|m| m.as_str()) == Some(expected_method)
+                {
+                    return message.get("params").cloned();
+                }
+                // Otherwise it's a response or server-to-client request, skip it
+            }
+        }
+    }
+
+    /// Try to receive a message with a timeout, returning None if no message available.
+    fn try_receive_message(&mut self, timeout: Duration) -> Option<Value> {
+        let start_time = Instant::now();
+
+        // Set non-blocking mode for polling (platform-specific)
+        // For simplicity, we'll use a spin loop with short sleeps
+        while start_time.elapsed() < timeout {
+            // Check if data is available by peeking at the buffer
+            if !self.stdout.buffer().is_empty() {
+                // Data available, read the message
+                return Some(self.receive_message());
+            }
+
+            // Try to fill the buffer with available data
+            let _ = self.stdout.fill_buf();
+            if !self.stdout.buffer().is_empty() {
+                return Some(self.receive_message());
+            }
+
+            // No data yet, sleep briefly and retry
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        None
+    }
+
     /// Check if the server process is still running.
     pub(crate) fn is_running(&mut self) -> bool {
         self.child
