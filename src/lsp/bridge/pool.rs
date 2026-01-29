@@ -2931,10 +2931,14 @@ mod tests {
     /// Note: With devnull_config, the handshake will fail because the mock server
     /// doesn't respond. This test verifies that spawning happens, not handshake success.
     /// The real-server test below verifies the full Ready transition.
+    ///
+    /// Uses a short timeout to avoid test slowness with devnull
+    /// (ensure_server_ready uses 30s which causes slow test runtime).
     #[tokio::test]
     async fn ensure_server_ready_spawns_connection_entry() {
         let pool = LanguageServerPool::new();
         let config = devnull_config();
+        let short_timeout = Duration::from_millis(100);
 
         // Before: no connection exists
         {
@@ -2942,8 +2946,10 @@ mod tests {
             assert!(!connections.contains_key("test-server"));
         }
 
-        // Call ensure_server_ready - should spawn server
-        pool.ensure_server_ready("test-server", &config).await;
+        // Spawn server (ignoring errors like ensure_server_ready does)
+        let _ = pool
+            .get_or_create_connection_with_timeout("test-server", &config, short_timeout)
+            .await;
 
         // After: connection entry exists (state may be Initializing or Failed)
         // With devnull, the handshake times out quickly, so it transitions to Failed
