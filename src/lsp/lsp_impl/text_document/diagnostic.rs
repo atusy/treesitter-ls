@@ -41,8 +41,8 @@ use super::super::{Kakehashi, uri_to_url};
 /// Per-request timeout for diagnostic fan-out (ADR-0020).
 ///
 /// Used by both pull diagnostics (textDocument/diagnostic) and
-/// synthetic push diagnostics (didSave/didOpen triggered).
-pub(super) const DIAGNOSTIC_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// synthetic push diagnostics (didSave/didOpen/didChange triggered).
+pub(crate) const DIAGNOSTIC_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Information needed to send a diagnostic request for one injection region.
 ///
@@ -52,21 +52,21 @@ pub(super) const DIAGNOSTIC_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// Uses Arc for config to avoid cloning large structs for each region - multiple
 /// regions using the same language server share the same config Arc.
-pub(super) struct DiagnosticRequestInfo {
+pub(crate) struct DiagnosticRequestInfo {
     /// Name of the downstream language server (e.g., "lua-language-server")
-    pub(super) server_name: String,
+    pub(crate) server_name: String,
     /// Shared reference to the bridge server configuration
-    pub(super) config: Arc<BridgeServerConfig>,
+    pub(crate) config: Arc<BridgeServerConfig>,
     /// Language of the injection region (e.g., "lua", "python")
-    pub(super) injection_language: String,
+    pub(crate) injection_language: String,
     /// Unique identifier for this injection region within the host document
-    pub(super) region_id: String,
+    pub(crate) region_id: String,
     /// Starting line of the injection region in the host document (0-indexed)
     /// Used to transform diagnostic positions back to host coordinates
-    pub(super) region_start_line: u32,
+    pub(crate) region_start_line: u32,
     /// The extracted content of the injection region, formatted as a virtual document
     /// This is what gets sent to the downstream language server for analysis
-    pub(super) virtual_content: String,
+    pub(crate) virtual_content: String,
 }
 
 /// Send a diagnostic request with timeout, returning parsed diagnostics or None on failure.
@@ -82,7 +82,7 @@ pub(super) struct DiagnosticRequestInfo {
 /// * `previous_result_id` - Optional result ID for unchanged detection
 /// * `timeout` - Request timeout duration
 /// * `log_target` - Logging target (e.g., "kakehashi::diagnostic")
-pub(super) async fn send_diagnostic_with_timeout(
+pub(crate) async fn send_diagnostic_with_timeout(
     pool: &LanguageServerPool,
     info: &DiagnosticRequestInfo,
     uri: &Url,

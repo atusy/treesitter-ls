@@ -5,7 +5,7 @@ mod color_presentation;
 mod completion;
 mod declaration;
 mod definition;
-mod diagnostic;
+pub(crate) mod diagnostic;
 mod publish_diagnostic;
 #[cfg(feature = "experimental")]
 mod document_color;

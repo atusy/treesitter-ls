@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed |
+| **Status** | Accepted (Phases 1-3 Implemented) |
 | **Date** | 2026-01-29 |
 
 **Related**:
@@ -122,14 +122,21 @@ Extend Phase 1 to proactively publish diagnostics:
 
 This provides push-like UX for clients that don't support pull diagnostics, while using pull internally.
 
-#### Phase 3: Higher Frequency Diagnostics
+#### Phase 3: Higher Frequency Diagnostics (Implemented)
 
 Extend triggers for diagnostic refresh:
 
-- Debounced `didChange` (e.g., 500ms after last change)
-- Idle detection (e.g., 2s of no activity)
+- Debounced `didChange` (500ms after last change) - **Implemented**
+- Idle detection (e.g., 2s of no activity) - Deferred
 
 Same internal mechanism: pull from downstream, aggregate, publish.
+
+**Implementation Notes:**
+- `DebouncedDiagnosticsManager` tracks per-document debounce timers
+- Snapshot data is captured at schedule time for consistency
+- Timer cancellation on document close or new changes
+- Shares `SyntheticDiagnosticsManager` for task superseding
+- Debounce duration: 500ms (configurable via `DEFAULT_DEBOUNCE_DURATION`)
 
 #### Phase 4: Legacy Server Support
 

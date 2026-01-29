@@ -120,7 +120,10 @@ impl Kakehashi {
     /// avoiding lifetime issues with `self` references in async tasks.
     ///
     /// Returns `None` if the document doesn't exist or has no injection regions.
-    fn prepare_diagnostic_snapshot(&self, uri: &Url) -> Option<Vec<DiagnosticRequestInfo>> {
+    ///
+    /// Used by both immediate synthetic diagnostics (didSave/didOpen) and
+    /// debounced diagnostics (didChange).
+    pub(crate) fn prepare_diagnostic_snapshot(&self, uri: &Url) -> Option<Vec<DiagnosticRequestInfo>> {
         // Get document snapshot
         let snapshot = {
             let doc = self.documents.get(uri)?;
