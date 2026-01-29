@@ -35,7 +35,7 @@ use url::Url;
 
 use crate::analysis::{LEGEND_MODIFIERS, LEGEND_TYPES};
 use crate::config::WorkspaceSettings;
-use crate::document::{DocumentStore, get_language_for_document};
+use crate::document::DocumentStore;
 use crate::language::LanguageEvent;
 use crate::language::injection::{InjectionResolver, collect_all_injections};
 use crate::language::region_id_tracker::EditInfo;
@@ -759,7 +759,7 @@ impl Kakehashi {
     /// This must be called AFTER parse_document so we have access to the AST.
     async fn eager_spawn_bridge_servers(&self, uri: &Url) {
         // Get the host language for this document
-        let host_language = match get_language_for_document(uri, &self.language, &self.documents) {
+        let host_language = match self.get_language_for_document(uri) {
             Some(name) => name,
             None => return,
         };
