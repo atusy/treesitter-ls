@@ -8,6 +8,7 @@
 //! - Manages downstream language server connections via `LanguageServerPool`
 //! - Tracks stable ULID-based region IDs via `RegionIdTracker`
 //! - Provides bridge config lookup with wildcard resolution
+//! - Provides cancel notification support via `CancelForwarder`
 
 use std::sync::Arc;
 
@@ -19,6 +20,7 @@ use crate::config::{
     resolve_language_settings_with_wildcard, settings::BridgeServerConfig,
 };
 use crate::language::region_id_tracker::{EditInfo, RegionIdTracker};
+use crate::lsp::request_id::CancelForwarder;
 
 use super::LanguageServerPool;
 
@@ -75,25 +77,40 @@ pub(crate) struct ResolvedServerConfig {
 pub(crate) struct BridgeCoordinator {
     pool: Arc<LanguageServerPool>,
     region_id_tracker: RegionIdTracker,
+    /// Cancel forwarder for upstream cancel notification and downstream forwarding.
+    ///
+    /// This is shared with the `RequestIdCapture` middleware via `cancel_forwarder()`.
+    /// Handlers can subscribe to cancel notifications using `cancel_forwarder().subscribe()`.
+    cancel_forwarder: CancelForwarder,
 }
 
 impl BridgeCoordinator {
     /// Create a new bridge coordinator with fresh pool and tracker.
     pub(crate) fn new() -> Self {
-        Self {
-            pool: Arc::new(LanguageServerPool::new()),
-            region_id_tracker: RegionIdTracker::new(),
-        }
-    }
-
-    /// Create a bridge coordinator with an existing pool.
-    ///
-    /// This is used when the pool needs to be shared with external components
-    /// like the cancel forwarding middleware.
-    pub(crate) fn with_pool(pool: Arc<LanguageServerPool>) -> Self {
+        let pool = Arc::new(LanguageServerPool::new());
+        let cancel_forwarder = CancelForwarder::new(Arc::clone(&pool));
         Self {
             pool,
             region_id_tracker: RegionIdTracker::new(),
+            cancel_forwarder,
+        }
+    }
+
+    /// Create a bridge coordinator with an existing pool and cancel forwarder.
+    ///
+    /// This is used when the pool/forwarder needs to be shared with external components
+    /// like the cancel forwarding middleware.
+    ///
+    /// The `cancel_forwarder` MUST be created from the same `pool` to ensure cancel
+    /// notifications are properly routed.
+    pub(crate) fn with_cancel_forwarder(
+        pool: Arc<LanguageServerPool>,
+        cancel_forwarder: CancelForwarder,
+    ) -> Self {
+        Self {
+            pool,
+            region_id_tracker: RegionIdTracker::new(),
+            cancel_forwarder,
         }
     }
 
@@ -121,6 +138,15 @@ impl BridgeCoordinator {
     /// their own reference to the pool (e.g., diagnostic fan-out).
     pub(crate) fn pool_arc(&self) -> Arc<LanguageServerPool> {
         Arc::clone(&self.pool)
+    }
+
+    /// Access the cancel forwarder.
+    ///
+    /// Used by:
+    /// - `RequestIdCapture` middleware to receive the forwarder for the service layer
+    /// - Handlers that want to subscribe to cancel notifications via `subscribe()`
+    pub(crate) fn cancel_forwarder(&self) -> &CancelForwarder {
+        &self.cancel_forwarder
     }
 
     // ========================================

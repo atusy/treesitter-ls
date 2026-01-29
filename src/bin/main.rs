@@ -534,15 +534,23 @@ async fn run_lsp_server() {
     let stdin = stdin();
     let stdout = stdout();
 
-    // Create shared pool for cancel forwarding
-    // This pool is shared between Kakehashi and the RequestIdCapture middleware
+    // Create shared pool and cancel forwarder
+    // Both are shared between Kakehashi and the RequestIdCapture middleware:
+    // - Pool: for downstream server connections
+    // - CancelForwarder: for upstream cancel notification to handlers
     let pool = Arc::new(LanguageServerPool::new());
     let cancel_forwarder = CancelForwarder::new(Arc::clone(&pool));
 
-    // Create Kakehashi with the shared pool
+    // Create Kakehashi with the shared pool and cancel forwarder
     let pool_for_service = Arc::clone(&pool);
-    let (service, socket) =
-        LspService::new(move |client| Kakehashi::with_pool(client, Arc::clone(&pool_for_service)));
+    let forwarder_for_service = cancel_forwarder.clone();
+    let (service, socket) = LspService::new(move |client| {
+        Kakehashi::with_cancel_forwarder(
+            client,
+            Arc::clone(&pool_for_service),
+            forwarder_for_service.clone(),
+        )
+    });
 
     // Wrap service with RequestIdCapture to:
     // 1. Capture upstream request IDs (for ADR-0016 bridge requests)

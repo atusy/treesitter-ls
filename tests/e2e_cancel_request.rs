@@ -336,3 +336,197 @@ fn e2e_multiple_cancel_for_same_request() {
     // Clean shutdown
     shutdown_client(&mut client);
 }
+
+/// E2E test: diagnostic request cancel returns RequestCancelled error.
+///
+/// This test specifically verifies the upstream cancel notification flow:
+/// 1. Start a diagnostic request for a document with multiple Lua blocks
+/// 2. Immediately send $/cancelRequest before diagnostics complete
+/// 3. Verify that either:
+///    - RequestCancelled error (-32800) is returned (cancel arrived in time), OR
+///    - Normal response is returned (diagnostics completed before cancel processed)
+///
+/// The key insight is that diagnostic requests involve parallel fan-out to
+/// downstream servers, which takes non-trivial time. This gives us a window
+/// to test cancel handling with real timing conditions.
+#[test]
+fn e2e_diagnostic_cancel_returns_request_cancelled_error() {
+    if skip_if_lua_ls_unavailable() {
+        return;
+    }
+
+    let mut client = LspClient::new();
+
+    // Initialize with lua-language-server configuration
+    let _init_response = client.send_request(
+        "initialize",
+        json!({
+            "processId": std::process::id(),
+            "rootUri": null,
+            "capabilities": {},
+            "initializationOptions": {
+                "languageServers": {
+                    "lua-language-server": {
+                        "cmd": ["lua-language-server"],
+                        "languages": ["lua"]
+                    }
+                }
+            }
+        }),
+    );
+    client.send_notification("initialized", json!({}));
+
+    // Open markdown document with MULTIPLE Lua code blocks
+    // Multiple blocks = multiple downstream requests = more time for cancel to arrive
+    let markdown_content = r#"# Large Document for Cancel Testing
+
+```lua
+-- Block 1
+local function compute1()
+    local result = 0
+    for i = 1, 1000 do
+        result = result + math.sin(i) * math.cos(i)
+    end
+    return result
+end
+```
+
+Some text between blocks.
+
+```lua
+-- Block 2
+local function compute2()
+    local data = {}
+    for i = 1, 100 do
+        data[i] = { x = i, y = i * 2, z = i * 3 }
+    end
+    return data
+end
+```
+
+More text.
+
+```lua
+-- Block 3
+local function compute3()
+    return {
+        nested = {
+            deeply = {
+                value = 42
+            }
+        }
+    }
+end
+```
+
+Even more text.
+
+```lua
+-- Block 4
+local x = compute1()
+local y = compute2()
+local z = compute3()
+print(x, y, z)
+```
+"#;
+
+    let markdown_uri = "file:///test_diagnostic_cancel.md";
+
+    client.send_notification(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": markdown_uri,
+                "languageId": "markdown",
+                "version": 1,
+                "text": markdown_content
+            }
+        }),
+    );
+
+    // Give lua-ls a moment to start (but not too long - we want to test cancel timing)
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    // Send a diagnostic request asynchronously
+    let request_id = client.send_request_async(
+        "textDocument/diagnostic",
+        json!({
+            "textDocument": { "uri": markdown_uri }
+        }),
+    );
+
+    println!("Sent diagnostic request with id: {}", request_id);
+
+    // Immediately send cancel notification
+    // Due to multiple Lua blocks requiring parallel fan-out, there's a good chance
+    // the cancel arrives before all diagnostics complete
+    client.send_notification(
+        "$/cancelRequest",
+        json!({
+            "id": request_id
+        }),
+    );
+
+    println!(
+        "Sent $/cancelRequest for diagnostic request id: {}",
+        request_id
+    );
+
+    // Wait for response
+    let response = client.receive_response_for_id_public(request_id);
+
+    println!("Diagnostic response: {:?}", response);
+
+    // Verify response has matching ID
+    assert_eq!(
+        response.get("id").and_then(|id| id.as_i64()),
+        Some(request_id),
+        "Response should have matching id"
+    );
+
+    // Check if we got RequestCancelled error or normal response
+    // Per LSP spec, cancel is "best effort" - valid outcomes are:
+    // 1. Normal result (request completed before cancel processed)
+    // 2. RequestCancelled error (-32800)
+    // Any other error indicates a bug and should fail the test.
+    if let Some(error) = response.get("error") {
+        let error_code = error.get("code").and_then(|c| c.as_i64());
+        assert_eq!(
+            error_code,
+            Some(-32800),
+            "If diagnostic returns an error, it must be RequestCancelled (-32800). \
+             Got error code {:?} with message {:?}",
+            error_code,
+            error.get("message")
+        );
+        println!("✓ E2E: Diagnostic request was cancelled (got RequestCancelled error -32800)");
+    } else {
+        // Normal response - diagnostics completed before cancel was processed
+        // This is also valid - cancel is "best effort" per LSP spec
+        println!("✓ E2E: Diagnostic completed normally before cancel processed (race condition)");
+        // Verify we got a valid diagnostic report
+        let result = response.get("result");
+        assert!(
+            result.is_some(),
+            "Should have result in diagnostic response"
+        );
+    }
+
+    // Verify server is still operational after cancel
+    let hover_response = client.send_request(
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": markdown_uri },
+            "position": { "line": 5, "character": 10 }
+        }),
+    );
+
+    assert!(
+        hover_response.get("id").is_some(),
+        "Server should still respond after diagnostic cancel"
+    );
+    println!("✓ E2E: Server still operational after diagnostic cancel");
+
+    // Clean shutdown
+    shutdown_client(&mut client);
+}
