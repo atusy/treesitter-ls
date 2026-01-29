@@ -12,10 +12,11 @@ use tower_lsp_server::ls_types::{
 };
 use tower_lsp_server::ls_types::{
     CompletionOptions, CompletionParams, CompletionResponse, DeclarationCapability,
-    DidChangeConfigurationParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentHighlight, DocumentHighlightParams, DocumentLink,
-    DocumentLinkOptions, DocumentLinkParams, DocumentSymbolParams, DocumentSymbolResponse,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
+    DiagnosticOptions, DiagnosticServerCapabilities, DidChangeConfigurationParams,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DocumentHighlight, DocumentHighlightParams, DocumentLink, DocumentLinkOptions,
+    DocumentLinkParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
     ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
     InlayHint, InlayHintParams, Location, Moniker, MonikerParams, OneOf, ReferenceParams,
     RenameParams, SaveOptions, SelectionRange, SelectionRangeParams,
@@ -884,6 +885,14 @@ impl LanguageServer for Kakehashi {
                 #[cfg(not(feature = "experimental"))]
                 color_provider: None,
                 moniker_provider: Some(OneOf::Left(true)),
+                // ADR-0020: Pull-first diagnostic forwarding
+                diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
+                    DiagnosticOptions {
+                        inter_file_dependencies: false,
+                        workspace_diagnostics: false,
+                        ..Default::default()
+                    },
+                )),
                 ..ServerCapabilities::default()
             },
         })
