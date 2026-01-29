@@ -98,6 +98,7 @@ impl Kakehashi {
 
         // Collect all injection regions
         let all_regions = InjectionResolver::resolve_all(
+            &self.language,
             self.bridge.region_id_tracker(),
             &uri,
             snapshot.tree(),

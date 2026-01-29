@@ -122,7 +122,10 @@ local x = 1
         .expect("Should have result in diagnostic response");
 
     // Verify it's a "full" report (not "unchanged")
-    assert!(result.get("kind").is_some(), "Result should have 'kind' field");
+    assert!(
+        result.get("kind").is_some(),
+        "Result should have 'kind' field"
+    );
     assert_eq!(
         result.get("kind").and_then(|k| k.as_str()),
         Some("full"),

@@ -204,19 +204,17 @@ pub fn poll_for_diagnostics(
         }
 
         // Check if result has items (diagnostics)
-        if let Some(result) = response.get("result") {
-            // If kind is "full" and items is non-empty, we have diagnostics
-            if let Some(items) = result.get("items").and_then(|i| i.as_array()) {
-                if !items.is_empty() {
-                    eprintln!(
-                        "textDocument/diagnostic succeeded on attempt {}/{} with {} diagnostics",
-                        attempt,
-                        max_attempts,
-                        items.len()
-                    );
-                    return Some(response);
-                }
-            }
+        if let Some(result) = response.get("result")
+            && let Some(items) = result.get("items").and_then(|i| i.as_array())
+            && !items.is_empty()
+        {
+            eprintln!(
+                "textDocument/diagnostic succeeded on attempt {}/{} with {} diagnostics",
+                attempt,
+                max_attempts,
+                items.len()
+            );
+            return Some(response);
         }
 
         eprintln!(
@@ -268,7 +266,9 @@ pub fn wait_for_server_ready(
                 "Server ready on attempt {}/{} (waited ~{}ms total)",
                 attempt,
                 max_attempts,
-                (0..attempt).map(|i| initial_delay_ms * 2u64.pow(i)).sum::<u64>()
+                (0..attempt)
+                    .map(|i| initial_delay_ms * 2u64.pow(i))
+                    .sum::<u64>()
             );
             return;
         }

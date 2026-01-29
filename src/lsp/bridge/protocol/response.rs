@@ -609,7 +609,11 @@ pub(crate) fn transform_diagnostic_response_to_host(
     // Transform diagnostic items
     if let Some(items) = result.get_mut("items").and_then(|i| i.as_array_mut()) {
         for item in items.iter_mut() {
-            transform_diagnostic_item(item, context.request_region_start_line, &context.request_host_uri);
+            transform_diagnostic_item(
+                item,
+                context.request_region_start_line,
+                &context.request_host_uri,
+            );
         }
     }
 
