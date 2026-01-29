@@ -18,9 +18,6 @@ pub(crate) struct RawToken {
     pub column: usize,
     /// Length in UTF-16 code units
     pub length: usize,
-    /// Tree-sitter capture index (retained for debugging via Debug trait)
-    #[allow(dead_code)]
-    pub capture_index: u32,
     /// Mapped capture name (e.g., "keyword", "variable.readonly")
     pub mapped_name: String,
     /// Injection depth (0 = host document)
@@ -205,7 +202,6 @@ pub(super) fn collect_host_tokens(
                     line: host_line,
                     column: start_utf16,
                     length: end_utf16 - start_utf16,
-                    capture_index: c.index,
                     mapped_name,
                     depth,
                 });
@@ -265,7 +261,6 @@ pub(super) fn collect_host_tokens(
                     line: host_start_line,
                     column: start_utf16,
                     length: total_length_utf16,
-                    capture_index: c.index,
                     mapped_name,
                     depth,
                 });
@@ -293,7 +288,6 @@ pub(super) fn collect_host_tokens(
                             line: host_row,
                             column: start_utf16,
                             length: end_utf16 - start_utf16,
-                            capture_index: c.index,
                             mapped_name: mapped_name.clone(),
                             depth,
                         });

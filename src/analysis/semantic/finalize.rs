@@ -82,7 +82,6 @@ mod tests {
             line,
             column,
             length,
-            capture_index: 0,
             mapped_name: name.to_string(),
             depth,
         }

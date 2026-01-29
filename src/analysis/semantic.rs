@@ -105,7 +105,7 @@ pub fn handle_semantic_tokens_full_with_multiline(
     parser_pool: Option<&mut crate::language::DocumentParserPool>,
     supports_multiline: bool,
 ) -> Option<SemanticTokensResult> {
-    // Collect all absolute tokens (line, col, length, capture_index, mapped_name, depth)
+    // Collect all absolute tokens (line, col, length, mapped_name, depth)
     let mut all_tokens: Vec<RawToken> = Vec::with_capacity(1000);
 
     let lines: Vec<&str> = text.lines().collect();
