@@ -49,7 +49,46 @@ const scrum: ScrumDashboard = {
       status: "ready",
     },
   ],
-  sprint: null,
+  sprint: {
+    number: 17,
+    pbi_id: "pbi-diagnostic-multi-region",
+    goal: "Implement multi-region diagnostic aggregation with fan-out parallel queries and timeout handling",
+    status: "planning",
+    subtasks: [
+      {
+        test: "Test send_diagnostic_requests_parallel sends requests to all regions concurrently",
+        implementation: "Add send_diagnostic_requests_parallel that uses futures::join_all for parallel fan-out",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0020: Fan-out queries to downstream servers for all injection regions"],
+      },
+      {
+        test: "Test diagnostic_impl iterates all regions and aggregates diagnostics",
+        implementation: "Change from all_regions[0] to iterate all_regions, collect Vec<Diagnostic>, merge into single response",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Transform each region's positions independently using region_start_line"],
+      },
+      {
+        test: "Test timeout handling returns partial results when some servers are slow",
+        implementation: "Use tokio::time::timeout per-request (5s), continue aggregation on timeout, log warning",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["ADR-0020: Return partial results if some servers timeout"],
+      },
+      {
+        test: "E2E test verifies multi-region aggregation",
+        implementation: "Add test with multiple Lua code blocks to e2e_lsp_lua_diagnostic.rs",
+        type: "behavioral",
+        status: "pending",
+        commits: [],
+        notes: ["Test document with 2+ Lua injection regions returns aggregated diagnostics"],
+      },
+    ],
+  },
   completed: [
     // Sprint 16: 5 subtasks, diagnostic capability + request/response transformation + E2E test
     { number: 16, pbi_id: "pbi-diagnostic-single-region", goal: "Implement textDocument/diagnostic handler for first virtual document with position transformation", status: "done", subtasks: [] },
