@@ -152,10 +152,24 @@ impl Kakehashi {
 
         // Subscribe to cancel notifications for this request
         // The receiver completes when $/cancelRequest arrives for this ID
-        let cancel_rx = self
+        // AlreadySubscribedError indicates a bug (same request ID subscribed twice)
+        // - proceed without cancel support rather than failing the request
+        let cancel_rx = match self
             .bridge
             .cancel_forwarder()
-            .subscribe(upstream_request_id.clone());
+            .subscribe(upstream_request_id.clone())
+        {
+            Ok(rx) => Some(rx),
+            Err(e) => {
+                log::error!(
+                    target: "kakehashi::diagnostic",
+                    "Failed to subscribe to cancel notifications for {}: already subscribed. \
+                     This is a bug - proceeding without cancel support.",
+                    e.0
+                );
+                None
+            }
+        };
 
         // Sprint 17: Process ALL injection regions with parallel fan-out
         // Collect request info for regions that have bridge configs
@@ -253,11 +267,32 @@ impl Kakehashi {
 ///
 /// When all regions complete:
 /// - Returns aggregated diagnostics from all successful regions
+///
+/// If `cancel_rx` is `None`, cancel handling is disabled (graceful degradation
+/// when subscription failed due to `AlreadySubscribedError`).
 async fn collect_diagnostics_with_cancel(
     mut join_set: tokio::task::JoinSet<Option<Vec<Diagnostic>>>,
-    cancel_rx: crate::lsp::request_id::CancelReceiver,
+    cancel_rx: Option<crate::lsp::request_id::CancelReceiver>,
 ) -> Result<DocumentDiagnosticReportResult> {
     let mut all_diagnostics: Vec<Diagnostic> = Vec::new();
+
+    // Handle None case: no cancel support, just collect results
+    let Some(cancel_rx) = cancel_rx else {
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(Some(diagnostics)) => all_diagnostics.extend(diagnostics),
+                Ok(None) => {}
+                Err(e) => {
+                    log::error!(
+                        target: "kakehashi::diagnostic",
+                        "Diagnostic task panicked: {}",
+                        e
+                    );
+                }
+            }
+        }
+        return Ok(make_diagnostic_report(all_diagnostics));
+    };
 
     // Pin the cancel receiver for use in select!
     tokio::pin!(cancel_rx);
@@ -304,15 +339,19 @@ async fn collect_diagnostics_with_cancel(
         }
     }
 
-    // Return aggregated diagnostics
-    Ok(DocumentDiagnosticReportResult::Report(
-        DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
+    Ok(make_diagnostic_report(all_diagnostics))
+}
+
+/// Create a full diagnostic report from aggregated diagnostics.
+fn make_diagnostic_report(diagnostics: Vec<Diagnostic>) -> DocumentDiagnosticReportResult {
+    DocumentDiagnosticReportResult::Report(DocumentDiagnosticReport::Full(
+        RelatedFullDocumentDiagnosticReport {
             full_document_diagnostic_report: FullDocumentDiagnosticReport {
                 result_id: None, // No result_id for aggregated multi-region response
-                items: all_diagnostics,
+                items: diagnostics,
             },
             related_documents: None,
-        }),
+        },
     ))
 }
 

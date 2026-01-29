@@ -48,6 +48,26 @@ tokio::task_local! {
 /// - The sender is dropped (e.g., the request completes normally)
 pub type CancelReceiver = oneshot::Receiver<()>;
 
+/// Error returned when attempting to subscribe to a request ID that already has a subscriber.
+///
+/// This error indicates a programming error where the same request ID was subscribed twice
+/// without unsubscribing first. Each request ID can only have one active subscriber.
+///
+/// # Future Enhancement
+///
+/// If multiple subscribers per request ID become necessary (e.g., multiple handlers
+/// processing the same request), refactor the registry from:
+/// ```ignore
+/// HashMap<UpstreamId, oneshot::Sender<()>>
+/// ```
+/// to:
+/// ```ignore
+/// HashMap<UpstreamId, Vec<oneshot::Sender<()>>>
+/// ```
+/// and update `notify_cancel()` to iterate and send to all subscribers.
+#[derive(Debug, Clone)]
+pub struct AlreadySubscribedError(pub UpstreamId);
+
 /// Registry of cancel notification subscribers.
 ///
 /// Maps upstream request IDs to oneshot senders that notify handlers when
@@ -112,7 +132,7 @@ impl CancelForwarder {
     /// # Example
     ///
     /// ```ignore
-    /// let cancel_rx = cancel_forwarder.subscribe(upstream_id);
+    /// let cancel_rx = cancel_forwarder.subscribe(upstream_id)?;
     /// tokio::select! {
     ///     biased;
     ///     _ = cancel_rx => {
@@ -126,19 +146,30 @@ impl CancelForwarder {
     /// }
     /// ```
     ///
+    /// # Errors
+    ///
+    /// Returns [`AlreadySubscribedError`] if a subscriber already exists for this request ID.
+    /// This prevents silent overwrites that would leave the previous receiver orphaned.
+    ///
     /// # Notes
     ///
-    /// - Only one subscriber is supported per request ID. If called multiple times
-    ///   for the same ID, the previous subscriber's receiver will never complete.
+    /// - Only one subscriber is supported per request ID. See [`AlreadySubscribedError`]
+    ///   documentation for future enhancement notes on supporting multiple subscribers.
     /// - The subscriber is automatically removed when the cancel is received or
     ///   when `unsubscribe()` is called.
-    pub fn subscribe(&self, upstream_id: UpstreamId) -> CancelReceiver {
+    pub fn subscribe(
+        &self,
+        upstream_id: UpstreamId,
+    ) -> Result<CancelReceiver, AlreadySubscribedError> {
         let (tx, rx) = oneshot::channel();
         {
             let mut subscribers = self.subscribers.lock().unwrap_or_else(|e| e.into_inner());
+            if subscribers.contains_key(&upstream_id) {
+                return Err(AlreadySubscribedError(upstream_id));
+            }
             subscribers.insert(upstream_id, tx);
         }
-        rx
+        Ok(rx)
     }
 
     /// Unsubscribe from cancel notifications for a specific upstream request ID.
@@ -512,5 +543,59 @@ mod tests {
         // Inner service was still called
         let captured = mock.get_captured_id().await;
         assert!(captured.is_some());
+    }
+
+    #[tokio::test]
+    async fn subscribe_returns_error_on_duplicate() {
+        let pool = Arc::new(LanguageServerPool::new());
+        let forwarder = CancelForwarder::new(pool);
+        let upstream_id = UpstreamId::Number(42);
+
+        // First subscription should succeed
+        let result1 = forwarder.subscribe(upstream_id.clone());
+        assert!(result1.is_ok());
+
+        // Second subscription with same ID should fail
+        let result2 = forwarder.subscribe(upstream_id.clone());
+        assert!(result2.is_err());
+
+        // Verify error contains the correct ID
+        let err = result2.unwrap_err();
+        assert!(matches!(err, AlreadySubscribedError(id) if id == upstream_id));
+    }
+
+    #[tokio::test]
+    async fn subscribe_succeeds_after_unsubscribe() {
+        let pool = Arc::new(LanguageServerPool::new());
+        let forwarder = CancelForwarder::new(pool);
+        let upstream_id = UpstreamId::Number(42);
+
+        // First subscription
+        let _rx1 = forwarder.subscribe(upstream_id.clone()).unwrap();
+
+        // Unsubscribe
+        forwarder.unsubscribe(&upstream_id);
+
+        // Second subscription should now succeed
+        let result = forwarder.subscribe(upstream_id);
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn subscribe_succeeds_after_notify_cancel() {
+        let pool = Arc::new(LanguageServerPool::new());
+        let forwarder = CancelForwarder::new(pool);
+        let upstream_id = UpstreamId::Number(42);
+
+        // First subscription
+        let _rx1 = forwarder.subscribe(upstream_id.clone()).unwrap();
+
+        // Cancel notification removes the subscriber
+        let notified = forwarder.notify_cancel(&upstream_id);
+        assert!(notified);
+
+        // Second subscription should now succeed
+        let result = forwarder.subscribe(upstream_id);
+        assert!(result.is_ok());
     }
 }

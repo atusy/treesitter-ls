@@ -15,5 +15,5 @@ mod settings;
 pub use bridge::LanguageServerPool;
 pub use lsp_impl::Kakehashi;
 pub(crate) use request_id::get_current_request_id;
-pub use request_id::{CancelForwarder, CancelReceiver, RequestIdCapture};
+pub use request_id::{AlreadySubscribedError, CancelForwarder, CancelReceiver, RequestIdCapture};
 pub(crate) use settings::{SettingsEvent, SettingsEventKind, SettingsSource, load_settings};
