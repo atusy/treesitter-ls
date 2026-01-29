@@ -123,9 +123,10 @@ impl Kakehashi {
         // Sprint 17: Process ALL injection regions with parallel fan-out
         // Collect request info for regions that have bridge configs
         // Group by server_name to share Arc<BridgeServerConfig> across regions using the same server
+        // Pre-allocate with capacity based on number of regions (upper bound for unique languages)
         let mut config_cache: std::collections::HashMap<String, Arc<BridgeServerConfig>> =
-            std::collections::HashMap::new();
-        let mut request_infos: Vec<DiagnosticRequestInfo> = Vec::new();
+            std::collections::HashMap::with_capacity(all_regions.len());
+        let mut request_infos: Vec<DiagnosticRequestInfo> = Vec::with_capacity(all_regions.len());
 
         for resolved in &all_regions {
             // Get bridge server config for this language
@@ -133,14 +134,17 @@ impl Kakehashi {
             if let Some(resolved_config) =
                 self.get_bridge_config_for_language(&language_name, &resolved.injection_language)
             {
+                // Clone server_name once, use for both HashMap lookup and DiagnosticRequestInfo
+                let server_name = resolved_config.server_name.clone();
+
                 // Reuse Arc if we've already seen this server, otherwise create new Arc
                 let config_arc = config_cache
-                    .entry(resolved_config.server_name.clone())
+                    .entry(server_name.clone())
                     .or_insert_with(|| Arc::new(resolved_config.config.clone()))
                     .clone();
 
                 request_infos.push(DiagnosticRequestInfo {
-                    server_name: resolved_config.server_name.clone(),
+                    server_name,
                     config: config_arc,
                     injection_language: resolved.injection_language.clone(),
                     region_id: resolved.region.region_id.clone(),
