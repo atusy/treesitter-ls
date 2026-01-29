@@ -61,9 +61,11 @@ impl Kakehashi {
             return Ok(empty_diagnostic_report());
         };
 
+        // Use LOG level (lowest severity) for per-request logging in hot path
+        // to avoid flooding client with INFO messages on frequent diagnostic requests
         self.client
             .log_message(
-                MessageType::INFO,
+                MessageType::LOG,
                 format!("textDocument/diagnostic called for {}", uri),
             )
             .await;
