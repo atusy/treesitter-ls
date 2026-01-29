@@ -29,7 +29,7 @@ mod shutdown_timeout;
 #[cfg(test)]
 pub(super) mod test_helpers;
 
-use connection_action::{ConnectionAction, decide_connection_action};
+use connection_action::{ConnectionAction, ERR_SERVER_INITIALIZING, decide_connection_action};
 use handshake::perform_lsp_handshake;
 
 pub(crate) use connection_handle::ConnectionHandle;
@@ -539,7 +539,7 @@ impl LanguageServerPool {
             Ok(handle) => Ok(handle),
             Err(e) => {
                 // Check if error is due to server still initializing
-                if e.to_string().contains("downstream server initializing") {
+                if e.to_string() == ERR_SERVER_INITIALIZING {
                     // Get the handle from pool and wait for it to be ready
                     let handle = {
                         let connections = self.connections.lock().await;

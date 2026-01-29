@@ -11,6 +11,12 @@ use super::ConnectionState;
 /// we stop retrying and return an error to prevent infinite retry loops.
 pub(super) const MAX_CONSECUTIVE_PANICS: u32 = 3;
 
+/// Error message returned when a connection request is made while the server is initializing.
+///
+/// This constant is exported so callers can reliably detect this specific error condition
+/// without fragile string matching.
+pub(super) const ERR_SERVER_INITIALIZING: &str = "bridge: downstream server initializing";
+
 /// Action to take when requesting a connection for a language.
 ///
 /// This enum represents the decision made based on existing connection state,
@@ -55,9 +61,7 @@ pub(super) fn decide_connection_action(
     match state {
         None => ConnectionAction::SpawnNew,
         Some(ConnectionState::Ready) => ConnectionAction::ReturnExisting,
-        Some(ConnectionState::Initializing) => {
-            ConnectionAction::FailFast("bridge: downstream server initializing")
-        }
+        Some(ConnectionState::Initializing) => ConnectionAction::FailFast(ERR_SERVER_INITIALIZING),
         Some(ConnectionState::Failed) => ConnectionAction::SpawnNew,
         Some(ConnectionState::Closing) => ConnectionAction::FailFast("bridge: connection closing"),
         Some(ConnectionState::Closed) => ConnectionAction::SpawnNew,
