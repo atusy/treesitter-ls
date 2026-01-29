@@ -51,32 +51,48 @@ The push model requires kakehashi to maintain complex state that mirrors informa
 ### Architecture Overview
 
 ```
-Phase 1-3: Pull-First
+Phase 1: Pure Pull
 ┌────────────────────────────────────────────────────────────────────────┐
 │                                                                        │
-│  Client ──textDocument/diagnostic──> kakehashi                         │
+│  Client ──textDocument/diagnostic──► kakehashi                         │
 │                                          │                             │
 │                    ┌─────────────────────┼─────────────────────┐       │
-│                    │                     │                     │       │
 │                    ▼                     ▼                     ▼       │
 │              lua-ls (pull)        pyright (pull)        taplo (pull)   │
 │                    │                     │                     │       │
 │                    └─────────────────────┼─────────────────────┘       │
-│                                          │                             │
+│                                          ▼                             │
 │                                    Aggregate & Transform               │
 │                                          │                             │
-│  Client <──DiagnosticResponse────────────┘                             │
+│  Client ◄──DiagnosticResponse────────────┘                             │
 │                                                                        │
 └────────────────────────────────────────────────────────────────────────┘
 
-Phase 2-3: Synthetic Push (using pull internally)
+Phase 2: Cancellation-Resilient Pull
 ┌────────────────────────────────────────────────────────────────────────┐
 │                                                                        │
-│  Client ──didSave/didOpen──> kakehashi                                 │
-│                                  │                                     │
-│                           (internally pull from downstream servers)    │
-│                                  │                                     │
-│  Client <──publishDiagnostics────┘                                     │
+│  Client ──textDocument/diagnostic──► kakehashi                         │
+│                                          │                             │
+│                              (fan-out to downstream servers)           │
+│                                          │                             │
+│  Client ──$/cancelRequest────────────────┼──► (continue in background) │
+│                                          │                             │
+│                              (downstream responses arrive)             │
+│                                          │                             │
+│                              (check: document still valid?)            │
+│                                          │                             │
+│  Client ◄──publishDiagnostics────────────┘                             │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+
+Phase 3-4: Synthetic Push (using pull internally)
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│  Client ──didSave/didOpen/didChange──► kakehashi                       │
+│                                            │                           │
+│                             (internally pull from downstream servers)  │
+│                                            │                           │
+│  Client ◄──publishDiagnostics──────────────┘                           │
 │                                                                        │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -97,7 +113,18 @@ kakehashi implements `textDocument/diagnostic` handler:
 
 **Key simplification**: No caching, no lifecycle tracking, no race conditions. The diagnostic state exists only for the duration of the request.
 
-#### Phase 2: Synthetic Push on didSave/didOpen
+#### Phase 2: Cancellation-Resilient Pull
+
+Handle client-side cancellation gracefully when bridge overhead causes slow responses:
+
+1. On pull diagnostic request cancellation, continue processing in background
+2. When downstream responses arrive, check if the host document is still valid (not stale)
+3. If valid, publish aggregated diagnostics via `textDocument/publishDiagnostics`
+4. If stale (document has changed), discard results
+
+**Rationale**: kakehashi's bridge architecture introduces inherent latency (fan-out to multiple downstream servers, position transformation). Clients may timeout before kakehashi can respond. Rather than discarding completed work, this phase converts cancelled pulls into push notifications.
+
+#### Phase 3: Synthetic Push on didSave/didOpen
 
 Extend Phase 1 to proactively publish diagnostics:
 
@@ -106,7 +133,7 @@ Extend Phase 1 to proactively publish diagnostics:
 
 This provides push-like UX for clients that don't support pull diagnostics, while using pull internally.
 
-#### Phase 3: Higher Frequency Diagnostics
+#### Phase 4: Higher Frequency Diagnostics
 
 Extend triggers for diagnostic refresh:
 
@@ -115,7 +142,7 @@ Extend triggers for diagnostic refresh:
 
 Same internal mechanism: pull from downstream, aggregate, publish.
 
-#### Phase 4: Legacy Server Support
+#### Phase 5: Legacy Server Support
 
 For downstream servers that don't support `textDocument/diagnostic`:
 
@@ -124,9 +151,9 @@ For downstream servers that don't support `textDocument/diagnostic`:
   - For pull-capable servers: query via `textDocument/diagnostic`
   - For push-only servers: use cached diagnostics
 
-Caching in this phase is **required for correctness** — without it, legacy servers cannot participate in diagnostics. Phase 5 adds optional caching for performance optimization.
+Caching in this phase is **required for correctness** — without it, legacy servers cannot participate in diagnostics. Phase 6 adds optional caching for performance optimization.
 
-#### Phase 5: Full Reactive Optimization
+#### Phase 6: Full Reactive Optimization
 
 - Cache recent pull results to avoid redundant queries
 - Implement `workspace/diagnostic/refresh` to invalidate caches
