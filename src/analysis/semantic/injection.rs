@@ -279,7 +279,6 @@ fn collect_injection_languages_recursive(
 ///
 /// Both variants support the same `acquire`/`release` interface, enabling a single
 /// unified recursive token collection function.
-#[allow(dead_code)] // TODO: Remove after task 3.3 uses this enum
 pub(super) enum ParserProvider<'a> {
     /// Parser pool variant - acquires/releases parsers dynamically per injection
     Pool(&'a mut crate::language::DocumentParserPool),
@@ -294,7 +293,6 @@ impl ParserProvider<'_> {
     /// - For `Local`: removes the parser from the HashMap (takes ownership)
     ///
     /// Returns `None` if no parser is available for the language.
-    #[allow(dead_code)] // TODO: Remove after task 3.3 uses this method
     pub fn acquire(&mut self, lang: &str) -> Option<tree_sitter::Parser> {
         match self {
             Self::Pool(pool) => pool.acquire(lang),
@@ -306,7 +304,6 @@ impl ParserProvider<'_> {
     ///
     /// - For `Pool`: delegates to `DocumentParserPool::release`
     /// - For `Local`: inserts the parser back into the HashMap
-    #[allow(dead_code)] // TODO: Remove after task 3.3 uses this method
     pub fn release(&mut self, lang: String, parser: tree_sitter::Parser) {
         match self {
             Self::Pool(pool) => pool.release(lang, parser),
@@ -323,8 +320,16 @@ impl ParserProvider<'_> {
 /// the current language's highlight query and any language injections found.
 /// Nested injections are processed recursively up to MAX_INJECTION_DEPTH.
 ///
-/// When coordinator or parser_pool is None, only host document tokens are collected
+/// When coordinator or parser_provider is None, only host document tokens are collected
 /// (no injection processing).
+///
+/// # Parser Provider
+///
+/// The `parser_provider` parameter abstracts over two parser acquisition strategies:
+/// - `ParserProvider::Pool`: Dynamic acquisition from a shared parser pool
+/// - `ParserProvider::Local`: Pre-acquired parsers in a local HashMap
+///
+/// Both variants use the same acquire/release semantics, enabling unified handling.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn collect_injection_tokens_recursive(
     text: &str,
@@ -333,7 +338,7 @@ pub(super) fn collect_injection_tokens_recursive(
     filetype: Option<&str>,
     capture_mappings: Option<&crate::config::CaptureMappings>,
     coordinator: Option<&crate::language::LanguageCoordinator>,
-    parser_pool: Option<&mut crate::language::DocumentParserPool>,
+    parser_provider: Option<&mut ParserProvider<'_>>,
     host_text: &str,
     host_lines: &[&str],
     content_start_byte: usize,
@@ -362,7 +367,7 @@ pub(super) fn collect_injection_tokens_recursive(
     );
 
     // 2. Find and process injections
-    let (Some(coordinator), Some(parser_pool)) = (coordinator, parser_pool) else {
+    let (Some(coordinator), Some(parser_provider)) = (coordinator, parser_provider) else {
         return; // No injection support available
     };
 
@@ -370,16 +375,20 @@ pub(super) fn collect_injection_tokens_recursive(
         collect_injection_contexts(text, tree, filetype, coordinator, content_start_byte);
 
     for ctx in contexts {
-        // Acquire parser from pool
-        let Some(mut parser) = parser_pool.acquire(&ctx.resolved_lang) else {
+        // Acquire parser from provider (pool or local map)
+        let Some(mut parser) = parser_provider.acquire(&ctx.resolved_lang) else {
             continue;
         };
 
         // Parse the injected content
         let Some(injected_tree) = parser.parse(ctx.content_text, None) else {
-            parser_pool.release(ctx.resolved_lang.clone(), parser);
+            parser_provider.release(ctx.resolved_lang.clone(), parser);
             continue;
         };
+
+        // Release parser BEFORE recursive call to avoid holding mutable borrow
+        // during recursion. The parser has done its job (produced injected_tree).
+        parser_provider.release(ctx.resolved_lang.clone(), parser);
 
         // Recursively collect tokens from the injected content
         collect_injection_tokens_recursive(
@@ -389,7 +398,7 @@ pub(super) fn collect_injection_tokens_recursive(
             Some(&ctx.resolved_lang),
             capture_mappings,
             Some(coordinator),
-            Some(parser_pool),
+            Some(parser_provider),
             host_text,
             host_lines,
             ctx.host_start_byte,
@@ -397,8 +406,6 @@ pub(super) fn collect_injection_tokens_recursive(
             supports_multiline,
             all_tokens,
         );
-
-        parser_pool.release(ctx.resolved_lang.clone(), parser);
     }
 }
 

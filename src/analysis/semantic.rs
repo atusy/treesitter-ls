@@ -22,9 +22,7 @@ pub(crate) use injection::collect_injection_languages;
 // Internal re-exports for use within this module
 use delta::calculate_semantic_tokens_delta;
 use finalize::finalize_tokens;
-use injection::{
-    collect_injection_tokens_recursive, collect_injection_tokens_recursive_with_local_parsers,
-};
+use injection::{ParserProvider, collect_injection_tokens_recursive};
 use token_collector::RawToken;
 
 /// Handle semantic tokens full request
@@ -106,6 +104,9 @@ pub fn handle_semantic_tokens_full_with_multiline(
 
     let lines: Vec<&str> = text.lines().collect();
 
+    // Wrap parser_pool in ParserProvider for unified interface
+    let mut provider = parser_pool.map(ParserProvider::Pool);
+
     // Recursively collect tokens from the document and all injections
     collect_injection_tokens_recursive(
         text,
@@ -114,7 +115,7 @@ pub fn handle_semantic_tokens_full_with_multiline(
         filetype,
         capture_mappings,
         coordinator,
-        parser_pool,
+        provider.as_mut(),
         text,   // host_text = text (we're at the root)
         &lines, // host_lines
         0,      // content_start_byte = 0 (we're at the root)
@@ -158,15 +159,18 @@ pub(crate) fn handle_semantic_tokens_full_with_local_parsers(
     let mut all_tokens: Vec<RawToken> = Vec::with_capacity(1000);
     let lines: Vec<&str> = text.lines().collect();
 
-    // Recursively collect tokens using local parsers
-    collect_injection_tokens_recursive_with_local_parsers(
+    // Wrap local_parsers in ParserProvider for unified interface
+    let mut provider = ParserProvider::Local(local_parsers);
+
+    // Recursively collect tokens using unified function
+    collect_injection_tokens_recursive(
         text,
         tree,
         query,
         filetype,
         capture_mappings,
         coordinator,
-        local_parsers,
+        Some(&mut provider),
         text,
         &lines,
         0,
