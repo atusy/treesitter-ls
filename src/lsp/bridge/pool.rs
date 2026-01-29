@@ -3000,11 +3000,11 @@ mod tests {
         for _ in 0..100 {
             tokio::time::sleep(Duration::from_millis(100)).await;
             let connections = pool.connections.lock().await;
-            if let Some(handle) = connections.get("lua-ls") {
-                if handle.state() == ConnectionState::Ready {
-                    ready = true;
-                    break;
-                }
+            if let Some(handle) = connections.get("lua-ls")
+                && handle.state() == ConnectionState::Ready
+            {
+                ready = true;
+                break;
             }
         }
 
