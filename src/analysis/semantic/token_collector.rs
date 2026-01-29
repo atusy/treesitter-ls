@@ -297,3 +297,45 @@ pub(super) fn collect_host_tokens(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn byte_to_utf16_col_ascii() {
+        let line = "hello world";
+        assert_eq!(byte_to_utf16_col(line, 0), 0);
+        assert_eq!(byte_to_utf16_col(line, 5), 5);
+        assert_eq!(byte_to_utf16_col(line, 11), 11);
+    }
+
+    #[test]
+    fn byte_to_utf16_col_japanese() {
+        // Japanese text (3 bytes per char in UTF-8, 1 code unit in UTF-16)
+        let line = "こんにちは";
+        assert_eq!(byte_to_utf16_col(line, 0), 0);
+        assert_eq!(byte_to_utf16_col(line, 3), 1); // After "こ"
+        assert_eq!(byte_to_utf16_col(line, 6), 2); // After "こん"
+        assert_eq!(byte_to_utf16_col(line, 15), 5); // After all 5 chars
+    }
+
+    #[test]
+    fn byte_to_utf16_col_mixed_ascii_and_japanese() {
+        let line = "let x = \"あいうえお\"";
+        assert_eq!(byte_to_utf16_col(line, 0), 0);
+        assert_eq!(byte_to_utf16_col(line, 8), 8); // Before '"'
+        assert_eq!(byte_to_utf16_col(line, 9), 9); // Before "あ"
+        assert_eq!(byte_to_utf16_col(line, 12), 10); // After "あ" (3 bytes -> 1 UTF-16)
+        assert_eq!(byte_to_utf16_col(line, 24), 14); // After "あいうえお\"" (15 bytes + 1 quote)
+    }
+
+    #[test]
+    fn byte_to_utf16_col_emoji() {
+        // Emoji (4 bytes in UTF-8, 2 code units in UTF-16)
+        let line = "hello 👋 world";
+        assert_eq!(byte_to_utf16_col(line, 0), 0);
+        assert_eq!(byte_to_utf16_col(line, 6), 6); // After "hello "
+        assert_eq!(byte_to_utf16_col(line, 10), 8); // After emoji (4 bytes -> 2 UTF-16)
+    }
+}
