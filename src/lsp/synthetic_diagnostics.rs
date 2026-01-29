@@ -42,6 +42,8 @@ impl SyntheticDiagnosticsManager {
 
     /// Register a new diagnostic task for a document, superseding any existing task.
     ///
+    /// Also performs opportunistic cleanup of finished tasks to prevent memory buildup.
+    ///
     /// # Arguments
     /// * `uri` - The document URI
     /// * `abort_handle` - The AbortHandle for the newly spawned task
@@ -49,6 +51,11 @@ impl SyntheticDiagnosticsManager {
     /// # Returns
     /// The AbortHandle of the superseded task, if any (for logging/debugging).
     pub(crate) fn register_task(&self, uri: Url, abort_handle: AbortHandle) -> Option<AbortHandle> {
+        // Opportunistic cleanup: remove entries for tasks that have completed.
+        // This prevents memory buildup from documents that were saved but not re-saved.
+        // We limit to a small number to avoid blocking the registration.
+        self.cleanup_finished_tasks(5);
+
         let previous = self.active_tasks.insert(uri, abort_handle);
 
         if let Some(ref prev_handle) = previous {
@@ -61,6 +68,38 @@ impl SyntheticDiagnosticsManager {
         }
 
         previous
+    }
+
+    /// Remove entries for tasks that have finished.
+    ///
+    /// Called opportunistically during registration to prevent memory buildup.
+    /// Limited to avoid O(n) scan on every registration.
+    fn cleanup_finished_tasks(&self, limit: usize) {
+        let mut cleaned = 0;
+        // Collect keys to remove to avoid holding multiple references during iteration
+        let mut to_remove = Vec::with_capacity(limit);
+
+        for entry in self.active_tasks.iter() {
+            if entry.value().is_finished() {
+                to_remove.push(entry.key().clone());
+                cleaned += 1;
+                if cleaned >= limit {
+                    break;
+                }
+            }
+        }
+
+        for uri in to_remove {
+            self.active_tasks.remove(&uri);
+        }
+
+        if cleaned > 0 {
+            log::trace!(
+                target: "kakehashi::synthetic_diag",
+                "Cleaned up {} finished diagnostic task entries",
+                cleaned
+            );
+        }
     }
 
     /// Check if there's an active task for a document.
