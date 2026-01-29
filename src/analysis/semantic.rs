@@ -2,17 +2,19 @@ mod delta;
 mod finalize;
 mod injection;
 mod legend;
+mod range;
 mod token_collector;
 
 use crate::config::CaptureMappings;
 use tower_lsp_server::ls_types::{
-    Range, SemanticToken, SemanticTokens, SemanticTokensFullDeltaResult, SemanticTokensResult,
+    SemanticTokens, SemanticTokensFullDeltaResult, SemanticTokensResult,
 };
 use tree_sitter::{Query, Tree};
 
 // Re-export public API from submodules
 pub use delta::calculate_delta_or_full;
 pub use legend::{LEGEND_MODIFIERS, LEGEND_TYPES};
+pub use range::handle_semantic_tokens_range;
 
 // Re-export for crate-internal use
 pub(crate) use injection::collect_injection_languages;
@@ -176,133 +178,6 @@ pub(crate) fn handle_semantic_tokens_full_with_local_parsers(
     finalize_tokens(all_tokens)
 }
 
-/// Handle semantic tokens range request
-///
-/// Analyzes a specific range of the document including injected language regions
-/// and returns semantic tokens for both the host document and all injected content
-/// within that range.
-///
-/// This function wraps `handle_semantic_tokens_full` and filters
-/// the results to only include tokens within the requested range.
-///
-/// When coordinator or parser_pool is None, only host document tokens are returned
-/// (no injection processing).
-///
-/// # Arguments
-/// * `text` - The source text
-/// * `tree` - The parsed syntax tree
-/// * `query` - The tree-sitter query for semantic highlighting (host language)
-/// * `range` - The range to get tokens for (LSP positions)
-/// * `filetype` - The filetype of the document being processed
-/// * `capture_mappings` - The capture mappings to apply
-/// * `coordinator` - Language coordinator for loading injected language parsers (None = no injection)
-/// * `parser_pool` - Parser pool for efficient parser reuse (None = no injection)
-/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
-///
-/// # Returns
-/// Semantic tokens for the specified range including injected content (if coordinator/parser_pool provided)
-#[allow(clippy::too_many_arguments)]
-pub fn handle_semantic_tokens_range(
-    text: &str,
-    tree: &Tree,
-    query: &Query,
-    range: &Range,
-    filetype: Option<&str>,
-    capture_mappings: Option<&crate::config::CaptureMappings>,
-    coordinator: Option<&crate::language::LanguageCoordinator>,
-    parser_pool: Option<&mut crate::language::DocumentParserPool>,
-    supports_multiline: bool,
-) -> Option<SemanticTokensResult> {
-    // Get all tokens using the full handler with multiline support
-    let full_result = handle_semantic_tokens_full_with_multiline(
-        text,
-        tree,
-        query,
-        filetype,
-        capture_mappings,
-        coordinator,
-        parser_pool,
-        supports_multiline,
-    )?;
-
-    // Extract tokens from result
-    let SemanticTokensResult::Tokens(full_tokens) = full_result else {
-        return Some(full_result);
-    };
-
-    // Convert delta-encoded tokens back to absolute positions, filter by range,
-    // and re-encode as deltas
-    let start_line = range.start.line as usize;
-    let end_line = range.end.line as usize;
-
-    let mut abs_line = 0usize;
-    let mut abs_col = 0usize;
-
-    // Collect tokens that are within the range
-    let mut filtered_tokens: Vec<(usize, usize, u32, u32, u32)> = Vec::new();
-
-    for token in full_tokens.data {
-        // Update absolute position
-        abs_line += token.delta_line as usize;
-        if token.delta_line > 0 {
-            abs_col = token.delta_start as usize;
-        } else {
-            abs_col += token.delta_start as usize;
-        }
-
-        // Check if token is within range
-        if abs_line >= start_line && abs_line <= end_line {
-            // For boundary lines, check column positions
-            if abs_line == end_line && abs_col > range.end.character as usize {
-                continue;
-            }
-            if abs_line == start_line
-                && abs_col + token.length as usize <= range.start.character as usize
-            {
-                continue;
-            }
-
-            filtered_tokens.push((
-                abs_line,
-                abs_col,
-                token.length,
-                token.token_type,
-                token.token_modifiers_bitset,
-            ));
-        }
-    }
-
-    // Re-encode as deltas
-    let mut last_line = 0;
-    let mut last_start = 0;
-    let mut data = Vec::with_capacity(filtered_tokens.len());
-
-    for (line, col, length, token_type, modifiers) in filtered_tokens {
-        let delta_line = line - last_line;
-        let delta_start = if delta_line == 0 {
-            col - last_start
-        } else {
-            col
-        };
-
-        data.push(SemanticToken {
-            delta_line: delta_line as u32,
-            delta_start: delta_start as u32,
-            length,
-            token_type,
-            token_modifiers_bitset: modifiers,
-        });
-
-        last_line = line;
-        last_start = col;
-    }
-
-    Some(SemanticTokensResult::Tokens(SemanticTokens {
-        result_id: None,
-        data,
-    }))
-}
-
 /// Handle semantic tokens full delta request
 ///
 /// Analyzes the document and returns either a delta from the previous version
@@ -369,6 +244,7 @@ pub fn handle_semantic_tokens_full_delta(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tower_lsp_server::ls_types::{Range, SemanticToken};
 
     /// Returns the search path for tree-sitter grammars.
     /// Uses TREE_SITTER_GRAMMARS env var if set (Nix), otherwise falls back to deps/tree-sitter.
