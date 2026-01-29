@@ -70,7 +70,7 @@ impl Kakehashi {
             // Collect diagnostics
             let Some(request_infos) = snapshot_data else {
                 log::debug!(
-                    target: "kakehashi::synthetic_diag",
+                    target: LOG_TARGET,
                     "No diagnostics to collect for {} (no snapshot data)",
                     uri_clone
                 );
@@ -79,7 +79,7 @@ impl Kakehashi {
 
             if request_infos.is_empty() {
                 log::debug!(
-                    target: "kakehashi::synthetic_diag",
+                    target: LOG_TARGET,
                     "No bridge configs for any injection regions in {}",
                     uri_clone
                 );
@@ -93,7 +93,7 @@ impl Kakehashi {
                 fan_out_diagnostic_requests(&bridge_pool, &uri_clone, request_infos).await;
 
             log::debug!(
-                target: "kakehashi::synthetic_diag",
+                target: LOG_TARGET,
                 "Collected {} diagnostics for {}",
                 diagnostics.len(),
                 uri_clone
