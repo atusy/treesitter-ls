@@ -68,6 +68,18 @@ pub type CancelReceiver = oneshot::Receiver<()>;
 #[derive(Debug, Clone)]
 pub struct AlreadySubscribedError(pub UpstreamId);
 
+impl std::fmt::Display for AlreadySubscribedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "request ID {} is already subscribed for cancellation",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for AlreadySubscribedError {}
+
 /// Registry of cancel notification subscribers.
 ///
 /// Maps upstream request IDs to oneshot senders that notify handlers when
