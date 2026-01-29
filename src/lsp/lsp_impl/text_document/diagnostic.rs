@@ -113,6 +113,14 @@ impl Kakehashi {
         // same upstream_request_id. This is intentional - when the client cancels a diagnostic
         // request, all downstream requests to language servers should be cancelled atomically.
         // This ensures consistent behavior: either all regions complete or all are cancelled.
+        //
+        // LIMITATION: The current upstream_request_registry in LanguageServerPool maps each
+        // upstream ID to a single server_name. When multiple regions use different downstream
+        // servers (e.g., lua-ls and pyright), only the last registered server receives the
+        // cancel notification. This is acceptable for Phase 1 because:
+        // - Most documents have injection regions using only one downstream server
+        // - Cancel is best-effort per LSP spec - partial cancellation is tolerable
+        // - Full multi-server cancel would require registry refactoring (HashMap<Id, Vec<String>>)
         let upstream_request_id = match get_current_request_id() {
             Some(tower_lsp_server::jsonrpc::Id::Number(n)) => UpstreamId::Number(n),
             Some(tower_lsp_server::jsonrpc::Id::String(s)) => UpstreamId::String(s),
