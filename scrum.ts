@@ -31,7 +31,7 @@ const scrum: ScrumDashboard = {
         { criterion: "Diagnostic positions transformed from virtual to host coordinates", verification: "Unit test verifies position mapping" },
         { criterion: "E2E test verifies diagnostic bridging", verification: "tests/e2e_lsp_lua_diagnostic.rs exists and passes" },
       ],
-      status: "ready",
+      status: "done",
     },
     {
       id: "pbi-diagnostic-multi-region",
@@ -49,55 +49,10 @@ const scrum: ScrumDashboard = {
       status: "ready",
     },
   ],
-  sprint: {
-    number: 16,
-    pbi_id: "pbi-diagnostic-single-region",
-    goal: "Implement textDocument/diagnostic handler for first virtual document with position transformation",
-    status: "in_progress",
-    subtasks: [
-      {
-        test: "Test diagnosticProvider capability is advertised in ServerCapabilities",
-        implementation: "Add DiagnosticServerCapabilities::Options to initialize response with inter_file_dependencies=false, workspace_diagnostics=false",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: ["ADR-0020 specifies these capability settings"],
-      },
-      {
-        test: "Test send_diagnostic_request builds correct JSON-RPC request with virtual URI",
-        implementation: "Add build_bridge_diagnostic_request and send_diagnostic_request to pool following hover/document_symbol pattern",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: ["Request doesn't need position - operates on whole document like document_symbol"],
-      },
-      {
-        test: "Test transform_diagnostic_response_to_host transforms positions correctly",
-        implementation: "Add transform_diagnostic_response_to_host that transforms Diagnostic.range and relatedInformation positions",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: ["Position transformation: virtual_line + region_start_line = host_line"],
-      },
-      {
-        test: "Test diagnostic handler returns diagnostics for first injection region",
-        implementation: "Add diagnostic method to LanguageServer impl that resolves first injection region and forwards request",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: ["Sprint 16 scope: first region only; Sprint 17 adds multi-region aggregation"],
-      },
-      {
-        test: "E2E test verifies diagnostic bridging with lua-language-server",
-        implementation: "Add tests/e2e_lsp_lua_diagnostic.rs following existing e2e test patterns",
-        type: "behavioral",
-        status: "green",
-        commits: [],
-        notes: ["E2E tests pass - capability advertised and diagnostic request handled"],
-      },
-    ],
-  },
+  sprint: null,
   completed: [
+    // Sprint 16: 5 subtasks, diagnostic capability + request/response transformation + E2E test
+    { number: 16, pbi_id: "pbi-diagnostic-single-region", goal: "Implement textDocument/diagnostic handler for first virtual document with position transformation", status: "done", subtasks: [] },
     // Sprint 15: 3 phases, 6 subtasks, key commits: a874a7d9, 52d7c3d0, a0c16e97
     { number: 15, pbi_id: "pbi-cancellation-forwarding", goal: "Implement $/cancelRequest notification forwarding to downstream servers while preserving pending request entries", status: "done", subtasks: [] },
     // Sprint 14: 4 phases, 6 acceptance criteria, key commits: eefa609a, 67b9db3d, b2721d65, cfe5cd33
@@ -115,6 +70,11 @@ const scrum: ScrumDashboard = {
     ],
   },
   retrospectives: [
+    { sprint: 16, improvements: [
+      { action: "Bridge method classification documented: whole-document methods (diagnostic, document_symbol) vs position-specific methods (hover, definition) - helps choose correct request pattern", timing: "immediate", status: "completed", outcome: "Pattern clearly documented in subtask notes; diagnostic follows document_symbol pattern without position." },
+      { action: "Sprint 15 retrospective action validated: Clippy collapsible_if caught at review phase; 'make check' after each green phase would catch earlier", timing: "sprint", status: "active", outcome: null },
+      { action: "First-region-only scoping enables incremental delivery: Sprint 16 delivers value while Sprint 17 adds aggregation", timing: "immediate", status: "completed", outcome: "Clean separation allowed focused implementation; all_regions[0] pattern makes Sprint 17 extension clear." },
+    ] },
     { sprint: 15, improvements: [
       { action: "Document BridgeCoordinator delegation pattern: handlers access pool directly, delegating methods added to coordinator are unused - clarify API design expectations upfront", timing: "immediate", status: "completed", outcome: "Added API Design Pattern section to coordinator.rs documenting two access patterns: direct pool access (preferred) vs delegating methods (convenience). Clarifies YAGNI principle for new features." },
       { action: "Run 'make check' after each green phase, not just at review - catches Clippy issues (missing Default impl, nested if) earlier", timing: "sprint", status: "active", outcome: null },
