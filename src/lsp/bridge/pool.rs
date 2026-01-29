@@ -54,9 +54,13 @@ use super::protocol::{VirtualDocumentUri, build_bridge_didopen_notification};
 
 /// Timeout for LSP initialize handshake (ADR-0018 Tier 0: 30-60s recommended).
 ///
+/// Used for:
+/// - Handshake timeout when spawning new server connections
+/// - Wait-for-ready timeout when diagnostic requests wait for initializing servers
+///
 /// If a downstream language server does not respond to the initialize request
 /// within this duration, the connection attempt fails with a timeout error.
-const INIT_TIMEOUT_SECS: u64 = 30;
+pub(crate) const INIT_TIMEOUT_SECS: u64 = 30;
 
 use super::actor::{ResponseRouter, spawn_reader_task_for_language};
 use super::connection::AsyncBridgeConnection;

@@ -14,17 +14,11 @@ use std::time::Duration;
 use crate::config::settings::BridgeServerConfig;
 use url::Url;
 
-use super::super::pool::{LanguageServerPool, UpstreamId};
+use super::super::pool::{INIT_TIMEOUT_SECS, LanguageServerPool, UpstreamId};
 use super::super::protocol::{
     ResponseTransformContext, VirtualDocumentUri, build_bridge_diagnostic_request,
     transform_diagnostic_response_to_host,
 };
-
-/// Timeout for waiting for server to become ready.
-///
-/// This matches the INIT_TIMEOUT_SECS in pool.rs (30 seconds).
-/// Diagnostic requests wait for initializing servers to provide better UX.
-const WAIT_FOR_READY_TIMEOUT_SECS: u64 = 30;
 
 impl LanguageServerPool {
     /// Send a diagnostic request and wait for the response.
@@ -67,7 +61,7 @@ impl LanguageServerPool {
             .get_or_create_connection_wait_ready(
                 server_name,
                 server_config,
-                Duration::from_secs(WAIT_FOR_READY_TIMEOUT_SECS),
+                Duration::from_secs(INIT_TIMEOUT_SECS),
             )
             .await?;
 
