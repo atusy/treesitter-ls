@@ -316,7 +316,7 @@ impl CacheableInjectionRegion {
         virtual_pos: tower_lsp_server::ls_types::Position,
     ) -> tower_lsp_server::ls_types::Position {
         tower_lsp_server::ls_types::Position {
-            line: virtual_pos.line + self.line_range.start,
+            line: virtual_pos.line.saturating_add(self.line_range.start),
             character: virtual_pos.character,
         }
     }
