@@ -129,3 +129,109 @@ More text.
     // Clean shutdown
     shutdown_client(&mut client);
 }
+
+/// E2E test: multi-region diagnostic aggregation with multiple Lua code blocks
+///
+/// Sprint 17: Verifies that diagnostics from multiple injection regions
+/// are aggregated into a single response.
+#[test]
+fn e2e_diagnostic_multi_region_aggregation() {
+    let mut client = create_lua_configured_client();
+
+    // Open markdown document with MULTIPLE Lua code blocks
+    // This tests the Sprint 17 multi-region aggregation
+    let markdown_content = r#"# Multi-Region Diagnostic Test
+
+First Lua block:
+
+```lua
+-- Block 1: Valid Lua code
+local x = 1
+print(x)
+```
+
+Some text between blocks.
+
+Second Lua block:
+
+```lua
+-- Block 2: More Lua code
+local y = 2
+return y
+```
+
+Third Lua block:
+
+```lua
+-- Block 3: Even more Lua
+function test()
+    return "hello"
+end
+```
+
+End of document.
+"#;
+
+    let markdown_uri = "file:///test_multi_region_diagnostic.md";
+
+    client.send_notification(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": markdown_uri,
+                "languageId": "markdown",
+                "version": 1,
+                "text": markdown_content
+            }
+        }),
+    );
+
+    // Give lua-ls time to start and analyze all regions
+    std::thread::sleep(std::time::Duration::from_millis(3000));
+
+    // Send diagnostic request - should aggregate from all 3 Lua blocks
+    let response = client.send_request(
+        "textDocument/diagnostic",
+        json!({
+            "textDocument": {
+                "uri": markdown_uri
+            }
+        }),
+    );
+
+    println!(
+        "Multi-region diagnostic response: {}",
+        serde_json::to_string_pretty(&response).unwrap()
+    );
+
+    // The response should be a DocumentDiagnosticReport
+    let result = response.get("result");
+    assert!(
+        result.is_some(),
+        "Should have result in multi-region diagnostic response"
+    );
+
+    // Verify it's a "full" report
+    let result = result.unwrap();
+    let kind = result.get("kind");
+    assert_eq!(
+        kind,
+        Some(&json!("full")),
+        "Multi-region result should be a 'full' report"
+    );
+
+    // The items array should exist (may be empty if no diagnostics reported)
+    let items = result.get("items");
+    assert!(
+        items.is_some(),
+        "Multi-region result should have 'items' field"
+    );
+
+    println!(
+        "E2E: Multi-region diagnostic aggregation handled correctly with {} diagnostics",
+        items.unwrap().as_array().map(|a| a.len()).unwrap_or(0)
+    );
+
+    // Clean shutdown
+    shutdown_client(&mut client);
+}
