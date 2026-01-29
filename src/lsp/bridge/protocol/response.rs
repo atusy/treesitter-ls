@@ -3417,8 +3417,8 @@ mod tests {
         // Only the real file URI entry should remain
         assert_eq!(related.len(), 1);
         assert_eq!(related[0]["location"]["uri"], "file:///real/file.lua");
-        // The range for the real file entry should be transformed
-        assert_eq!(related[0]["location"]["range"]["start"]["line"], 13); // 10 + 3
+        // The range for real file entry is NOT transformed (different from host URI)
+        assert_eq!(related[0]["location"]["range"]["start"]["line"], 10); // unchanged
     }
 
     #[test]
