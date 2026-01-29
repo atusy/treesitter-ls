@@ -68,7 +68,18 @@ Phase 1: Pure Pull
 │                                                                        │
 └────────────────────────────────────────────────────────────────────────┘
 
-Phase 2: Cancellation-Resilient Pull
+Phase 2-3: Synthetic Push (using pull internally)
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│  Client ──didSave/didOpen/didChange──► kakehashi                       │
+│                                            │                           │
+│                             (internally pull from downstream servers)  │
+│                                            │                           │
+│  Client ◄──publishDiagnostics──────────────┘                           │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+
+Phase 6: Cancellation-Resilient Pull (Optional)
 ┌────────────────────────────────────────────────────────────────────────┐
 │                                                                        │
 │  Client ──textDocument/diagnostic──► kakehashi                         │
@@ -82,17 +93,6 @@ Phase 2: Cancellation-Resilient Pull
 │                              (check: document still valid?)            │
 │                                          │                             │
 │  Client ◄──publishDiagnostics────────────┘                             │
-│                                                                        │
-└────────────────────────────────────────────────────────────────────────┘
-
-Phase 3-4: Synthetic Push (using pull internally)
-┌────────────────────────────────────────────────────────────────────────┐
-│                                                                        │
-│  Client ──didSave/didOpen/didChange──► kakehashi                       │
-│                                            │                           │
-│                             (internally pull from downstream servers)  │
-│                                            │                           │
-│  Client ◄──publishDiagnostics──────────────┘                           │
 │                                                                        │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -113,18 +113,7 @@ kakehashi implements `textDocument/diagnostic` handler:
 
 **Key simplification**: No caching, no lifecycle tracking, no race conditions. The diagnostic state exists only for the duration of the request.
 
-#### Phase 2: Cancellation-Resilient Pull
-
-Handle client-side cancellation gracefully when bridge overhead causes slow responses:
-
-1. On pull diagnostic request cancellation, continue processing in background
-2. When downstream responses arrive, check if the host document is still valid (not stale)
-3. If valid, publish aggregated diagnostics via `textDocument/publishDiagnostics`
-4. If stale (document has changed), discard results
-
-**Rationale**: kakehashi's bridge architecture introduces inherent latency (fan-out to multiple downstream servers, position transformation). Clients may timeout before kakehashi can respond. Rather than discarding completed work, this phase converts cancelled pulls into push notifications.
-
-#### Phase 3: Synthetic Push on didSave/didOpen
+#### Phase 2: Synthetic Push on didSave/didOpen
 
 Extend Phase 1 to proactively publish diagnostics:
 
@@ -133,7 +122,7 @@ Extend Phase 1 to proactively publish diagnostics:
 
 This provides push-like UX for clients that don't support pull diagnostics, while using pull internally.
 
-#### Phase 4: Higher Frequency Diagnostics
+#### Phase 3: Higher Frequency Diagnostics
 
 Extend triggers for diagnostic refresh:
 
@@ -142,7 +131,7 @@ Extend triggers for diagnostic refresh:
 
 Same internal mechanism: pull from downstream, aggregate, publish.
 
-#### Phase 5: Legacy Server Support
+#### Phase 4: Legacy Server Support
 
 For downstream servers that don't support `textDocument/diagnostic`:
 
@@ -151,13 +140,29 @@ For downstream servers that don't support `textDocument/diagnostic`:
   - For pull-capable servers: query via `textDocument/diagnostic`
   - For push-only servers: use cached diagnostics
 
-Caching in this phase is **required for correctness** — without it, legacy servers cannot participate in diagnostics. Phase 6 adds optional caching for performance optimization.
+Caching in this phase is **required for correctness** — without it, legacy servers cannot participate in diagnostics. Phase 5 adds optional caching for performance optimization.
 
-#### Phase 6: Full Reactive Optimization
+#### Phase 5: Full Reactive Optimization
 
 - Cache recent pull results to avoid redundant queries
 - Implement `workspace/diagnostic/refresh` to invalidate caches
 - React to any downstream `publishDiagnostics` to update cache and publish
+
+#### Phase 6: Cancellation-Resilient Pull (Optional)
+
+Handle client-side cancellation gracefully when bridge overhead causes slow responses:
+
+1. On pull diagnostic request cancellation, continue processing in background
+2. When downstream responses arrive, check if the host document is still valid (not stale)
+3. If valid, publish aggregated diagnostics via `textDocument/publishDiagnostics`
+4. If stale (document has changed), discard results
+
+**Rationale**: This phase is optional because:
+- Users can simply re-request diagnostics if a request is cancelled
+- Phases 2-3 (synthetic push) provide proactive diagnostics, reducing reliance on pull requests
+- The added complexity of background task management may not be worth the benefit
+
+**When to implement**: Consider this phase only if users frequently experience cancellations due to bridge latency and synthetic push (Phases 2-3) is insufficient for the use case.
 
 ### Position Transformation
 
@@ -196,8 +201,8 @@ For each host document, diagnostics are aggregated by:
 ### Positive
 
 **Dramatic Simplification:**
-- No `InjectionContextTracker` required (Phase 1-3)
-- No diagnostic cache required (Phase 1-3)
+- No `InjectionContextTracker` required (Phases 1-3)
+- No diagnostic cache required (Phases 1-3)
 - No lifecycle event handling for diagnostics
 - No race condition mitigation for version mismatches
 - Position transformation uses existing injection resolver data
@@ -213,7 +218,7 @@ For each host document, diagnostics are aggregated by:
 - Growing editor support (VS Code, Neovim 0.10+, Helix, Zed)
 
 **Graceful Degradation:**
-- Clients without pull support get synthetic push (Phase 2)
+- Clients without pull support get synthetic push (Phases 2-3)
 - Servers without pull support get cached push (Phase 4)
 
 ### Negative
@@ -226,11 +231,11 @@ For each host document, diagnostics are aggregated by:
 **Latency Characteristics:**
 - Pull requires round-trip to downstream servers at request time
 - First diagnostic response may be slower than pre-computed push
-- Mitigated by Phase 2 proactive publishing
+- Mitigated by Phases 2-3 proactive publishing
 
 **Client Compatibility:**
 - Older editors may not support pull diagnostics
-- Mitigated by Phase 2 synthetic push
+- Mitigated by Phases 2-3 synthetic push
 
 ### Neutral
 
@@ -286,9 +291,9 @@ Forward raw `publishDiagnostics` from virtual URIs, let clients aggregate.
 | lua-language-server | Yes | Recent versions support pull |
 | typescript-language-server | Yes | Via tsserver |
 | gopls | Yes | Full pull support |
-| taplo | Unknown | May require Phase 4 fallback |
+| taplo | Unknown | May require Phase 4 (Legacy Server Support) fallback |
 
-For servers without pull support, Phase 4 provides the cache-based fallback.
+For servers without pull support, Phase 4 (Legacy Server Support) provides the cache-based fallback.
 
 ## Implementation Notes
 
