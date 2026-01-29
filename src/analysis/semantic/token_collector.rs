@@ -10,7 +10,7 @@ use tree_sitter::{Query, QueryCursor, StreamingIterator, Tree};
 use super::legend::apply_capture_mapping;
 
 /// Represents a token before delta encoding with all position information.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RawToken {
     /// 0-indexed line number in the host document
     pub line: usize,
