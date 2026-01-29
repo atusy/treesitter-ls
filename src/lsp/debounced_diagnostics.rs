@@ -266,8 +266,7 @@ async fn execute_debounced_diagnostic(data: DebouncedDiagnosticData) {
 
         // Fan-out diagnostic requests (using shared implementation)
         let diagnostics =
-            fan_out_diagnostic_requests(&bridge_pool, &uri_clone, request_infos, LOG_TARGET)
-                .await;
+            fan_out_diagnostic_requests(&bridge_pool, &uri_clone, request_infos, LOG_TARGET).await;
 
         log::debug!(
             target: LOG_TARGET,
