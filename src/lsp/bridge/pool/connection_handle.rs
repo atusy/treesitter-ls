@@ -36,6 +36,12 @@ use crate::lsp::bridge::protocol::{RequestId, build_exit_notification, build_shu
 pub(crate) struct ConnectionHandle {
     /// Connection state - uses std::sync::RwLock for fast, synchronous state checks
     state: std::sync::RwLock<ConnectionState>,
+    /// Watch channel for async state change notifications.
+    ///
+    /// Subscribers can wait for state transitions (e.g., Initializing -> Ready)
+    /// using `wait_for_ready()`. The Sender is stored here; receivers are created
+    /// via `state_watch.subscribe()`.
+    state_watch: tokio::sync::watch::Sender<ConnectionState>,
     /// Writer for sending messages (Mutex serializes writes)
     writer: tokio::sync::Mutex<SplitConnectionWriter>,
     /// Router for pending request tracking
@@ -85,8 +91,10 @@ impl ConnectionHandle {
         reader_handle: ReaderTaskHandle,
         initial_state: ConnectionState,
     ) -> Self {
+        let (state_watch, _receiver) = tokio::sync::watch::channel(initial_state);
         Self {
             state: std::sync::RwLock::new(initial_state),
+            state_watch,
             writer: tokio::sync::Mutex::new(writer),
             router,
             reader_handle,
@@ -130,6 +138,7 @@ impl ConnectionHandle {
     /// - Initializing -> Failed (on timeout/error)
     ///
     /// Recovers from poisoned locks with logging per project convention.
+    /// Also notifies all watchers of the state change via the watch channel.
     pub(super) fn set_state(&self, new_state: ConnectionState) {
         match self.state.write() {
             Ok(mut guard) => *guard = new_state,
@@ -141,6 +150,9 @@ impl ConnectionHandle {
                 *poisoned.into_inner() = new_state;
             }
         }
+        // Notify watchers of state change. send_replace() is non-blocking and
+        // always succeeds (it replaces the current value regardless of receivers).
+        self.state_watch.send_replace(new_state);
     }
 
     /// Begin graceful shutdown of the connection.
