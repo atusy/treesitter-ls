@@ -720,11 +720,7 @@ impl Kakehashi {
     ///
     /// The InstallingLanguages tracker in maybe_auto_install_language prevents
     /// duplicate install attempts.
-    async fn check_injected_languages_auto_install(
-        &self,
-        uri: &Url,
-        languages: &HashSet<String>,
-    ) {
+    async fn check_injected_languages_auto_install(&self, uri: &Url, languages: &HashSet<String>) {
         let auto_install_enabled = self.is_auto_install_enabled();
 
         // Get document text for auto-install (needed by maybe_auto_install_language)
