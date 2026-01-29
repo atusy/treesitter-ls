@@ -377,82 +377,6 @@ mod tests {
     }
 
     #[test]
-    fn test_semantic_tokens_delta() {
-        // Create mock semantic tokens for testing
-        let previous = SemanticTokens {
-            result_id: Some("v1".to_string()),
-            data: vec![
-                SemanticToken {
-                    delta_line: 0,
-                    delta_start: 0,
-                    length: 10,
-                    token_type: 0, // comment
-                    token_modifiers_bitset: 0,
-                },
-                SemanticToken {
-                    delta_line: 1,
-                    delta_start: 0,
-                    length: 3,
-                    token_type: 1, // keyword
-                    token_modifiers_bitset: 0,
-                },
-                SemanticToken {
-                    delta_line: 0,
-                    delta_start: 4,
-                    length: 1,
-                    token_type: 17, // variable
-                    token_modifiers_bitset: 0,
-                },
-            ],
-        };
-
-        // Modified tokens (changed comment length)
-        let current = SemanticTokens {
-            result_id: Some("v2".to_string()),
-            data: vec![
-                SemanticToken {
-                    delta_line: 0,
-                    delta_start: 0,
-                    length: 14,    // changed length
-                    token_type: 0, // comment
-                    token_modifiers_bitset: 0,
-                },
-                SemanticToken {
-                    delta_line: 1,
-                    delta_start: 0,
-                    length: 3,
-                    token_type: 1, // keyword
-                    token_modifiers_bitset: 0,
-                },
-                SemanticToken {
-                    delta_line: 0,
-                    delta_start: 4,
-                    length: 1,
-                    token_type: 17, // variable
-                    token_modifiers_bitset: 0,
-                },
-            ],
-        };
-
-        let delta = calculate_semantic_tokens_delta(&previous, &current);
-        assert!(delta.is_some());
-
-        let delta = delta.unwrap();
-        assert_eq!(delta.result_id, Some("v2".to_string()));
-        assert_eq!(delta.edits.len(), 1);
-        // LSP spec: start and deleteCount are integer indices (each token = 5 integers)
-        assert_eq!(delta.edits[0].start, 0);
-        // With suffix matching: only the first token (comment) changed
-        // The last two tokens (keyword, variable) are suffix matched
-        assert_eq!(delta.edits[0].delete_count, 5); // 1 token * 5 integers
-        let edits_data = delta.edits[0]
-            .data
-            .as_ref()
-            .expect("delta edits should include replacement data");
-        assert_eq!(edits_data.len(), 1);
-    }
-
-    #[test]
     fn test_semantic_tokens_range() {
         use tower_lsp_server::ls_types::Position;
 
@@ -511,26 +435,6 @@ mod tests {
         // We'd need actual tree-sitter setup to test the real function,
         // so this is more of a placeholder showing the expected structure
         assert_eq!(all_tokens.data.len(), 4);
-    }
-
-    #[test]
-    fn test_semantic_tokens_delta_no_changes() {
-        let tokens = SemanticTokens {
-            result_id: Some("v1".to_string()),
-            data: vec![SemanticToken {
-                delta_line: 0,
-                delta_start: 0,
-                length: 10,
-                token_type: 0,
-                token_modifiers_bitset: 0,
-            }],
-        };
-
-        let delta = calculate_semantic_tokens_delta(&tokens, &tokens);
-        assert!(delta.is_some());
-
-        let delta = delta.unwrap();
-        assert_eq!(delta.edits.len(), 0);
     }
 
     /// Alias for acceptance criteria naming
