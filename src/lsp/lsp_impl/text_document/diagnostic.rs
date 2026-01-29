@@ -94,6 +94,11 @@ impl Kakehashi {
         }
 
         // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
+        //
+        // Note: All parallel diagnostic requests for different injection regions share the
+        // same upstream_request_id. This is intentional - when the client cancels a diagnostic
+        // request, all downstream requests to language servers should be cancelled atomically.
+        // This ensures consistent behavior: either all regions complete or all are cancelled.
         let upstream_request_id = match get_current_request_id() {
             Some(tower_lsp_server::jsonrpc::Id::Number(n)) => UpstreamId::Number(n),
             Some(tower_lsp_server::jsonrpc::Id::String(s)) => UpstreamId::String(s),
