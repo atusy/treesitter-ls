@@ -19,6 +19,7 @@
 //! the subscriber is notified via a oneshot channel. This enables handlers to
 //! immediately abort their work and return `RequestCancelled` error to the client.
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -176,10 +177,12 @@ impl CancelForwarder {
         let (tx, rx) = oneshot::channel();
         {
             let mut subscribers = self.subscribers.lock().unwrap_or_else(|e| e.into_inner());
-            if subscribers.contains_key(&upstream_id) {
-                return Err(AlreadySubscribedError(upstream_id));
+            match subscribers.entry(upstream_id) {
+                Entry::Occupied(entry) => return Err(AlreadySubscribedError(entry.key().clone())),
+                Entry::Vacant(entry) => {
+                    entry.insert(tx);
+                }
             }
-            subscribers.insert(upstream_id, tx);
         }
         Ok(rx)
     }
