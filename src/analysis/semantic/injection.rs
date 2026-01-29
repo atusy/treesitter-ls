@@ -13,20 +13,33 @@ use super::token_collector::{RawToken, collect_host_tokens};
 /// Maximum recursion depth for nested injections to prevent stack overflow
 pub(super) const MAX_INJECTION_DEPTH: usize = 10;
 
+/// Check if byte range is valid for slicing text.
+///
+/// Returns `true` if start <= end and both are within text bounds.
+/// Returns `false` for invalid ranges that would cause panics or be meaningless.
+///
+/// Invalid bounds can occur when:
+/// - Trees become stale relative to the text during rapid edits (race condition)
+/// - Offset calculations result in inverted ranges
+/// - Content nodes extend beyond current text length
+#[inline]
+fn is_valid_byte_range(start: usize, end: usize, text_len: usize) -> bool {
+    start <= end && end <= text_len
+}
+
 /// Validate injection node bounds before slicing text.
 ///
 /// Returns `Some((start_byte, end_byte))` if the bounds are valid,
 /// or `None` if the injection should be skipped due to invalid bounds.
-///
-/// Invalid bounds can occur when trees become stale relative to the text,
-/// which is possible during rapid edits (race condition).
 fn validate_injection_bounds(
     content_node: &tree_sitter::Node,
     text_len: usize,
 ) -> Option<(usize, usize)> {
     let start = content_node.start_byte();
     let end = content_node.end_byte();
-    if start > end || end > text_len {
+    if is_valid_byte_range(start, end, text_len) {
+        Some((start, end))
+    } else {
         log::debug!(
             target: "kakehashi::semantic",
             "Skipping injection with invalid bounds: start={}, end={}, text_len={}",
@@ -35,8 +48,6 @@ fn validate_injection_bounds(
             text_len
         );
         None
-    } else {
-        Some((start, end))
     }
 }
 
@@ -114,12 +125,8 @@ fn collect_injection_contexts<'a>(
             (content_node.start_byte(), content_node.end_byte())
         };
 
-        // Validate range: ensure bounds are valid AND start <= end
-        // The start > end case can occur during concurrent edits or with certain offset calculations
-        if inj_start_byte >= text.len()
-            || inj_end_byte > text.len()
-            || inj_start_byte > inj_end_byte
-        {
+        // Validate effective range after offset adjustment
+        if !is_valid_byte_range(inj_start_byte, inj_end_byte, text.len()) {
             continue;
         }
 
@@ -234,11 +241,8 @@ fn collect_injection_languages_recursive(
             (content_node.start_byte(), content_node.end_byte())
         };
 
-        // Validate range: ensure bounds are valid AND start <= end
-        if inj_start_byte >= text.len()
-            || inj_end_byte > text.len()
-            || inj_start_byte > inj_end_byte
-        {
+        // Validate effective range after offset adjustment
+        if !is_valid_byte_range(inj_start_byte, inj_end_byte, text.len()) {
             continue;
         }
         let inj_content_text = &text[inj_start_byte..inj_end_byte];
