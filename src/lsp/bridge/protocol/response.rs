@@ -144,13 +144,16 @@ fn transform_completion_item_range(item: &mut serde_json::Value, region_start_li
 }
 
 /// Transform a range's line numbers from virtual to host coordinates.
+///
+/// Uses saturating_add to prevent overflow for large line numbers, consistent
+/// with saturating_sub used elsewhere in the codebase.
 fn transform_range(range: &mut serde_json::Value, region_start_line: u32) {
     // Transform start position
     if let Some(start) = range.get_mut("start")
         && let Some(line) = start.get_mut("line")
         && let Some(line_num) = line.as_u64()
     {
-        *line = serde_json::json!(line_num + region_start_line as u64);
+        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
     }
 
     // Transform end position
@@ -158,7 +161,7 @@ fn transform_range(range: &mut serde_json::Value, region_start_line: u32) {
         && let Some(line) = end.get_mut("line")
         && let Some(line_num) = line.as_u64()
     {
-        *line = serde_json::json!(line_num + region_start_line as u64);
+        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
     }
 }
 
@@ -462,7 +465,7 @@ fn transform_position(position: &mut serde_json::Value, region_start_line: u32) 
     if let Some(line) = position.get_mut("line")
         && let Some(line_num) = line.as_u64()
     {
-        *line = serde_json::json!(line_num + region_start_line as u64);
+        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
     }
 }
 
