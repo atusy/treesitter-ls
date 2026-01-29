@@ -131,6 +131,58 @@ impl ConnectionHandle {
         }
     }
 
+    /// Wait for the connection to reach Ready state with timeout.
+    ///
+    /// This method is useful for diagnostic requests that want to wait for
+    /// an initializing server instead of failing fast.
+    ///
+    /// # Returns
+    /// - `Ok(())` if the connection reaches Ready state
+    /// - `Err` with:
+    ///   - `ErrorKind::TimedOut` if the timeout expires
+    ///   - `ErrorKind::Other` if the server fails or shuts down during wait
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Wait up to 30s for server to be ready
+    /// handle.wait_for_ready(Duration::from_secs(30)).await?;
+    /// // Now safe to send requests
+    /// ```
+    pub(crate) async fn wait_for_ready(&self, timeout: Duration) -> io::Result<()> {
+        let mut receiver = self.state_watch.subscribe();
+
+        let wait_future = async {
+            loop {
+                // Copy state immediately to avoid holding borrow across await
+                let current_state = *receiver.borrow();
+                match current_state {
+                    ConnectionState::Ready => return Ok(()),
+                    ConnectionState::Failed => {
+                        return Err(io::Error::other(
+                            "bridge: server failed during initialization",
+                        ));
+                    }
+                    ConnectionState::Closing | ConnectionState::Closed => {
+                        return Err(io::Error::other("bridge: server shutdown during wait"));
+                    }
+                    ConnectionState::Initializing => {
+                        // Wait for state change notification
+                        if receiver.changed().await.is_err() {
+                            return Err(io::Error::other("bridge: state channel closed"));
+                        }
+                    }
+                }
+            }
+        };
+
+        tokio::time::timeout(timeout, wait_future)
+            .await
+            .map_err(|_| {
+                io::Error::new(io::ErrorKind::TimedOut, "bridge: wait for ready timeout")
+            })?
+    }
+
     /// Set the connection state.
     ///
     /// Used for state transitions during async initialization:
@@ -863,5 +915,180 @@ mod tests {
             "Should have valid downstream ID"
         );
         assert_eq!(handle.router().pending_count(), 1);
+    }
+
+    /// Test that wait_for_ready returns immediately when already Ready.
+    #[tokio::test]
+    async fn wait_for_ready_returns_immediately_when_ready() {
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        // Create handle already in Ready state
+        let handle =
+            ConnectionHandle::with_state(writer, router, reader_handle, ConnectionState::Ready);
+
+        // Should return immediately
+        let result = handle.wait_for_ready(Duration::from_millis(10)).await;
+        assert!(result.is_ok(), "Should succeed immediately when Ready");
+    }
+
+    /// Test that wait_for_ready waits for Initializing -> Ready transition.
+    #[tokio::test]
+    async fn wait_for_ready_waits_for_initialization() {
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        // Create handle in Initializing state
+        let handle = Arc::new(ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Initializing,
+        ));
+
+        // Spawn a task that will transition to Ready after a delay
+        let handle_clone = Arc::clone(&handle);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            handle_clone.set_state(ConnectionState::Ready);
+        });
+
+        // Wait for ready - should complete after state transition
+        let result = handle.wait_for_ready(Duration::from_secs(1)).await;
+        assert!(
+            result.is_ok(),
+            "Should succeed after transitioning to Ready"
+        );
+        assert_eq!(handle.state(), ConnectionState::Ready);
+    }
+
+    /// Test that wait_for_ready returns error on Failed state.
+    #[tokio::test]
+    async fn wait_for_ready_fails_on_failed_state() {
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        // Create handle in Initializing state
+        let handle = Arc::new(ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Initializing,
+        ));
+
+        // Spawn a task that will transition to Failed
+        let handle_clone = Arc::clone(&handle);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            handle_clone.set_state(ConnectionState::Failed);
+        });
+
+        // Wait for ready - should fail due to Failed state
+        let result = handle.wait_for_ready(Duration::from_secs(1)).await;
+        assert!(result.is_err(), "Should fail when transitioning to Failed");
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("failed during initialization"),
+            "Error should mention initialization failure: {}",
+            err
+        );
+    }
+
+    /// Test that wait_for_ready times out correctly.
+    #[tokio::test]
+    async fn wait_for_ready_times_out() {
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        // Create handle in Initializing state that won't transition
+        let handle = ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Initializing,
+        );
+
+        // Wait with short timeout - should timeout
+        let result = handle.wait_for_ready(Duration::from_millis(50)).await;
+        assert!(result.is_err(), "Should timeout");
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    /// Test that wait_for_ready returns error on Closing/Closed state.
+    #[tokio::test]
+    async fn wait_for_ready_fails_on_shutdown() {
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+
+        // Create handle in Initializing state
+        let handle = Arc::new(ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Initializing,
+        ));
+
+        // Spawn a task that will transition to Closing
+        let handle_clone = Arc::clone(&handle);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            handle_clone.set_state(ConnectionState::Closing);
+        });
+
+        // Wait for ready - should fail due to shutdown
+        let result = handle.wait_for_ready(Duration::from_secs(1)).await;
+        assert!(result.is_err(), "Should fail when transitioning to Closing");
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("shutdown during wait"),
+            "Error should mention shutdown: {}",
+            err
+        );
     }
 }
