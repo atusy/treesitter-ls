@@ -124,7 +124,7 @@ For downstream servers that don't support `textDocument/diagnostic`:
   - For pull-capable servers: query via `textDocument/diagnostic`
   - For push-only servers: use cached diagnostics
 
-This is the **only phase** that requires caching, and only for legacy servers.
+Caching in this phase is **required for correctness** — without it, legacy servers cannot participate in diagnostics. Phase 5 adds optional caching for performance optimization.
 
 #### Phase 5: Full Reactive Optimization
 
