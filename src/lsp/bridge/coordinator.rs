@@ -115,6 +115,14 @@ impl BridgeCoordinator {
         &self.pool
     }
 
+    /// Get a cloneable reference to the pool for use in spawned tasks.
+    ///
+    /// Used when handlers need to spawn parallel tasks that each need
+    /// their own reference to the pool (e.g., diagnostic fan-out).
+    pub(crate) fn pool_arc(&self) -> Arc<LanguageServerPool> {
+        Arc::clone(&self.pool)
+    }
+
     // ========================================
     // Config lookup (moved from Kakehashi)
     // ========================================
