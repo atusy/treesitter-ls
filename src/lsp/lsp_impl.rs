@@ -151,13 +151,17 @@ impl Kakehashi {
         }
     }
 
-    /// Create a Kakehashi instance with an externally-provided pool.
+    /// Create a Kakehashi instance with an externally-provided pool and cancel forwarder.
     ///
-    /// This is used when the pool needs to be shared with other components,
+    /// This is used when the pool/forwarder needs to be shared with other components,
     /// such as the cancel forwarding middleware.
-    pub fn with_pool(
+    ///
+    /// The `cancel_forwarder` MUST be created from the same `pool` to ensure cancel
+    /// notifications are properly routed between the middleware and handlers.
+    pub fn with_cancel_forwarder(
         client: Client,
         pool: std::sync::Arc<super::bridge::LanguageServerPool>,
+        cancel_forwarder: super::request_id::CancelForwarder,
     ) -> Self {
         let language = LanguageCoordinator::new();
         let parser_pool = language.create_document_parser_pool();
@@ -174,7 +178,7 @@ impl Kakehashi {
             cache: CacheCoordinator::new(),
             settings_manager: SettingsManager::new(),
             auto_install,
-            bridge: BridgeCoordinator::with_pool(pool),
+            bridge: BridgeCoordinator::with_cancel_forwarder(pool, cancel_forwarder),
         }
     }
 

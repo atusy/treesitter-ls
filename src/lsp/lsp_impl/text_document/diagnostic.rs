@@ -2,11 +2,22 @@
 //!
 //! Implements ADR-0020 Phase 1: Pull-first diagnostic forwarding.
 //! Sprint 17: Multi-region diagnostic aggregation with parallel fan-out.
+//!
+//! # Cancel Handling
+//!
+//! This module supports immediate cancellation of diagnostic requests:
+//! - When `$/cancelRequest` is received, the handler aborts and returns `RequestCancelled`
+//! - The JoinSet is dropped, aborting all spawned downstream tasks
+//! - Best-effort cancel forwarding to downstream servers (fire-and-forget via middleware)
+//!
+//! This is achieved using `tokio::select!` to race between:
+//! 1. Cancel notification (via `CancelForwarder::subscribe()`)
+//! 2. Result aggregation (collecting from all downstream tasks)
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use tower_lsp_server::jsonrpc::Result;
+use tower_lsp_server::jsonrpc::{Error, Result};
 use tower_lsp_server::ls_types::{
     Diagnostic, DocumentDiagnosticParams, DocumentDiagnosticReport, DocumentDiagnosticReportResult,
     FullDocumentDiagnosticReport, MessageType, RelatedFullDocumentDiagnosticReport,
@@ -114,22 +125,37 @@ impl Kakehashi {
         //
         // Note: All parallel diagnostic requests for different injection regions share the
         // same upstream_request_id. This is intentional - when the client cancels a diagnostic
-        // request, all downstream requests to language servers should be cancelled atomically.
-        // This ensures consistent behavior: either all regions complete or all are cancelled.
+        // request, the handler returns RequestCancelled immediately and drops the JoinSet,
+        // which aborts all spawned downstream tasks.
         //
-        // LIMITATION: The current upstream_request_registry in LanguageServerPool maps each
-        // upstream ID to a single server_name. When multiple regions use different downstream
-        // servers (e.g., lua-ls and pyright), only the last registered server receives the
-        // cancel notification. This is acceptable for Phase 1 because:
-        // - Most documents have injection regions using only one downstream server
-        // - Cancel is best-effort per LSP spec - partial cancellation is tolerable
-        // - Full multi-server cancel would require registry refactoring (HashMap<Id, Vec<String>>)
+        // Cancel handling flow:
+        // 1. Client sends $/cancelRequest with request ID
+        // 2. RequestIdCapture middleware notifies our cancel_rx via CancelForwarder
+        // 3. tokio::select! triggers cancel branch, drops JoinSet (aborts all tasks)
+        // 4. Handler returns RequestCancelled error to client
+        // 5. Middleware forwards cancel to downstream servers (best-effort, fire-and-forget)
+        //
+        // LIMITATION (downstream cancel propagation):
+        // The current upstream_request_registry maps each upstream ID to a single server_name.
+        // When multiple regions use different downstream servers, only the last registered
+        // server receives the cancel notification. This is acceptable because:
+        // - Upstream cancel (this handler aborting) works correctly for ALL servers
+        // - Downstream cancel forwarding is best-effort per LSP spec
+        // - The JoinSet drop aborts tasks regardless of downstream cancel delivery
+        // TODO: For full multi-server downstream cancel, refactor registry to HashMap<Id, Vec<String>>
         let upstream_request_id = match get_current_request_id() {
             Some(tower_lsp_server::jsonrpc::Id::Number(n)) => UpstreamId::Number(n),
             Some(tower_lsp_server::jsonrpc::Id::String(s)) => UpstreamId::String(s),
             // For notifications without ID or null ID, use Null to avoid collision with ID 0
             None | Some(tower_lsp_server::jsonrpc::Id::Null) => UpstreamId::Null,
         };
+
+        // Subscribe to cancel notifications for this request
+        // The receiver completes when $/cancelRequest arrives for this ID
+        let cancel_rx = self
+            .bridge
+            .cancel_forwarder()
+            .subscribe(upstream_request_id.clone());
 
         // Sprint 17: Process ALL injection regions with parallel fan-out
         // Collect request info for regions that have bridge configs
@@ -207,37 +233,87 @@ impl Kakehashi {
         // Per ADR-0020, this would be needed if downstream servers report overlapping
         // diagnostics. Currently each region is isolated so duplicates are unlikely.
         // TODO: Add deduplication when overlapping diagnostics are observed in practice.
-        let mut all_diagnostics: Vec<Diagnostic> = Vec::new();
-        while let Some(result) = join_set.join_next().await {
-            match result {
-                Ok(Some(diagnostics)) => {
-                    all_diagnostics.extend(diagnostics);
-                }
-                Ok(None) => {
-                    // Region returned no diagnostics or failed - continue with others
-                }
-                Err(e) => {
-                    // Task panicked - log and continue
-                    log::error!(
-                        target: "kakehashi::diagnostic",
-                        "Diagnostic task panicked: {}",
-                        e
-                    );
+        let result = collect_diagnostics_with_cancel(join_set, cancel_rx).await;
+
+        // Clean up cancel subscription (idempotent - no-op if already cancelled)
+        self.bridge
+            .cancel_forwarder()
+            .unsubscribe(&upstream_request_id);
+
+        result
+    }
+}
+
+/// Collect diagnostics from all regions, aborting immediately if cancelled.
+///
+/// Uses `tokio::select!` with biased mode to prioritize cancel handling.
+/// When cancelled:
+/// - Returns `RequestCancelled` error immediately
+/// - Drops the JoinSet, which aborts all spawned tasks
+///
+/// When all regions complete:
+/// - Returns aggregated diagnostics from all successful regions
+async fn collect_diagnostics_with_cancel(
+    mut join_set: tokio::task::JoinSet<Option<Vec<Diagnostic>>>,
+    cancel_rx: crate::lsp::request_id::CancelReceiver,
+) -> Result<DocumentDiagnosticReportResult> {
+    let mut all_diagnostics: Vec<Diagnostic> = Vec::new();
+
+    // Pin the cancel receiver for use in select!
+    tokio::pin!(cancel_rx);
+
+    loop {
+        tokio::select! {
+            // Biased: check cancel first to ensure immediate abort on cancellation
+            biased;
+
+            // Cancel notification received - abort immediately
+            _ = &mut cancel_rx => {
+                log::debug!(
+                    target: "kakehashi::diagnostic",
+                    "Diagnostic request cancelled, aborting {} remaining tasks",
+                    join_set.len()
+                );
+                // JoinSet dropped here, aborting all spawned tasks
+                return Err(Error::request_cancelled());
+            }
+
+            // Next task completed - collect result
+            result = join_set.join_next() => {
+                match result {
+                    Some(Ok(Some(diagnostics))) => {
+                        all_diagnostics.extend(diagnostics);
+                    }
+                    Some(Ok(None)) => {
+                        // Region returned no diagnostics or failed - continue with others
+                    }
+                    Some(Err(e)) => {
+                        // Task panicked - log and continue
+                        log::error!(
+                            target: "kakehashi::diagnostic",
+                            "Diagnostic task panicked: {}",
+                            e
+                        );
+                    }
+                    None => {
+                        // All tasks completed - return aggregated results
+                        break;
+                    }
                 }
             }
         }
-
-        // Return aggregated diagnostics
-        Ok(DocumentDiagnosticReportResult::Report(
-            DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
-                full_document_diagnostic_report: FullDocumentDiagnosticReport {
-                    result_id: None, // No result_id for aggregated multi-region response
-                    items: all_diagnostics,
-                },
-                related_documents: None,
-            }),
-        ))
     }
+
+    // Return aggregated diagnostics
+    Ok(DocumentDiagnosticReportResult::Report(
+        DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
+            full_document_diagnostic_report: FullDocumentDiagnosticReport {
+                result_id: None, // No result_id for aggregated multi-region response
+                items: all_diagnostics,
+            },
+            related_documents: None,
+        }),
+    ))
 }
 
 /// Send a diagnostic request with timeout, returning parsed diagnostics or None on failure.
