@@ -271,6 +271,22 @@ fn collect_injection_languages_recursive(
     }
 }
 
+/// Abstraction over different parser acquisition strategies.
+///
+/// This enum unifies the two patterns for acquiring parsers during injection processing:
+/// - `Pool`: Acquires parsers from a shared `DocumentParserPool` (dynamic borrowing)
+/// - `Local`: Uses pre-acquired parsers from a local `HashMap` (upfront acquisition)
+///
+/// Both variants support the same `acquire`/`release` interface, enabling a single
+/// unified recursive token collection function.
+#[allow(dead_code)] // TODO: Remove after task 3.3 uses this enum
+pub(super) enum ParserProvider<'a> {
+    /// Parser pool variant - acquires/releases parsers dynamically per injection
+    Pool(&'a mut crate::language::DocumentParserPool),
+    /// Local HashMap variant - uses pre-acquired parsers
+    Local(&'a mut HashMap<String, tree_sitter::Parser>),
+}
+
 /// Recursively collect semantic tokens from a document and its injections.
 ///
 /// This function processes the given text and tree, collecting tokens from both
@@ -429,5 +445,31 @@ pub(super) fn collect_injection_tokens_recursive_with_local_parsers(
             supports_multiline,
             all_tokens,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parser_provider_enum_variants_exist() {
+        // This test verifies that ParserProvider enum has both variants
+        // and can be pattern-matched. The actual acquire/release logic
+        // is tested in task 3.2.
+
+        // We can't easily construct real DocumentParserPool or Parser in unit tests,
+        // so we just verify the enum type exists and has the expected structure
+        // by checking that the type is well-formed via a type annotation.
+        fn _assert_pool_variant(_: ParserProvider<'_>) {}
+        fn _assert_local_variant(_: ParserProvider<'_>) {}
+
+        // Verify pattern matching compiles (won't run, just type-check)
+        fn _match_provider(p: ParserProvider<'_>) {
+            match p {
+                ParserProvider::Pool(_) => {}
+                ParserProvider::Local(_) => {}
+            }
+        }
     }
 }
