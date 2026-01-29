@@ -485,24 +485,25 @@ print(x, y, z)
     );
 
     // Check if we got RequestCancelled error or normal response
+    // Per LSP spec, cancel is "best effort" - valid outcomes are:
+    // 1. Normal result (request completed before cancel processed)
+    // 2. RequestCancelled error (-32800)
+    // Any other error indicates a bug and should fail the test.
     if let Some(error) = response.get("error") {
         let error_code = error.get("code").and_then(|c| c.as_i64());
-        if error_code == Some(-32800) {
-            println!("✓ E2E: Diagnostic request was cancelled (got RequestCancelled error -32800)");
-            // This is the ideal outcome - cancel notification was processed in time
-            // and the handler returned RequestCancelled immediately
-        } else {
-            // Other errors are unexpected but not necessarily wrong
-            println!(
-                "! E2E: Diagnostic returned unexpected error (code: {:?}, message: {:?})",
-                error_code,
-                error.get("message")
-            );
-        }
+        assert_eq!(
+            error_code,
+            Some(-32800),
+            "If diagnostic returns an error, it must be RequestCancelled (-32800). \
+             Got error code {:?} with message {:?}",
+            error_code,
+            error.get("message")
+        );
+        println!("✓ E2E: Diagnostic request was cancelled (got RequestCancelled error -32800)");
     } else {
         // Normal response - diagnostics completed before cancel was processed
         // This is also valid - cancel is "best effort" per LSP spec
-        println!("✓ E2E: Diagnostic completed normally before cancel processed (racing condition)");
+        println!("✓ E2E: Diagnostic completed normally before cancel processed (race condition)");
         // Verify we got a valid diagnostic report
         let result = response.get("result");
         assert!(
