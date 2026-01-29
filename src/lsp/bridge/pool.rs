@@ -2945,14 +2945,25 @@ mod tests {
     }
 
     /// Test that ensure_server_ready is idempotent - calling twice doesn't spawn a second server.
+    ///
+    /// Uses a short timeout (100ms) instead of `ensure_server_ready` (which uses 30s default)
+    /// to avoid test slowness with devnull config where handshake always times out.
     #[tokio::test]
     async fn ensure_server_ready_is_idempotent() {
         let pool = LanguageServerPool::new();
         let config = devnull_config();
 
-        // Call twice
-        pool.ensure_server_ready("test-server", &config).await;
-        pool.ensure_server_ready("test-server", &config).await;
+        // Use short timeout to avoid test slowness with devnull
+        // (ensure_server_ready uses 30s which causes ~60s test runtime)
+        let short_timeout = Duration::from_millis(100);
+
+        // Call twice (ignoring errors like ensure_server_ready does)
+        let _ = pool
+            .get_or_create_connection_with_timeout("test-server", &config, short_timeout)
+            .await;
+        let _ = pool
+            .get_or_create_connection_with_timeout("test-server", &config, short_timeout)
+            .await;
 
         // Should still have exactly one connection
         {
