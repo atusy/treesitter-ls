@@ -508,6 +508,59 @@ impl LanguageServerPool {
             )
             .await;
     }
+
+    /// Get or create a connection, waiting for it to be ready if initializing.
+    ///
+    /// Unlike `get_or_create_connection()` which fails fast for initializing servers,
+    /// this method waits for the server to become Ready before returning.
+    ///
+    /// This is useful for diagnostic requests where waiting for server initialization
+    /// provides a better UX than immediately returning empty results.
+    ///
+    /// # Arguments
+    /// * `server_name` - The server name from config (e.g., "tsgo", "rust-analyzer")
+    /// * `server_config` - The server configuration containing command and options
+    /// * `timeout` - Maximum time to wait for the server to become ready
+    ///
+    /// # Returns
+    /// * `Ok(handle)` - Connection is Ready
+    /// * `Err` - Spawn failed, initialization failed, or timeout waiting for Ready
+    pub(crate) async fn get_or_create_connection_wait_ready(
+        &self,
+        server_name: &str,
+        server_config: &crate::config::settings::BridgeServerConfig,
+        timeout: Duration,
+    ) -> io::Result<Arc<ConnectionHandle>> {
+        // First, try to get or create the connection
+        match self
+            .get_or_create_connection(server_name, server_config)
+            .await
+        {
+            Ok(handle) => Ok(handle),
+            Err(e) => {
+                // Check if error is due to server still initializing
+                if e.to_string().contains("downstream server initializing") {
+                    // Get the handle from pool and wait for it to be ready
+                    let handle = {
+                        let connections = self.connections.lock().await;
+                        connections
+                            .get(server_name)
+                            .map(Arc::clone)
+                            .ok_or_else(|| {
+                                io::Error::other("bridge: connection disappeared during wait")
+                            })?
+                    };
+
+                    // Wait for Ready state
+                    handle.wait_for_ready(timeout).await?;
+                    Ok(handle)
+                } else {
+                    // Other error - propagate it
+                    Err(e)
+                }
+            }
+        }
+    }
 }
 
 impl LanguageServerPool {
