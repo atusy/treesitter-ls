@@ -248,11 +248,16 @@ impl QueryLoader {
     /// # Arguments
     /// * `language` - The tree-sitter language
     /// * `query_str` - The full query string
+    /// * `used_inheritance` - Whether this query was resolved using inheritance
     ///
     /// # Returns
     /// A `ParseResult` containing the compiled query (if any patterns
     /// were valid) and a list of skipped patterns with their errors.
-    pub(crate) fn parse_query(language: &Language, query_str: &str) -> ParseResult {
+    pub(crate) fn parse_query(
+        language: &Language,
+        query_str: &str,
+        used_inheritance: bool,
+    ) -> ParseResult {
         use crate::language::query_pattern_splitter::split_patterns;
 
         // Fast path: try full compilation first.
@@ -265,7 +270,7 @@ impl QueryLoader {
                 query: Some(query),
                 skipped: Vec::new(),
                 failure_reason: None,
-                used_inheritance: false,
+                used_inheritance,
             };
         }
 
@@ -280,7 +285,7 @@ impl QueryLoader {
                     query: None,
                     skipped: Vec::new(),
                     failure_reason: Some(ParseFailure::PatternSplitFailed(reason)),
-                    used_inheritance: false,
+                    used_inheritance,
                 };
             }
         };
@@ -310,7 +315,7 @@ impl QueryLoader {
                 query: None,
                 skipped,
                 failure_reason: Some(ParseFailure::AllPatternsInvalid),
-                used_inheritance: false,
+                used_inheritance,
             };
         }
 
@@ -320,7 +325,7 @@ impl QueryLoader {
                 query: Some(q),
                 skipped,
                 failure_reason: None,
-                used_inheritance: false,
+                used_inheritance,
             },
             Err(e) => {
                 // Defensive: handle the rare case where individually-valid patterns
@@ -334,7 +339,7 @@ impl QueryLoader {
                     query: None,
                     skipped,
                     failure_reason: Some(ParseFailure::CombinationFailed(e.message)),
-                    used_inheritance: false,
+                    used_inheritance,
                 }
             }
         }
@@ -354,7 +359,7 @@ impl QueryLoader {
         paths: &[String],
     ) -> LspResult<ParseResult> {
         let query_str = Self::load_content_from_paths(paths)?;
-        Ok(Self::parse_query(language, &query_str))
+        Ok(Self::parse_query(language, &query_str, false))
     }
 
     /// Load and parse a query with inheritance resolution and fault tolerance.
@@ -391,9 +396,7 @@ impl QueryLoader {
             Some(original_content),
             &mut visited,
         )?;
-        let mut result = Self::parse_query(language, &query_str);
-        result.used_inheritance = used_inheritance;
-        Ok(result)
+        Ok(Self::parse_query(language, &query_str, used_inheritance))
     }
 
     /// Resolve library path for a language
@@ -755,7 +758,7 @@ mod tests {
         let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
         let query = "(identifier) @variable\n(string_literal) @string";
 
-        let result = QueryLoader::parse_query(&language, query);
+        let result = QueryLoader::parse_query(&language, query, false);
 
         assert!(result.query.is_some());
         assert!(result.skipped.is_empty());
@@ -769,7 +772,7 @@ mod tests {
         // "nonexistent_node" doesn't exist in Rust grammar
         let query = "(nonexistent_node_type_1) @foo\n(nonexistent_node_type_2) @bar";
 
-        let result = QueryLoader::parse_query(&language, query);
+        let result = QueryLoader::parse_query(&language, query, false);
 
         assert!(result.query.is_none());
         assert_eq!(result.skipped.len(), 2);
@@ -790,7 +793,7 @@ mod tests {
 (string_literal) @string
 "#;
 
-        let result = QueryLoader::parse_query(&language, query);
+        let result = QueryLoader::parse_query(&language, query, false);
 
         // Should have a query with 2 patterns (skipped the invalid one)
         assert!(result.query.is_some());
@@ -818,7 +821,7 @@ mod tests {
 (string_literal) @string
 "#;
 
-        let result = QueryLoader::parse_query(&language, query);
+        let result = QueryLoader::parse_query(&language, query, false);
 
         // Should have a query with 2 patterns
         assert!(result.query.is_some());
@@ -842,7 +845,7 @@ mod tests {
 (string_literal) @string
 "#;
 
-        let result = QueryLoader::parse_query(&language, query);
+        let result = QueryLoader::parse_query(&language, query, false);
 
         assert_eq!(result.skipped.len(), 1);
         // The invalid pattern starts on line 5 (1-indexed), which is line 4 in 0-indexed
@@ -876,7 +879,7 @@ mod tests {
 (function_item name: (identifier) @func_name)
 "#;
 
-        let result = QueryLoader::parse_query(&language, query);
+        let result = QueryLoader::parse_query(&language, query, false);
 
         assert!(
             result.query.is_some(),
@@ -897,7 +900,7 @@ mod tests {
         // Valid query should have failure_reason = None
         let query = "(identifier) @variable";
 
-        let result = QueryLoader::parse_query(&language, query);
+        let result = QueryLoader::parse_query(&language, query, false);
 
         assert!(result.query.is_some());
         assert!(result.failure_reason.is_none());
@@ -909,7 +912,7 @@ mod tests {
         // All patterns invalid should set AllPatternsInvalid
         let query = "(nonexistent_type_1) @a\n(nonexistent_type_2) @b";
 
-        let result = QueryLoader::parse_query(&language, query);
+        let result = QueryLoader::parse_query(&language, query, false);
 
         assert!(result.query.is_none());
         assert_eq!(
@@ -926,7 +929,7 @@ mod tests {
         // Mixed valid/invalid: query succeeds, failure_reason is None
         let query = "(identifier) @valid\n(nonexistent) @invalid";
 
-        let result = QueryLoader::parse_query(&language, query);
+        let result = QueryLoader::parse_query(&language, query, false);
 
         // Query succeeds (we have valid patterns)
         assert!(result.query.is_some());
