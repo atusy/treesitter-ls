@@ -57,7 +57,7 @@ impl BridgeError {
     /// Note: This is distinct from INTERNAL_ERROR (-32603) used by
     /// `ResponseRouter::fail_all()` for connection failures/panics.
     #[cfg(test)]
-    pub(crate) fn lsp_error_code(&self) -> i32 {
+    fn lsp_error_code(&self) -> i32 {
         -32803 // REQUEST_FAILED per LSP spec
     }
 }
