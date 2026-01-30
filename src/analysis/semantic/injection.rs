@@ -272,6 +272,14 @@ pub(super) async fn collect_injection_tokens(
 /// 3. Discovering and recursively processing nested injections
 ///
 /// Uses `Box::pin` for recursive async as required by Rust's async trait bounds.
+///
+/// # Deadlock Prevention
+///
+/// To prevent semaphore deadlock, we release the parser (and its semaphore permit)
+/// BEFORE spawning child tasks for nested injections. This ensures that:
+/// - Parent tasks don't hold permits while waiting for children
+/// - Children can always acquire permits as parents release theirs
+/// - The algorithm proceeds in waves: depth N releases before depth N+1 acquires
 #[allow(clippy::too_many_arguments)]
 fn process_injection_recursive(
     content_text: String,
@@ -305,7 +313,6 @@ fn process_injection_recursive(
             Some(t) => t,
             None => return Vec::new(),
         };
-        // Parser is automatically returned to pool when dropped (end of this function)
 
         // Collect tokens from this injection
         let mut injection_tokens: Vec<RawToken> = Vec::new();
@@ -325,7 +332,8 @@ fn process_injection_recursive(
             &mut injection_tokens,
         );
 
-        // Find nested injections
+        // Find nested injections BEFORE releasing the parser
+        // (we need the tree reference to discover nested injections)
         let nested_contexts = collect_injection_contexts(
             &content_text,
             &injected_tree,
@@ -334,11 +342,18 @@ fn process_injection_recursive(
             host_start_byte,
         );
 
+        // CRITICAL: Drop parser BEFORE spawning child tasks to prevent deadlock.
+        // If we hold the semaphore permit while waiting for children, and children
+        // need permits from the same semaphore, we can deadlock when all permits
+        // are held by parent tasks waiting for children.
+        drop(parser);
+
         if nested_contexts.is_empty() {
             return injection_tokens;
         }
 
         // Process nested injections in parallel
+        // (safe now because we've released our semaphore permit)
         let mut join_set = tokio::task::JoinSet::new();
 
         for ctx in nested_contexts {
@@ -711,5 +726,101 @@ local var2 = 2
         // The aborted task should produce exactly one error
         assert_eq!(err_count, 1, "Should have 1 error from aborted task");
         assert_eq!(ok_count, 0, "Should have 0 successful completions");
+    }
+
+    /// Test that parallel injection does NOT deadlock with many injections.
+    ///
+    /// This test specifically verifies the fix for the recursive semaphore deadlock
+    /// that occurs when:
+    /// 1. Many top-level injections exhaust all semaphore permits
+    /// 2. Each injection finds nested injections and spawns child tasks
+    /// 3. Child tasks wait for permits but all are held by parents
+    /// 4. Parents wait for children → Deadlock
+    ///
+    /// The fix releases the semaphore permit BEFORE spawning child tasks.
+    ///
+    /// This test creates a markdown document with more code blocks than the
+    /// semaphore limit (default: 8) to trigger the deadlock scenario.
+    #[tokio::test]
+    async fn test_parallel_injection_no_deadlock_with_many_injections() {
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+        use std::time::Duration;
+
+        // Generate a markdown document with 20 Lua code blocks (more than semaphore limit of 8)
+        // Each code block contains `local varN = N`
+        let mut text = String::from("# Test Document\n\n");
+        for i in 0..20 {
+            text.push_str(&format!("```lua\nlocal var{} = {}\n```\n\n", i, i));
+        }
+
+        // Set up coordinator
+        let coordinator = LanguageCoordinator::new();
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        // Load required languages
+        coordinator.ensure_language_loaded("markdown");
+        coordinator.ensure_language_loaded("lua");
+
+        // Parse the markdown document
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let tree = {
+            let mut parser = parser_pool
+                .acquire("markdown")
+                .expect("Should get markdown parser");
+            let result = parser.parse(&text, None).expect("Should parse markdown");
+            parser_pool.release("markdown".to_string(), parser);
+            result
+        };
+
+        let md_highlight_query = coordinator
+            .get_highlight_query("markdown")
+            .expect("Should have markdown highlight query");
+
+        let concurrent_pool = std::sync::Arc::new(coordinator.create_concurrent_parser_pool());
+        let coordinator = std::sync::Arc::new(coordinator);
+
+        // Run with timeout to detect deadlock
+        // If this times out, the deadlock fix is not working
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            super::collect_injection_tokens(
+                &text,
+                &tree,
+                &md_highlight_query,
+                Some("markdown"),
+                None,
+                coordinator,
+                &concurrent_pool,
+                false,
+            ),
+        )
+        .await;
+
+        // Verify no timeout (no deadlock)
+        assert!(
+            result.is_ok(),
+            "Parallel injection should complete without deadlock (timed out after 10s)"
+        );
+
+        let tokens = result.unwrap();
+
+        // Verify we got tokens from all 20 code blocks
+        let local_keywords: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.mapped_name == "keyword" && t.length == 5)
+            .collect();
+
+        assert_eq!(
+            local_keywords.len(),
+            20,
+            "Should find 20 `local` keyword tokens from 20 Lua blocks. \
+             This verifies all injections were processed without deadlock. Found: {}",
+            local_keywords.len()
+        );
     }
 }
