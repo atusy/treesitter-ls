@@ -740,14 +740,14 @@ local var2 = 2
     /// The fix releases the semaphore permit BEFORE spawning child tasks.
     ///
     /// This test creates a markdown document with more code blocks than the
-    /// semaphore limit (default: 8) to trigger the deadlock scenario.
+    /// semaphore limit (default: 10) to trigger the deadlock scenario.
     #[tokio::test]
     async fn test_parallel_injection_no_deadlock_with_many_injections() {
         use crate::config::WorkspaceSettings;
         use crate::language::LanguageCoordinator;
         use std::time::Duration;
 
-        // Generate a markdown document with 20 Lua code blocks (more than semaphore limit of 8)
+        // Generate a markdown document with 20 Lua code blocks (more than semaphore limit of 10)
         // Each code block contains `local varN = N`
         let mut text = String::from("# Test Document\n\n");
         for i in 0..20 {
