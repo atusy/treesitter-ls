@@ -141,6 +141,14 @@ impl DebouncedDiagnosticsManager {
         bridge_pool: Arc<LanguageServerPool>,
         synthetic_diagnostics: Arc<SyntheticDiagnosticsManager>,
     ) {
+        // Opportunistic cleanup: remove finished timers to prevent unbounded growth.
+        // This is O(n) but runs infrequently and keeps the map from accumulating
+        // stale entries for documents that completed their debounce cycle.
+        const CLEANUP_THRESHOLD: usize = 32;
+        if self.active_timers.len() > CLEANUP_THRESHOLD {
+            self.active_timers.retain(|_, handle| !handle.is_finished());
+        }
+
         // Cancel existing timer if any
         if let Some((_, prev_handle)) = self.active_timers.remove(&uri) {
             prev_handle.abort();
@@ -290,19 +298,15 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_schedule_triggers_after_debounce() {
+    async fn test_initial_state_and_cancel_noop() {
         let manager = DebouncedDiagnosticsManager::with_duration(Duration::from_millis(50));
         let uri = Url::parse("file:///test.md").unwrap();
 
-        // We can't easily test the full diagnostic flow without a real client,
-        // but we can test that the timer mechanism works by checking the timer state
-
-        // For this unit test, we'll just verify the timer management
+        // Verify initial state: no active timers
         assert!(!manager.has_active_timer(&uri));
 
-        // We can't fully test schedule() without valid dependencies,
-        // but we can test cancel behavior
-        manager.cancel(&uri); // Should be no-op
+        // Cancel on non-existent timer should be a no-op (no panic)
+        manager.cancel(&uri);
         assert!(!manager.has_active_timer(&uri));
     }
 
