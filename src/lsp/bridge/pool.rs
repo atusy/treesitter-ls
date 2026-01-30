@@ -34,7 +34,7 @@ pub(crate) use connection_action::BridgeError;
 use connection_action::{ConnectionAction, decide_connection_action};
 use handshake::perform_lsp_handshake;
 
-pub(crate) use connection_handle::ConnectionHandle;
+pub(crate) use connection_handle::{ConnectionHandle, NotificationSendResult};
 pub(crate) use connection_state::ConnectionState;
 use document_tracker::DocumentOpenDecision;
 use document_tracker::DocumentTracker;
@@ -912,23 +912,26 @@ impl LanguageServerPool {
             }
         });
 
-        let success = handle.send_notification(notification);
-
-        if success {
-            self.cancel_metrics.record_success();
-            log::debug!(
-                target: "kakehashi::bridge::cancel",
-                "Cancel forwarded: upstream {} -> downstream {} for server '{}'",
-                upstream_id,
-                downstream_id.as_i64(),
-                server_name
-            );
-            Ok(())
-        } else {
-            Err(io::Error::new(
+        match handle.send_notification(notification) {
+            NotificationSendResult::Queued => {
+                self.cancel_metrics.record_success();
+                log::debug!(
+                    target: "kakehashi::bridge::cancel",
+                    "Cancel forwarded: upstream {} -> downstream {} for server '{}'",
+                    upstream_id,
+                    downstream_id.as_i64(),
+                    server_name
+                );
+                Ok(())
+            }
+            NotificationSendResult::QueueFull => Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "bridge: cancel notification queue full",
+            )),
+            NotificationSendResult::ChannelClosed => Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
-                "bridge: failed to send cancel notification",
-            ))
+                "bridge: cancel notification channel closed",
+            )),
         }
     }
 
@@ -2401,8 +2404,12 @@ mod tests {
         let handle = create_handle_with_state(ConnectionState::Ready).await;
 
         // Send a notification before shutdown (will be queued)
-        let sent = handle.send_notification(serde_json::json!({"method": "test", "params": {}}));
-        assert!(sent, "Should be able to send notification before shutdown");
+        let result = handle.send_notification(serde_json::json!({"method": "test", "params": {}}));
+        assert_eq!(
+            result,
+            NotificationSendResult::Queued,
+            "Should be able to send notification before shutdown"
+        );
 
         // Perform graceful shutdown
         let start = std::time::Instant::now();

@@ -15,6 +15,7 @@
 use std::io;
 
 use super::ConnectionHandle;
+use super::connection_handle::NotificationSendResult;
 use crate::lsp::bridge::protocol::{
     RequestId, build_initialize_request, build_initialized_notification,
     validate_initialize_response,
@@ -59,10 +60,20 @@ pub(super) async fn perform_lsp_handshake(
 
     // 4. Send initialized notification via the single-writer loop
     let initialized = build_initialized_notification();
-    if !handle.send_notification(initialized) {
-        return Err(io::Error::other(
-            "bridge: failed to send initialized notification",
-        ));
+    match handle.send_notification(initialized) {
+        NotificationSendResult::Queued => {}
+        NotificationSendResult::QueueFull => {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "bridge: initialized notification queue full",
+            ));
+        }
+        NotificationSendResult::ChannelClosed => {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "bridge: initialized notification channel closed",
+            ));
+        }
     }
 
     Ok(())

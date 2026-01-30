@@ -29,6 +29,21 @@ use crate::lsp::bridge::actor::{
 use crate::lsp::bridge::connection::SplitConnectionWriter;
 use crate::lsp::bridge::protocol::{RequestId, build_exit_notification, build_shutdown_request};
 
+/// Result of attempting to send a notification.
+///
+/// This enum preserves the distinction between temporary backpressure (queue full)
+/// and terminal failure (channel closed), which is important for callers that
+/// need to distinguish between these cases per the MessageSender trait contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NotificationSendResult {
+    /// Notification was successfully queued
+    Queued,
+    /// Queue is full (temporary backpressure - caller may retry)
+    QueueFull,
+    /// Channel is closed (terminal failure - writer task exited)
+    ChannelClosed,
+}
+
 /// Handle wrapping a connection with its state (ADR-0015 per-connection state).
 ///
 /// Each connection has its own lifecycle state that transitions:
@@ -164,8 +179,9 @@ impl ConnectionHandle {
     /// This is per ADR-0015 backpressure semantics - notifications are fire-and-forget.
     ///
     /// # Returns
-    /// - `true` if the notification was queued successfully
-    /// - `false` if the notification was dropped (queue full or channel closed)
+    /// - `NotificationSendResult::Queued` if the notification was queued successfully
+    /// - `NotificationSendResult::QueueFull` if the queue is full (temporary backpressure)
+    /// - `NotificationSendResult::ChannelClosed` if the channel is closed (terminal failure)
     ///
     /// # Example
     ///
@@ -173,23 +189,23 @@ impl ConnectionHandle {
     /// let notification = json!({"jsonrpc": "2.0", "method": "textDocument/didChange", ...});
     /// handle.send_notification(notification); // Fire-and-forget
     /// ```
-    pub(crate) fn send_notification(&self, payload: serde_json::Value) -> bool {
+    pub(crate) fn send_notification(&self, payload: serde_json::Value) -> NotificationSendResult {
         match self.tx.try_send(OutboundMessage::Notification(payload)) {
-            Ok(()) => true,
+            Ok(()) => NotificationSendResult::Queued,
             Err(mpsc::error::TrySendError::Full(_)) => {
                 log::warn!(
                     target: "kakehashi::bridge",
                     "Notification dropped: queue full (capacity {})",
                     OUTBOUND_QUEUE_CAPACITY
                 );
-                false
+                NotificationSendResult::QueueFull
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 log::warn!(
                     target: "kakehashi::bridge",
                     "Notification dropped: channel closed"
                 );
-                false
+                NotificationSendResult::ChannelClosed
             }
         }
     }
@@ -686,8 +702,12 @@ mod tests {
 
         // Can send notification via channel (ADR-0015)
         let notification = serde_json::json!({"method": "test", "params": {}});
-        let sent = handle.send_notification(notification);
-        assert!(sent, "Should be able to send notification");
+        let result = handle.send_notification(notification);
+        assert_eq!(
+            result,
+            NotificationSendResult::Queued,
+            "Should be able to send notification"
+        );
 
         // Can access router
         let _router = handle.router();
