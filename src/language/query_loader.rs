@@ -864,7 +864,7 @@ mod tests {
         // individually but fail when combined. Tree-sitter's Query::new is designed
         // to be consistent. This test verifies the code structure handles this case.
         //
-        // The code path (query_loader.rs lines ~253-265) is defensive:
+        // The code path (query_loader.rs lines ~325-339) is defensive:
         // - If all patterns validate individually but combination fails, return None
         // - Log a warning with pattern count and error message
         //
