@@ -1,3 +1,4 @@
+pub mod concurrent_parser_pool;
 pub mod config_store;
 pub mod coordinator;
 pub mod events;
@@ -15,6 +16,7 @@ pub mod query_store;
 pub(crate) mod region_id_tracker;
 pub mod registry;
 
+pub use concurrent_parser_pool::{ConcurrentParserPool, PooledParser};
 pub use config_store::ConfigStore;
 pub use coordinator::LanguageCoordinator;
 pub use events::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary, LanguageLogLevel};
