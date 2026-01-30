@@ -117,7 +117,11 @@ impl Kakehashi {
     /// This extracts all necessary data synchronously before spawning,
     /// avoiding lifetime issues with `self` references in async tasks.
     ///
-    /// Returns `None` if the document doesn't exist or has no injection regions.
+    /// # Returns
+    ///
+    /// - `None`: Document doesn't exist, has no snapshot, or lacks language/injection configuration
+    /// - `Some(Vec::new())`: Document exists but has no injection regions (caller should clear diagnostics)
+    /// - `Some(vec![...])`: Injection regions found, ready for diagnostic requests
     ///
     /// Used by both immediate synthetic diagnostics (didSave/didOpen) and
     /// debounced diagnostics (didChange).
