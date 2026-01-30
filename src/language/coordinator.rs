@@ -3,14 +3,27 @@ use super::events::{LanguageEvent, LanguageLoadResult, LanguageLoadSummary, Lang
 use super::filetypes::FiletypeResolver;
 use super::loader::ParserLoader;
 use super::parser_pool::{DocumentParserPool, ParserFactory};
-use super::query_loader::QueryLoader;
+use super::query_loader::{ParseFailure, QueryLoader};
 use super::query_store::QueryStore;
 use super::registry::LanguageRegistry;
 use crate::config::settings::{LanguageConfig, QueryKind, infer_query_kind};
 use crate::config::{CaptureMappings, TreeSitterSettings, WorkspaceSettings};
+use log::debug;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tree_sitter::Language;
+
+/// Maximum length (in characters) for pattern previews in log messages.
+const MAX_PREVIEW_LEN: usize = 60;
+
+/// Context for loading a query, including metadata for log messages.
+struct QueryLoadContext<'a> {
+    language_id: &'a str,
+    query_type: &'a str,
+    /// Describes where the query was loaded from (e.g., "Dynamically loaded").
+    /// Only used by `load_query_with_inheritance`, not by `load_query_from_paths`.
+    context: Option<&'a str>,
+}
 
 /// Coordinates language runtime components (registry, queries, configs).
 pub struct LanguageCoordinator {
@@ -200,46 +213,42 @@ impl LanguageCoordinator {
 
         let mut events = Vec::new();
 
-        // Use inheritance-aware loading for all query types
-        // This handles languages like TypeScript that inherit from ecma
-        if let Ok(query) = QueryLoader::load_query_with_inheritance(
+        // Use fault-tolerant loading for all query types
+        // This handles languages like TypeScript that inherit from ecma,
+        // and gracefully skips invalid patterns while preserving valid ones
+        self.load_query(
             &language,
             paths,
-            language_id,
-            "highlights.scm",
-        ) {
-            self.query_store
-                .insert_highlight_query(language_id.to_string(), Arc::new(query));
-            events.push(LanguageEvent::log(
-                LanguageLogLevel::Info,
-                format!("Dynamically loaded highlights for {language_id}"),
-            ));
-        }
-
-        if let Ok(query) =
-            QueryLoader::load_query_with_inheritance(&language, paths, language_id, "locals.scm")
-        {
-            self.query_store
-                .insert_locals_query(language_id.to_string(), Arc::new(query));
-            events.push(LanguageEvent::log(
-                LanguageLogLevel::Info,
-                format!("Dynamically loaded locals for {language_id}"),
-            ));
-        }
-
-        if let Ok(query) = QueryLoader::load_query_with_inheritance(
+            QueryLoadContext {
+                language_id,
+                query_type: "highlights",
+                context: Some("Dynamically loaded"),
+            },
+            &mut events,
+            |store, query| store.insert_highlight_query(language_id.to_string(), query),
+        );
+        self.load_query(
             &language,
             paths,
-            language_id,
-            "injections.scm",
-        ) {
-            self.query_store
-                .insert_injection_query(language_id.to_string(), Arc::new(query));
-            events.push(LanguageEvent::log(
-                LanguageLogLevel::Info,
-                format!("Dynamically loaded injections for {language_id}"),
-            ));
-        }
+            QueryLoadContext {
+                language_id,
+                query_type: "locals",
+                context: Some("Dynamically loaded"),
+            },
+            &mut events,
+            |store, query| store.insert_locals_query(language_id.to_string(), query),
+        );
+        self.load_query(
+            &language,
+            paths,
+            QueryLoadContext {
+                language_id,
+                query_type: "injections",
+                context: Some("Dynamically loaded"),
+            },
+            &mut events,
+            |store, query| store.insert_injection_query(language_id.to_string(), query),
+        );
 
         events.push(LanguageEvent::log(
             LanguageLogLevel::Info,
@@ -252,6 +261,129 @@ impl LanguageCoordinator {
         }
 
         LanguageLoadResult::success_with(events)
+    }
+
+    /// Load a query file with inheritance resolution.
+    fn load_query(
+        &self,
+        language: &Language,
+        paths: &[String],
+        ctx: QueryLoadContext<'_>,
+        events: &mut Vec<LanguageEvent>,
+        insert_fn: impl FnOnce(&QueryStore, Arc<tree_sitter::Query>),
+    ) {
+        let filename = format!("{}.scm", ctx.query_type);
+        let result = match QueryLoader::load_query_with_inheritance(
+            language,
+            paths,
+            ctx.language_id,
+            &filename,
+        ) {
+            Ok(r) => r,
+            Err(_) => {
+                debug!(
+                    "Query file {}/{} not found in search paths (this is normal if not provided)",
+                    ctx.language_id, filename
+                );
+                return;
+            }
+        };
+
+        let query_label = format!("{}/{}", ctx.language_id, filename);
+        let context = ctx.context.unwrap_or(ctx.query_type);
+        let success_prefix = format!("{} {} for {}", context, ctx.query_type, ctx.language_id);
+        self.process_query_result(result, &query_label, &success_prefix, events, insert_fn);
+    }
+
+    /// Load a query from explicit paths (unified queries configuration).
+    fn load_query_from_paths(
+        &self,
+        language: &Language,
+        paths: &[String],
+        ctx: QueryLoadContext<'_>,
+        events: &mut Vec<LanguageEvent>,
+        insert_fn: impl FnOnce(&QueryStore, Arc<tree_sitter::Query>),
+    ) {
+        let result = match QueryLoader::load_query_from_paths(language, paths) {
+            Ok(r) => r,
+            Err(err) => {
+                events.push(LanguageEvent::log(
+                    LanguageLogLevel::Error,
+                    format!(
+                        "Failed to load {} query for {}: {err}",
+                        ctx.query_type, ctx.language_id
+                    ),
+                ));
+                return;
+            }
+        };
+
+        let query_label = format!("{} {} query", ctx.language_id, ctx.query_type);
+        let success_prefix = format!("{} query loaded for {}", ctx.query_type, ctx.language_id);
+        self.process_query_result(result, &query_label, &success_prefix, events, insert_fn);
+    }
+
+    /// Process a ParseResult: log skipped patterns, insert query, log outcome.
+    fn process_query_result(
+        &self,
+        result: super::query_loader::ParseResult,
+        query_label: &str,
+        success_prefix: &str,
+        events: &mut Vec<LanguageEvent>,
+        insert_fn: impl FnOnce(&QueryStore, Arc<tree_sitter::Query>),
+    ) {
+        // Log warnings for skipped patterns
+        for skipped in &result.skipped {
+            let preview = truncate_preview(&skipped.text, MAX_PREVIEW_LEN);
+            // When inheritance is used, line numbers refer to the combined query,
+            // not the original source file
+            let line_note = if result.used_inheritance {
+                " (in combined query)"
+            } else {
+                ""
+            };
+            events.push(LanguageEvent::log(
+                LanguageLogLevel::Warning,
+                format!(
+                    "Skipped invalid pattern in {query_label} (lines {}-{}{}): {} | pattern: {}",
+                    skipped.start_line, skipped.end_line, line_note, skipped.error, preview
+                ),
+            ));
+        }
+
+        match result.query {
+            Some(query) => {
+                insert_fn(&self.query_store, Arc::new(query));
+                let skipped_count = result.skipped.len();
+                let msg = if skipped_count > 0 {
+                    format!("{success_prefix} ({skipped_count} pattern(s) skipped)")
+                } else {
+                    success_prefix.to_string()
+                };
+                events.push(LanguageEvent::log(LanguageLogLevel::Info, msg));
+            }
+            None => {
+                if let Some(reason) = &result.failure_reason {
+                    let msg = match reason {
+                        ParseFailure::PatternSplitFailed(err) => {
+                            format!(
+                                "Failed to parse {query_label}: could not split patterns ({err})"
+                            )
+                        }
+                        ParseFailure::AllPatternsInvalid => {
+                            format!(
+                                "Failed to load {query_label}: all {} pattern(s) were invalid",
+                                result.skipped.len()
+                            )
+                        }
+                        ParseFailure::CombinationFailed(err) => {
+                            format!("Failed to combine patterns in {query_label}: {err}")
+                        }
+                    };
+                    events.push(LanguageEvent::log(LanguageLogLevel::Warning, msg));
+                }
+            }
+        }
     }
 
     /// Get language for a document path.
@@ -656,44 +788,41 @@ impl LanguageCoordinator {
 
         // Fall back to search paths when queries field is not specified
         if let Some(paths) = search_paths {
-            if let Ok(query) = QueryLoader::load_query_from_search_paths(
+            self.load_query(
                 language,
                 paths,
-                lang_name,
-                "highlights.scm",
-            ) {
-                self.query_store
-                    .insert_highlight_query(lang_name.to_string(), Arc::new(query));
-                events.push(LanguageEvent::log(
-                    LanguageLogLevel::Info,
-                    format!("Highlight query loaded from search paths for {lang_name}"),
-                ));
-            }
+                QueryLoadContext {
+                    language_id: lang_name,
+                    query_type: "highlights",
+                    context: Some("Loaded from search paths"),
+                },
+                &mut events,
+                |store, q| store.insert_highlight_query(lang_name.to_string(), q),
+            );
 
-            if let Ok(query) =
-                QueryLoader::load_query_from_search_paths(language, paths, lang_name, "locals.scm")
-            {
-                self.query_store
-                    .insert_locals_query(lang_name.to_string(), Arc::new(query));
-                events.push(LanguageEvent::log(
-                    LanguageLogLevel::Info,
-                    format!("Locals query loaded from search paths for {lang_name}"),
-                ));
-            }
-
-            if let Ok(query) = QueryLoader::load_query_from_search_paths(
+            self.load_query(
                 language,
                 paths,
-                lang_name,
-                "injections.scm",
-            ) {
-                self.query_store
-                    .insert_injection_query(lang_name.to_string(), Arc::new(query));
-                events.push(LanguageEvent::log(
-                    LanguageLogLevel::Info,
-                    format!("Injection query loaded from search paths for {lang_name}"),
-                ));
-            }
+                QueryLoadContext {
+                    language_id: lang_name,
+                    query_type: "locals",
+                    context: Some("Loaded from search paths"),
+                },
+                &mut events,
+                |store, q| store.insert_locals_query(lang_name.to_string(), q),
+            );
+
+            self.load_query(
+                language,
+                paths,
+                QueryLoadContext {
+                    language_id: lang_name,
+                    query_type: "injections",
+                    context: Some("Loaded from search paths"),
+                },
+                &mut events,
+                |store, q| store.insert_injection_query(lang_name.to_string(), q),
+            );
         }
 
         events
@@ -730,62 +859,47 @@ impl LanguageCoordinator {
 
         // Load highlights
         if !highlights.is_empty() {
-            match QueryLoader::load_highlight_query(language, &highlights) {
-                Ok(query) => {
-                    self.query_store
-                        .insert_highlight_query(lang_name.to_string(), Arc::new(query));
-                    events.push(LanguageEvent::log(
-                        LanguageLogLevel::Info,
-                        format!("Highlight query loaded for {lang_name}"),
-                    ));
-                }
-                Err(err) => {
-                    events.push(LanguageEvent::log(
-                        LanguageLogLevel::Error,
-                        format!("Failed to load highlight query for {lang_name}: {err}"),
-                    ));
-                }
-            }
+            self.load_query_from_paths(
+                language,
+                &highlights,
+                QueryLoadContext {
+                    language_id: lang_name,
+                    query_type: "highlights",
+                    context: None,
+                },
+                &mut events,
+                |store, q| store.insert_highlight_query(lang_name.to_string(), q),
+            );
         }
 
         // Load locals
         if !locals.is_empty() {
-            match QueryLoader::load_highlight_query(language, &locals) {
-                Ok(query) => {
-                    self.query_store
-                        .insert_locals_query(lang_name.to_string(), Arc::new(query));
-                    events.push(LanguageEvent::log(
-                        LanguageLogLevel::Info,
-                        format!("Locals query loaded for {lang_name}"),
-                    ));
-                }
-                Err(err) => {
-                    events.push(LanguageEvent::log(
-                        LanguageLogLevel::Error,
-                        format!("Failed to load locals query for {lang_name}: {err}"),
-                    ));
-                }
-            }
+            self.load_query_from_paths(
+                language,
+                &locals,
+                QueryLoadContext {
+                    language_id: lang_name,
+                    query_type: "locals",
+                    context: None,
+                },
+                &mut events,
+                |store, q| store.insert_locals_query(lang_name.to_string(), q),
+            );
         }
 
         // Load injections
         if !injections.is_empty() {
-            match QueryLoader::load_highlight_query(language, &injections) {
-                Ok(query) => {
-                    self.query_store
-                        .insert_injection_query(lang_name.to_string(), Arc::new(query));
-                    events.push(LanguageEvent::log(
-                        LanguageLogLevel::Info,
-                        format!("Injection query loaded for {lang_name}"),
-                    ));
-                }
-                Err(err) => {
-                    events.push(LanguageEvent::log(
-                        LanguageLogLevel::Error,
-                        format!("Failed to load injection query for {lang_name}: {err}"),
-                    ));
-                }
-            }
+            self.load_query_from_paths(
+                language,
+                &injections,
+                QueryLoadContext {
+                    language_id: lang_name,
+                    query_type: "injections",
+                    context: None,
+                },
+                &mut events,
+                |store, q| store.insert_injection_query(lang_name.to_string(), q),
+            );
         }
 
         events
@@ -819,6 +933,23 @@ impl LanguageCoordinator {
     ) {
         self.query_store
             .insert_injection_query(language_id.to_string(), Arc::new(query));
+    }
+}
+
+/// Truncate a pattern string for display in log messages.
+///
+/// Collapses whitespace and truncates to max_len characters, adding "..." if truncated.
+fn truncate_preview(pattern: &str, max_len: usize) -> String {
+    // Collapse all whitespace (including newlines) to single spaces
+    let collapsed: String = pattern.split_whitespace().collect::<Vec<_>>().join(" ");
+    let char_count = collapsed.chars().count();
+    if char_count <= max_len {
+        collapsed
+    } else {
+        // Truncate to max_len characters (including the "...")
+        let truncate_at = max_len.saturating_sub(3);
+        let truncated: String = collapsed.chars().take(truncate_at).collect();
+        format!("{truncated}...")
     }
 }
 
@@ -1510,5 +1641,50 @@ mod tests {
             Some("javascript".to_string()),
             "jsx extension should resolve to javascript via alias"
         );
+    }
+
+    // Tests for truncate_preview
+
+    #[test]
+    fn test_truncate_preview_short_string() {
+        let result = truncate_preview("(identifier) @variable", 60);
+        assert_eq!(result, "(identifier) @variable");
+    }
+
+    #[test]
+    fn test_truncate_preview_long_string() {
+        let long_pattern = "a".repeat(100);
+        let result = truncate_preview(&long_pattern, 20);
+        assert!(result.ends_with("..."));
+        assert_eq!(result.chars().count(), 20); // 17 'a's + "..."
+    }
+
+    #[test]
+    fn test_truncate_preview_collapses_whitespace() {
+        let result = truncate_preview("(identifier)\n    @variable", 60);
+        assert_eq!(result, "(identifier) @variable");
+    }
+
+    #[test]
+    fn test_truncate_preview_multibyte_characters() {
+        // Pattern with multi-byte UTF-8 characters (Japanese)
+        // "こんにちは世界" = 7 characters
+        let pattern = "こんにちは世界";
+        // Truncate to 5 characters - should include 2 chars + "..."
+        let result = truncate_preview(pattern, 5);
+        assert!(result.ends_with("..."));
+        assert_eq!(result.chars().count(), 5); // 2 Japanese chars + "..."
+        assert_eq!(result, "こん...");
+    }
+
+    #[test]
+    fn test_truncate_preview_mixed_ascii_multibyte() {
+        // Mix of ASCII and multi-byte characters
+        // "abc日本語def" = 10 characters
+        let pattern = "abc日本語def";
+        let result = truncate_preview(pattern, 8);
+        assert!(result.ends_with("..."));
+        assert_eq!(result.chars().count(), 8); // 5 chars + "..."
+        assert_eq!(result, "abc日本...");
     }
 }

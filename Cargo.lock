@@ -1087,6 +1087,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-md",
  "tree-sitter-rust",
+ "tree-sitter-tsquery",
  "tree-sitter-yaml",
  "ulid",
  "url",
@@ -2462,6 +2463,16 @@ name = "tree-sitter-rust"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b9b18034c684a2420722be8b2a91c9c44f2546b631c039edf575ccba8c61be1"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-tsquery"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1b31e95ea85379972abf3b6857a59b2f6fb7ef3b5e47e9a4fb6c07111dee5e6"
 dependencies = [
  "cc",
  "tree-sitter-language",

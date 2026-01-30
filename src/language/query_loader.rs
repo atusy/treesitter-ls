@@ -1,4 +1,5 @@
 use crate::error::{LspError, LspResult};
+use log::warn;
 use path_clean::PathClean;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -6,6 +7,80 @@ use tree_sitter::{Language, Query};
 
 /// Parser library file extensions for different platforms
 const PARSER_EXTENSIONS: &[&str] = &["so", "dylib", "dll"];
+
+/// Information about a pattern that was skipped during tolerant parsing.
+///
+/// This is returned alongside the successfully parsed query to allow
+/// callers to log or report which patterns failed.
+///
+/// # Line Number Limitation
+///
+/// When queries use inheritance (e.g., TypeScript's `; inherits: ecma`),
+/// line numbers refer to positions in the **combined** query string, not the
+/// original source file. For example, if `ecma/highlights.scm` has 100 lines
+/// and is inherited by `typescript/highlights.scm`, a pattern on line 5 of
+/// the TypeScript file would be reported as line 105.
+///
+/// This is a known limitation of the current implementation. Future versions
+/// may track source file information to provide more accurate diagnostics.
+#[derive(Debug, Clone)]
+pub(crate) struct SkippedPattern {
+    /// The pattern text that failed to compile
+    pub text: String,
+    /// Starting line number (1-indexed for display).
+    ///
+    /// **Note**: When query inheritance is used, this refers to the line
+    /// in the combined query string, not the original source file.
+    pub start_line: usize,
+    /// Ending line number (1-indexed for display).
+    ///
+    /// **Note**: When query inheritance is used, this refers to the line
+    /// in the combined query string, not the original source file.
+    pub end_line: usize,
+    /// The error message from tree-sitter
+    pub error: String,
+}
+
+/// Reason why tolerant parsing produced no query.
+///
+/// This enum provides semantic information about why `ParseResult.query`
+/// is `None`, allowing callers to log appropriate messages or take different actions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ParseFailure {
+    /// The query file couldn't be split into patterns (malformed query syntax).
+    /// The `skipped` vec will be empty since individual patterns couldn't be identified.
+    PatternSplitFailed(String),
+    /// All patterns were identified but none compiled successfully.
+    /// The `skipped` vec will contain all the invalid patterns.
+    AllPatternsInvalid,
+    /// All patterns validated individually but combining them failed.
+    ///
+    /// This is a defensive code path that handles theoretical edge cases such as:
+    /// - Capture name conflicts across patterns
+    /// - Internal tree-sitter limitations when combining patterns
+    ///
+    /// In practice, this scenario is difficult to trigger because tree-sitter's
+    /// pattern validation is consistent - patterns that compile individually
+    /// typically combine successfully. This variant exists to ensure graceful
+    /// handling rather than panicking if such a case ever occurs.
+    CombinationFailed(String),
+}
+
+/// Result of tolerant query parsing.
+#[derive(Debug)]
+pub(crate) struct ParseResult {
+    /// The successfully compiled query (None if all patterns failed)
+    pub query: Option<Query>,
+    /// Patterns that were skipped due to errors
+    pub skipped: Vec<SkippedPattern>,
+    /// If `query` is `None`, this indicates why parsing failed.
+    /// When `query` is `Some`, this will be `None`.
+    pub failure_reason: Option<ParseFailure>,
+    /// Whether this query used inheritance (e.g., `; inherits: ecma`).
+    /// When true, line numbers in `skipped` refer to the combined query,
+    /// not the original source file.
+    pub used_inheritance: bool,
+}
 
 /// Loads Tree-sitter queries from files and configuration
 pub struct QueryLoader;
@@ -20,23 +95,17 @@ impl QueryLoader {
     /// * `runtime_bases` - Search paths for query files
     /// * `lang_name` - The language to resolve
     /// * `file_name` - The query file name (e.g., "highlights.scm")
+    /// * `preloaded_content` - If provided, use this content instead of loading from disk.
+    ///   This is used to avoid double-loading when the caller already has the content.
+    /// * `visited` - Set of already-visited languages for circular dependency detection
     ///
     /// # Returns
     /// Combined query content with all inherited queries.
-    pub fn resolve_query(
-        runtime_bases: &[String],
-        lang_name: &str,
-        file_name: &str,
-    ) -> LspResult<String> {
-        let mut visited = std::collections::HashSet::new();
-        Self::resolve_query_recursive(runtime_bases, lang_name, file_name, &mut visited)
-    }
-
-    /// Internal recursive helper for query resolution.
     fn resolve_query_recursive(
         runtime_bases: &[String],
         lang_name: &str,
         file_name: &str,
+        preloaded_content: Option<String>,
         visited: &mut std::collections::HashSet<String>,
     ) -> LspResult<String> {
         // Check for circular inheritance
@@ -48,8 +117,11 @@ impl QueryLoader {
         }
         visited.insert(lang_name.to_string());
 
-        // Load the query file
-        let content = Self::load_query_file(runtime_bases, lang_name, file_name)?;
+        // Use preloaded content or load from disk
+        let content = match preloaded_content {
+            Some(c) => c,
+            None => Self::load_query_file(runtime_bases, lang_name, file_name)?,
+        };
 
         // Parse inheritance directive
         let parents = Self::parse_inherits_directive(&content);
@@ -57,10 +129,10 @@ impl QueryLoader {
         // Build combined query: parents first, then child
         let mut combined = String::new();
 
-        // Recursively resolve parent queries
+        // Recursively resolve parent queries (never preloaded)
         for parent in &parents {
             let parent_content =
-                Self::resolve_query_recursive(runtime_bases, parent, file_name, visited)?;
+                Self::resolve_query_recursive(runtime_bases, parent, file_name, None, visited)?;
             combined.push_str(&parent_content);
             combined.push('\n');
         }
@@ -90,7 +162,7 @@ impl QueryLoader {
     ///
     /// # Returns
     /// A vector of parent language names (empty if no inheritance).
-    pub fn parse_inherits_directive(content: &str) -> Vec<String> {
+    fn parse_inherits_directive(content: &str) -> Vec<String> {
         let first_line = content.lines().next().unwrap_or("");
 
         // Pattern: "; inherits: lang1,lang2,..."
@@ -104,8 +176,8 @@ impl QueryLoader {
         }
     }
 
-    /// Load query content from path strings
-    pub fn load_query_from_paths(paths: &[String]) -> LspResult<String> {
+    /// Load query content from path strings (without parsing).
+    fn load_content_from_paths(paths: &[String]) -> LspResult<String> {
         let mut combined_query = String::new();
 
         for path in paths {
@@ -128,7 +200,7 @@ impl QueryLoader {
     }
 
     /// Find a query file in search paths
-    pub fn find_query_file(
+    fn find_query_file(
         runtime_bases: &[String],
         lang_name: &str,
         file_name: &str,
@@ -147,7 +219,7 @@ impl QueryLoader {
     }
 
     /// Load a query file from search paths
-    pub fn load_query_file(
+    fn load_query_file(
         runtime_bases: &[String],
         lang_name: &str,
         file_name: &str,
@@ -167,41 +239,164 @@ impl QueryLoader {
         }
     }
 
-    /// Parse a query string into a Tree-sitter Query
-    pub fn parse_query(language: &Language, query_str: &str) -> LspResult<Query> {
-        Query::new(language, query_str)
-            .map_err(|e| LspError::query(format!("Failed to parse query: {e}")))
-    }
-
-    /// Load and parse a highlight query from path strings
-    pub fn load_highlight_query(language: &Language, paths: &[String]) -> LspResult<Query> {
-        let query_str = Self::load_query_from_paths(paths)?;
-        Self::parse_query(language, &query_str)
-    }
-
-    /// Load and parse a query from search paths (without inheritance resolution).
-    pub fn load_query_from_search_paths(
-        language: &Language,
-        runtime_bases: &[String],
-        lang_name: &str,
-        file_name: &str,
-    ) -> LspResult<Query> {
-        let query_str = Self::load_query_file(runtime_bases, lang_name, file_name)?;
-        Self::parse_query(language, &query_str)
-    }
-
-    /// Load and parse a query with inheritance resolution.
+    /// Parse a query string with fault tolerance.
     ///
-    /// This resolves `; inherits:` directives and concatenates parent queries.
-    /// Use this for languages that may inherit from base query sets (e.g., typescript -> ecma).
-    pub fn load_query_with_inheritance(
+    /// First attempts full compilation (fast path). If that fails, splits the
+    /// query into individual patterns, validates each separately, and combines
+    /// only the valid ones.
+    ///
+    /// # Arguments
+    /// * `language` - The tree-sitter language
+    /// * `query_str` - The full query string
+    /// * `used_inheritance` - Whether this query was resolved using inheritance
+    ///
+    /// # Returns
+    /// A `ParseResult` containing the compiled query (if any patterns
+    /// were valid) and a list of skipped patterns with their errors.
+    pub(crate) fn parse_query(
+        language: &Language,
+        query_str: &str,
+        used_inheritance: bool,
+    ) -> ParseResult {
+        use crate::language::query_pattern_splitter::split_patterns;
+
+        // Fast path: try full compilation first.
+        // If this succeeds, we know all patterns are valid for this language's grammar.
+        // Tree-sitter's Query::new is all-or-nothing: it either compiles the entire
+        // query successfully or fails with an error. There are no "silently ignored"
+        // patterns that would be valid individually but skipped in full compilation.
+        if let Ok(query) = Query::new(language, query_str) {
+            return ParseResult {
+                query: Some(query),
+                skipped: Vec::new(),
+                failure_reason: None,
+                used_inheritance,
+            };
+        }
+
+        // Slow path: split into patterns and compile individually
+        let patterns = match split_patterns(query_str) {
+            Ok(p) => p,
+            Err(e) => {
+                // Pattern splitting failed - return result with failure reason
+                let reason = e.to_string();
+                warn!("Failed to split query patterns: {}", reason);
+                return ParseResult {
+                    query: None,
+                    skipped: Vec::new(),
+                    failure_reason: Some(ParseFailure::PatternSplitFailed(reason)),
+                    used_inheritance,
+                };
+            }
+        };
+
+        let mut valid_patterns = Vec::new();
+        let mut skipped = Vec::new();
+
+        for pattern in patterns {
+            match Query::new(language, &pattern.text) {
+                Ok(_) => {
+                    valid_patterns.push(pattern.text);
+                }
+                Err(e) => {
+                    skipped.push(SkippedPattern {
+                        text: pattern.text,
+                        start_line: pattern.start_line + 1, // Convert to 1-indexed
+                        end_line: pattern.end_line + 1,
+                        error: e.message,
+                    });
+                }
+            }
+        }
+
+        // Combine valid patterns and compile
+        if valid_patterns.is_empty() {
+            return ParseResult {
+                query: None,
+                skipped,
+                failure_reason: Some(ParseFailure::AllPatternsInvalid),
+                used_inheritance,
+            };
+        }
+
+        let combined = valid_patterns.join("\n");
+        match Query::new(language, &combined) {
+            Ok(q) => ParseResult {
+                query: Some(q),
+                skipped,
+                failure_reason: None,
+                used_inheritance,
+            },
+            Err(e) => {
+                // Defensive: handle the rare case where individually-valid patterns
+                // fail when combined. See ParseFailure::CombinationFailed docs.
+                warn!(
+                    "All {} patterns validated individually but combination failed: {}",
+                    valid_patterns.len(),
+                    e.message
+                );
+                ParseResult {
+                    query: None,
+                    skipped,
+                    failure_reason: Some(ParseFailure::CombinationFailed(e.message)),
+                    used_inheritance,
+                }
+            }
+        }
+    }
+
+    /// Load and parse a query from explicit path strings with fault tolerance.
+    ///
+    /// Loads query content from the specified paths and uses tolerant parsing
+    /// to skip invalid patterns instead of failing the entire query.
+    ///
+    /// # Returns
+    /// - `Ok(ParseResult)` if the query files were found and at least
+    ///   partially parsed
+    /// - `Err` if any query file could not be found or read
+    pub(crate) fn load_query_from_paths(
+        language: &Language,
+        paths: &[String],
+    ) -> LspResult<ParseResult> {
+        let query_str = Self::load_content_from_paths(paths)?;
+        Ok(Self::parse_query(language, &query_str, false))
+    }
+
+    /// Load and parse a query with inheritance resolution and fault tolerance.
+    ///
+    /// This resolves `; inherits:` directives, concatenates parent queries,
+    /// and uses tolerant parsing to skip invalid patterns instead of failing
+    /// the entire query.
+    ///
+    /// # Line Number Limitation
+    ///
+    /// When inheritance is used, line numbers in [`SkippedPattern`] refer to the
+    /// combined query string (parent + child), not the original source file.
+    /// See [`SkippedPattern`] documentation for details.
+    ///
+    /// # Returns
+    /// - `Ok(ParseResult)` if the query file was found and at least
+    ///   partially parsed
+    /// - `Err` if the query file could not be found or read
+    pub(crate) fn load_query_with_inheritance(
         language: &Language,
         runtime_bases: &[String],
         lang_name: &str,
         file_name: &str,
-    ) -> LspResult<Query> {
-        let query_str = Self::resolve_query(runtime_bases, lang_name, file_name)?;
-        Self::parse_query(language, &query_str)
+    ) -> LspResult<ParseResult> {
+        // Load the original file once and pass to resolver to avoid double-loading
+        let original_content = Self::load_query_file(runtime_bases, lang_name, file_name)?;
+        let used_inheritance = !Self::parse_inherits_directive(&original_content).is_empty();
+
+        let mut visited = std::collections::HashSet::new();
+        let query_str = Self::resolve_query_recursive(
+            runtime_bases,
+            lang_name,
+            file_name,
+            Some(original_content),
+            &mut visited,
+        )?;
+        Ok(Self::parse_query(language, &query_str, used_inheritance))
     }
 
     /// Resolve library path for a language
@@ -241,8 +436,24 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    /// Test helper: resolve query without preloaded content
+    fn resolve_query(
+        runtime_bases: &[String],
+        lang_name: &str,
+        file_name: &str,
+    ) -> LspResult<String> {
+        let mut visited = std::collections::HashSet::new();
+        QueryLoader::resolve_query_recursive(
+            runtime_bases,
+            lang_name,
+            file_name,
+            None,
+            &mut visited,
+        )
+    }
+
     #[test]
-    fn test_load_query_from_paths() {
+    fn test_load_content_from_paths() {
         // Create temp files with query content
         let dir = tempdir().unwrap();
         let file1 = dir.path().join("query1.scm");
@@ -255,7 +466,7 @@ mod tests {
             file2.to_string_lossy().to_string(),
         ];
 
-        let result = QueryLoader::load_query_from_paths(&paths).unwrap();
+        let result = QueryLoader::load_content_from_paths(&paths).unwrap();
         assert!(result.contains("(identifier) @variable"));
         assert!(result.contains("(string) @string"));
     }
@@ -355,7 +566,7 @@ mod tests {
         fs::create_dir_all(&ecma_dir).unwrap();
         fs::write(ecma_dir.join("highlights.scm"), "(identifier) @variable\n").unwrap();
 
-        let result = QueryLoader::resolve_query(&[base_path], "ecma", "highlights.scm");
+        let result = resolve_query(&[base_path], "ecma", "highlights.scm");
         assert!(result.is_ok());
         let content = result.unwrap();
         assert!(content.contains("(identifier) @variable"));
@@ -381,7 +592,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = QueryLoader::resolve_query(&[base_path], "typescript", "highlights.scm");
+        let result = resolve_query(&[base_path], "typescript", "highlights.scm");
         assert!(result.is_ok());
         let content = result.unwrap();
 
@@ -415,7 +626,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = QueryLoader::resolve_query(&[base_path], "typescript", "highlights.scm");
+        let result = resolve_query(&[base_path], "typescript", "highlights.scm");
         let content = result.unwrap();
 
         // The inherits directive should not be in the output
@@ -437,7 +648,7 @@ mod tests {
             return;
         }
 
-        let result = QueryLoader::resolve_query(&[search_path], "typescript", "highlights.scm");
+        let result = resolve_query(&[search_path], "typescript", "highlights.scm");
 
         assert!(
             result.is_ok(),
@@ -479,7 +690,7 @@ mod tests {
         fs::create_dir_all(&b_dir).unwrap();
         fs::write(b_dir.join("highlights.scm"), "; inherits: lang_a\n(b) @b\n").unwrap();
 
-        let result = QueryLoader::resolve_query(&[base_path], "lang_a", "highlights.scm");
+        let result = resolve_query(&[base_path], "lang_a", "highlights.scm");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("circular") || err.to_string().contains("Circular"));
@@ -504,7 +715,7 @@ mod tests {
             return;
         }
 
-        let result = QueryLoader::resolve_query(&[search_path], "javascript", "highlights.scm");
+        let result = resolve_query(&[search_path], "javascript", "highlights.scm");
 
         assert!(
             result.is_ok(),
@@ -536,5 +747,195 @@ mod tests {
             !content.contains("; inherits:"),
             "Should strip inherits directive"
         );
+    }
+
+    // ============================================================
+    // Tests for tolerant query parsing
+    // ============================================================
+
+    #[test]
+    fn test_parse_query_valid_query() {
+        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        let query = "(identifier) @variable\n(string_literal) @string";
+
+        let result = QueryLoader::parse_query(&language, query, false);
+
+        assert!(result.query.is_some());
+        assert!(result.skipped.is_empty());
+        assert!(result.failure_reason.is_none());
+        assert_eq!(result.query.unwrap().pattern_count(), 2);
+    }
+
+    #[test]
+    fn test_parse_query_all_invalid() {
+        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        // "nonexistent_node" doesn't exist in Rust grammar
+        let query = "(nonexistent_node_type_1) @foo\n(nonexistent_node_type_2) @bar";
+
+        let result = QueryLoader::parse_query(&language, query, false);
+
+        assert!(result.query.is_none());
+        assert_eq!(result.skipped.len(), 2);
+        assert_eq!(
+            result.failure_reason,
+            Some(ParseFailure::AllPatternsInvalid)
+        );
+    }
+
+    #[test]
+    fn test_parse_query_mixed_valid_invalid() {
+        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        let query = r#"
+(identifier) @variable
+
+(nonexistent_node_type) @invalid
+
+(string_literal) @string
+"#;
+
+        let result = QueryLoader::parse_query(&language, query, false);
+
+        // Should have a query with 2 patterns (skipped the invalid one)
+        assert!(result.query.is_some());
+        // failure_reason is None because we successfully built a query
+        assert!(result.failure_reason.is_none());
+        let query = result.query.unwrap();
+        assert_eq!(query.pattern_count(), 2);
+
+        // Should have 1 skipped pattern
+        assert_eq!(result.skipped.len(), 1);
+        assert!(result.skipped[0].text.contains("nonexistent_node_type"));
+        assert!(result.skipped[0].error.contains("nonexistent_node_type"));
+    }
+
+    #[test]
+    fn test_parse_query_invalid_field() {
+        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        // "nonexistent_field" is not a valid field in Rust grammar
+        let query = r#"
+(identifier) @variable
+
+(function_item
+  nonexistent_field: (identifier) @invalid)
+
+(string_literal) @string
+"#;
+
+        let result = QueryLoader::parse_query(&language, query, false);
+
+        // Should have a query with 2 patterns
+        assert!(result.query.is_some());
+        let query = result.query.unwrap();
+        assert_eq!(query.pattern_count(), 2);
+
+        // Should have 1 skipped pattern with field error
+        assert_eq!(result.skipped.len(), 1);
+        assert!(result.skipped[0].text.contains("nonexistent_field"));
+    }
+
+    #[test]
+    fn test_parse_query_preserves_line_numbers() {
+        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        let query = r#"; comment on line 1
+(identifier) @variable
+
+; comment on line 4
+(nonexistent_node) @invalid
+
+(string_literal) @string
+"#;
+
+        let result = QueryLoader::parse_query(&language, query, false);
+
+        assert_eq!(result.skipped.len(), 1);
+        // The invalid pattern starts on line 5 (1-indexed), which is line 4 in 0-indexed
+        // After +1 conversion, it should be 5
+        assert_eq!(result.skipped[0].start_line, 5);
+    }
+
+    /// Test that parse_query handles the edge case where patterns validate
+    /// individually but fail when combined (e.g., internal tree-sitter errors).
+    ///
+    /// This is a documentation test - the scenario is rare but the code path should
+    /// return None and log a warning rather than panic.
+    #[test]
+    fn test_parse_query_combined_failure_returns_none() {
+        // Note: It's hard to construct a real-world case where patterns validate
+        // individually but fail when combined. Tree-sitter's Query::new is designed
+        // to be consistent. This test verifies the code structure handles this case.
+        //
+        // The code path (query_loader.rs lines ~325-339) is defensive:
+        // - If all patterns validate individually but combination fails, return None
+        // - Log a warning with pattern count and error message
+        //
+        // Since we can't easily trigger this, we test the normal case to ensure
+        // the combination step works correctly.
+        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+
+        // Multiple valid patterns should combine successfully
+        let query = r#"
+(identifier) @variable
+(string_literal) @string
+(function_item name: (identifier) @func_name)
+"#;
+
+        let result = QueryLoader::parse_query(&language, query, false);
+
+        assert!(
+            result.query.is_some(),
+            "Valid patterns should combine successfully"
+        );
+        assert!(result.failure_reason.is_none());
+        assert_eq!(result.query.unwrap().pattern_count(), 3);
+        assert!(result.skipped.is_empty());
+    }
+
+    // ============================================================
+    // Tests for failure_reason field
+    // ============================================================
+
+    #[test]
+    fn test_parse_query_failure_reason_none_on_success() {
+        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        // Valid query should have failure_reason = None
+        let query = "(identifier) @variable";
+
+        let result = QueryLoader::parse_query(&language, query, false);
+
+        assert!(result.query.is_some());
+        assert!(result.failure_reason.is_none());
+    }
+
+    #[test]
+    fn test_parse_query_failure_reason_all_patterns_invalid() {
+        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        // All patterns invalid should set AllPatternsInvalid
+        let query = "(nonexistent_type_1) @a\n(nonexistent_type_2) @b";
+
+        let result = QueryLoader::parse_query(&language, query, false);
+
+        assert!(result.query.is_none());
+        assert_eq!(
+            result.failure_reason,
+            Some(ParseFailure::AllPatternsInvalid)
+        );
+        // The skipped vec should contain both patterns
+        assert_eq!(result.skipped.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_query_failure_reason_with_partial_success() {
+        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        // Mixed valid/invalid: query succeeds, failure_reason is None
+        let query = "(identifier) @valid\n(nonexistent) @invalid";
+
+        let result = QueryLoader::parse_query(&language, query, false);
+
+        // Query succeeds (we have valid patterns)
+        assert!(result.query.is_some());
+        // failure_reason is None because overall parsing succeeded
+        assert!(result.failure_reason.is_none());
+        // But we still have skipped patterns
+        assert_eq!(result.skipped.len(), 1);
     }
 }
