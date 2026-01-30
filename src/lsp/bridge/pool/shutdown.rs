@@ -176,9 +176,19 @@ impl LanguageServerPool {
     ///
     /// # Single-Writer Loop (ADR-0015)
     ///
-    /// Uses `graceful_shutdown()` which handles the writer task coordination
-    /// and process killing. Since we're past the global timeout, this is best-effort.
+    /// Uses `graceful_shutdown()` with a short timeout (3s) to attempt clean
+    /// shutdown. If the timeout expires (e.g., writer task hung), we mark the
+    /// connection as Closed anyway. The OS will clean up orphaned processes.
     async fn force_kill_all(&self) {
+        /// Timeout for force-kill attempts.
+        ///
+        /// This is deliberately short since we're already past the global timeout.
+        /// 3 seconds allows for:
+        /// - Writer task to respond to stop signal (~100ms typical)
+        /// - SIGTERM -> SIGKILL escalation on Unix (2s grace)
+        /// - Some buffer for slow systems
+        const FORCE_KILL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
         // Collect handles to force-kill (minimize lock duration - no logging inside lock)
         let handles_with_info: Vec<(String, ConnectionState, Arc<super::ConnectionHandle>)> = {
             let connections = self.connections.lock().await;
@@ -197,7 +207,6 @@ impl LanguageServerPool {
 
         // Force-kill all connections in parallel.
         // Using JoinSet for parallel execution ensures O(1) force-kill time for N connections.
-        // We use graceful_shutdown which handles writer task coordination and process killing.
         let mut join_set = tokio::task::JoinSet::new();
         for (language, state, handle) in handles_with_info {
             log::debug!(
@@ -207,8 +216,37 @@ impl LanguageServerPool {
                 state
             );
             join_set.spawn(async move {
-                // graceful_shutdown handles: cancel writer, reclaim, send shutdown/exit, kill process
-                let _ = handle.graceful_shutdown().await;
+                // Spawn graceful_shutdown in a separate task to contain potential panics.
+                // This ensures complete_shutdown() is always called on timeout OR panic.
+                let handle_for_shutdown = Arc::clone(&handle);
+                let shutdown_task =
+                    tokio::spawn(async move { handle_for_shutdown.graceful_shutdown().await });
+
+                match tokio::time::timeout(FORCE_KILL_TIMEOUT, shutdown_task).await {
+                    Ok(Ok(_)) => {
+                        // Graceful shutdown completed successfully.
+                        // graceful_shutdown() calls complete_shutdown() internally.
+                    }
+                    Ok(Err(join_error)) => {
+                        // The graceful_shutdown task panicked.
+                        log::error!(
+                            target: "kakehashi::bridge",
+                            "Panic during force-kill for {} connection, marking as closed: {}",
+                            language,
+                            join_error
+                        );
+                        handle.complete_shutdown();
+                    }
+                    Err(_) => {
+                        // The graceful_shutdown task timed out.
+                        log::warn!(
+                            target: "kakehashi::bridge",
+                            "Force-kill timeout for {} connection, marking as closed",
+                            language
+                        );
+                        handle.complete_shutdown();
+                    }
+                }
             });
         }
 

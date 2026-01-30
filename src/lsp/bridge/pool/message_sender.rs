@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use super::connection_handle::ConnectionHandle;
+use super::connection_handle::{ConnectionHandle, NotificationSendResult};
 use crate::lsp::bridge::actor::OutboundMessage;
 
 /// Abstraction for sending messages to a downstream language server.
@@ -64,20 +64,22 @@ pub(crate) struct ConnectionHandleSender<'a>(pub(crate) &'a Arc<ConnectionHandle
 
 // Implementation for ConnectionHandle wrapper
 //
-// Note: ConnectionHandle::send_notification() returns bool without distinguishing
-// between queue full (temporary) and channel closed (terminal). However:
-// - The specific reason is already logged at WARN level in ConnectionHandle
-// - Notifications are fire-and-forget - callers don't retry based on error type
-// - Using BrokenPipe here is appropriate as the message failed to reach the channel
+// Maps NotificationSendResult to io::ErrorKind per the trait contract:
+// - Queued -> Ok(())
+// - QueueFull -> WouldBlock (temporary backpressure, caller may retry)
+// - ChannelClosed -> BrokenPipe (terminal failure)
 impl MessageSender for ConnectionHandleSender<'_> {
     async fn send_notification(&mut self, payload: serde_json::Value) -> io::Result<()> {
-        if self.0.send_notification(payload) {
-            Ok(())
-        } else {
-            Err(io::Error::new(
+        match self.0.send_notification(payload) {
+            NotificationSendResult::Queued => Ok(()),
+            NotificationSendResult::QueueFull => Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "bridge: notification queue full",
+            )),
+            NotificationSendResult::ChannelClosed => Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
-                "bridge: notification failed (queue full or channel closed)",
-            ))
+                "bridge: notification channel closed",
+            )),
         }
     }
 }

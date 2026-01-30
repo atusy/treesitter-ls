@@ -14,7 +14,9 @@ use crate::config::settings::BridgeServerConfig;
 use tower_lsp_server::ls_types::Position;
 use url::Url;
 
-use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
+use super::super::pool::{
+    ConnectionHandleSender, LanguageServerPool, NotificationSendResult, UpstreamId,
+};
 use super::super::protocol::{
     VirtualDocumentUri, build_bridge_completion_request, build_bridge_didchange_notification,
     transform_completion_response_to_host,
@@ -123,12 +125,22 @@ impl LanguageServerPool {
                 version,
             );
             // Queue didChange notification via single-writer loop (ADR-0015)
-            if !handle.send_notification(did_change) {
-                cleanup();
-                return Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "bridge: failed to send didChange notification",
-                ));
+            match handle.send_notification(did_change) {
+                NotificationSendResult::Queued => {}
+                NotificationSendResult::QueueFull => {
+                    cleanup();
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "bridge: didChange notification queue full",
+                    ));
+                }
+                NotificationSendResult::ChannelClosed => {
+                    cleanup();
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "bridge: didChange notification channel closed",
+                    ));
+                }
             }
         }
 

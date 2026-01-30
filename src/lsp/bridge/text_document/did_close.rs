@@ -13,7 +13,9 @@ use std::sync::Arc;
 use ulid::Ulid;
 use url::Url;
 
-use super::super::pool::{ConnectionState, LanguageServerPool, OpenedVirtualDoc};
+use super::super::pool::{
+    ConnectionState, LanguageServerPool, NotificationSendResult, OpenedVirtualDoc,
+};
 use super::super::protocol::{VirtualDocumentUri, build_didclose_notification};
 
 impl LanguageServerPool {
@@ -57,13 +59,16 @@ impl LanguageServerPool {
         // Build and send the didClose notification via single-writer loop (ADR-0015)
         let notification = build_didclose_notification(&uri_string);
 
-        if handle.send_notification(notification) {
-            Ok(())
-        } else {
-            Err(io::Error::new(
+        match handle.send_notification(notification) {
+            NotificationSendResult::Queued => Ok(()),
+            NotificationSendResult::QueueFull => Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "bridge: didClose notification queue full",
+            )),
+            NotificationSendResult::ChannelClosed => Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
-                "bridge: failed to send didClose notification",
-            ))
+                "bridge: didClose notification channel closed",
+            )),
         }
     }
 
