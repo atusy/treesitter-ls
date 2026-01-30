@@ -6,6 +6,11 @@
 //! Like inlay hints, color presentation uses a range parameter in the request (the range
 //! where the color was found) and the response may contain textEdits and additionalTextEdits
 //! that need transformation back to host coordinates.
+//!
+//! # Single-Writer Loop (ADR-0015)
+//!
+//! This handler uses `send_request()` to queue requests via the channel-based
+//! writer task, ensuring FIFO ordering with other messages.
 
 use std::io;
 
@@ -13,7 +18,7 @@ use crate::config::settings::BridgeServerConfig;
 use tower_lsp_server::ls_types::Range;
 use url::Url;
 
-use super::super::pool::{LanguageServerPool, UpstreamId};
+use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
 use super::super::protocol::{
     VirtualDocumentUri, build_bridge_color_presentation_request,
     transform_color_presentation_response_to_host,
@@ -25,8 +30,9 @@ impl LanguageServerPool {
     /// This is a convenience method that handles the full request/response cycle:
     /// 1. Get or create a connection (state check is atomic with lookup - ADR-0015)
     /// 2. Send a textDocument/didOpen notification if needed
-    /// 3. Send the color presentation request with range transformed to virtual coordinates
-    /// 4. Wait for and return the response with textEdits transformed to host coordinates
+    /// 3. Register request with router to get oneshot receiver
+    /// 4. Queue the color presentation request via single-writer loop
+    /// 5. Wait for response via oneshot channel (no Mutex held)
     ///
     /// Like inlay hints, this uses a range parameter which needs transformation from
     /// host to virtual coordinates in the request, and textEdits in the response need
@@ -89,36 +95,33 @@ impl LanguageServerPool {
             request_id,
         );
 
-        // Send messages while holding writer lock, then release
         // Use a closure for cleanup on any failure path
         let cleanup = || {
             handle.router().remove(request_id);
             self.unregister_upstream_request(&upstream_request_id);
         };
 
+        // Send didOpen notification only if document hasn't been opened yet
+        // Uses ConnectionHandleSender wrapper for MessageSender trait
+        if let Err(e) = self
+            .ensure_document_opened(
+                &mut ConnectionHandleSender(&handle),
+                host_uri,
+                &virtual_uri,
+                virtual_content,
+                server_name,
+            )
+            .await
         {
-            let mut writer = handle.writer().await;
+            cleanup();
+            return Err(e);
+        }
 
-            // Send didOpen notification only if document hasn't been opened yet
-            if let Err(e) = self
-                .ensure_document_opened(
-                    &mut writer,
-                    host_uri,
-                    &virtual_uri,
-                    virtual_content,
-                    server_name,
-                )
-                .await
-            {
-                cleanup();
-                return Err(e);
-            }
-
-            if let Err(e) = writer.write_message(&request).await {
-                cleanup();
-                return Err(e);
-            }
-        } // writer lock released here
+        // Queue the color presentation request via single-writer loop (ADR-0015)
+        if let Err(e) = handle.send_request(request, request_id) {
+            cleanup();
+            return Err(e.into());
+        }
 
         // Wait for response via oneshot channel (no Mutex held) with timeout
         let response = handle.wait_for_response(request_id, response_rx).await;
