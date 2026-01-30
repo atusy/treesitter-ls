@@ -9,6 +9,7 @@ pub mod loader;
 pub mod parser_pool;
 pub mod predicate_accessor;
 pub mod query_loader;
+pub(crate) mod query_pattern_splitter;
 pub mod query_predicates;
 pub mod query_store;
 pub(crate) mod region_id_tracker;
