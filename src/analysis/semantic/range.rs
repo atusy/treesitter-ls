@@ -5,27 +5,20 @@
 //! than the entire document.
 //!
 //! The implementation:
-//! 1. Gets all tokens using full tokenization
+//! 1. Gets all tokens using full tokenization (parallel with injection support)
 //! 2. Converts delta-encoded tokens to absolute positions
 //! 3. Filters tokens to only those within the requested range
 //! 4. Re-encodes the filtered tokens as deltas
 
+use std::sync::Arc;
+
 use tower_lsp_server::ls_types::{Range, SemanticToken, SemanticTokens, SemanticTokensResult};
 use tree_sitter::{Query, Tree};
 
-use super::handle_semantic_tokens_full_with_multiline;
-
-/// Handle semantic tokens range request
+/// Handle semantic tokens range request with parallel injection processing.
 ///
-/// Analyzes a specific range of the document including injected language regions
-/// and returns semantic tokens for both the host document and all injected content
-/// within that range.
-///
-/// This function wraps `handle_semantic_tokens_full` and filters
-/// the results to only include tokens within the requested range.
-///
-/// When coordinator or parser_pool is None, only host document tokens are returned
-/// (no injection processing).
+/// This is the async variant that uses `ConcurrentParserPool` for parallel parsing
+/// of injection blocks, including nested injections.
 ///
 /// # Arguments
 /// * `text` - The source text
@@ -34,35 +27,36 @@ use super::handle_semantic_tokens_full_with_multiline;
 /// * `range` - The range to get tokens for (LSP positions)
 /// * `filetype` - The filetype of the document being processed
 /// * `capture_mappings` - The capture mappings to apply
-/// * `coordinator` - Language coordinator for loading injected language parsers (None = no injection)
-/// * `parser_pool` - Parser pool for efficient parser reuse (None = no injection)
+/// * `coordinator` - Language coordinator for injection queries (Arc-wrapped for sharing across tasks)
+/// * `concurrent_pool` - Concurrent parser pool for parallel parsing
 /// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
 ///
 /// # Returns
-/// Semantic tokens for the specified range including injected content (if coordinator/parser_pool provided)
+/// Semantic tokens for the specified range including injected content
 #[allow(clippy::too_many_arguments)]
-pub fn handle_semantic_tokens_range(
+pub async fn handle_semantic_tokens_range(
     text: &str,
     tree: &Tree,
     query: &Query,
     range: &Range,
     filetype: Option<&str>,
     capture_mappings: Option<&crate::config::CaptureMappings>,
-    coordinator: Option<&crate::language::LanguageCoordinator>,
-    parser_pool: Option<&mut crate::language::DocumentParserPool>,
+    coordinator: Arc<crate::language::LanguageCoordinator>,
+    concurrent_pool: &Arc<crate::language::ConcurrentParserPool>,
     supports_multiline: bool,
 ) -> Option<SemanticTokensResult> {
-    // Get all tokens using the full handler with multiline support
-    let full_result = handle_semantic_tokens_full_with_multiline(
+    // Get all tokens using the parallel handler
+    let full_result = super::handle_semantic_tokens_full(
         text,
         tree,
         query,
         filetype,
         capture_mappings,
         coordinator,
-        parser_pool,
+        concurrent_pool,
         supports_multiline,
-    )?;
+    )
+    .await?;
 
     // Extract tokens from result
     let SemanticTokensResult::Tokens(full_tokens) = full_result else {

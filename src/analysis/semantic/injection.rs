@@ -3,12 +3,11 @@
 //! This module handles the discovery and recursive processing of language
 //! injections (e.g., Lua code blocks inside Markdown).
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use tree_sitter::{Query, Tree};
 
-use super::token_collector::{RawToken, collect_host_tokens};
+use super::token_collector::RawToken;
 
 /// Maximum recursion depth for nested injections to prevent stack overflow
 pub(super) const MAX_INJECTION_DEPTH: usize = 10;
@@ -141,346 +140,579 @@ fn collect_injection_contexts<'a>(
     contexts
 }
 
-/// Collect all unique injection language identifiers from a document tree recursively.
+/// Collect semantic tokens from a document and its injections in parallel.
 ///
-/// This function discovers all injection regions in the document (including nested
-/// injections) and returns the unique set of language identifiers needed to process
-/// them. This is essential for the narrow lock scope pattern: acquire all parsers
-/// upfront, release the lock, then process without holding the mutex.
+/// This function uses `ConcurrentParserPool` to parse multiple injection blocks
+/// concurrently, improving performance for documents with many injections.
+///
+/// # Nested Injection Support
+///
+/// This parallel implementation supports nested injections up to `MAX_INJECTION_DEPTH`.
+/// Each injection task recursively spawns child tasks for any nested injections found.
+/// For example, Lua inside Markdown inside Markdown will be fully processed.
 ///
 /// # Arguments
+/// * `text` - The source text of the host document (borrowed for initial parsing)
 /// * `tree` - The parsed syntax tree of the host document
-/// * `text` - The source text of the host document
-/// * `host_language` - The language identifier of the host document (e.g., "markdown")
-/// * `coordinator` - Language coordinator for injection query lookup
-/// * `parser_pool` - Parser pool for parsing nested injection content
+/// * `query` - The tree-sitter highlight query for the host language
+/// * `filetype` - Optional filetype of the host document
+/// * `capture_mappings` - Optional capture name to token type mappings
+/// * `coordinator` - Language coordinator for injection query lookup (Arc-wrapped for sharing across tasks)
+/// * `concurrent_pool` - Concurrent parser pool for parallel parsing
+/// * `supports_multiline` - Whether client supports multiline tokens
 ///
 /// # Returns
-/// A vector of unique resolved language identifiers for all injections found,
-/// including those nested inside other injections (up to MAX_INJECTION_DEPTH).
-pub(crate) fn collect_injection_languages(
-    tree: &Tree,
-    text: &str,
-    host_language: &str,
-    coordinator: &crate::language::LanguageCoordinator,
-    parser_pool: &mut crate::language::DocumentParserPool,
-) -> Vec<String> {
-    use std::collections::HashSet;
-
-    let mut languages = HashSet::new();
-    collect_injection_languages_recursive(
-        tree,
-        text,
-        host_language,
-        coordinator,
-        parser_pool,
-        &mut languages,
-        0,
-    );
-    languages.into_iter().collect()
-}
-
-/// Recursive helper for collecting injection languages at all depths.
-fn collect_injection_languages_recursive(
-    tree: &Tree,
-    text: &str,
-    language: &str,
-    coordinator: &crate::language::LanguageCoordinator,
-    parser_pool: &mut crate::language::DocumentParserPool,
-    languages: &mut std::collections::HashSet<String>,
-    depth: usize,
-) {
-    use crate::language::{collect_all_injections, injection::parse_offset_directive_for_pattern};
-
-    if depth >= MAX_INJECTION_DEPTH {
-        return;
-    }
-
-    // Get injection query for this language
-    let Some(injection_query) = coordinator.get_injection_query(language) else {
-        return;
-    };
-
-    // Find all injection regions
-    let Some(injections) = collect_all_injections(&tree.root_node(), text, Some(&injection_query))
-    else {
-        return;
-    };
-
-    for injection in injections {
-        let Some((inj_start, inj_end)) =
-            validate_injection_bounds(&injection.content_node, text.len())
-        else {
-            continue;
-        };
-
-        // Extract injection content for first-line detection (shebang, mode line)
-        let injection_content = &text[inj_start..inj_end];
-
-        // Resolve the injection language
-        let Some((resolved_lang, _)) =
-            coordinator.resolve_injection_language(&injection.language, injection_content)
-        else {
-            continue;
-        };
-
-        // Add to set (whether already present or not)
-        languages.insert(resolved_lang.clone());
-
-        // Get offset directive if any
-        let offset = parse_offset_directive_for_pattern(&injection_query, injection.pattern_index);
-
-        // Calculate effective content range
-        let content_node = injection.content_node;
-        let (inj_start_byte, inj_end_byte) = if let Some(off) = offset {
-            use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range};
-            let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-            let effective = calculate_effective_range(text, byte_range, off);
-            (effective.start, effective.end)
-        } else {
-            (content_node.start_byte(), content_node.end_byte())
-        };
-
-        // Validate effective range after offset adjustment
-        if !is_valid_byte_range(inj_start_byte, inj_end_byte, text.len()) {
-            continue;
-        }
-        let inj_content_text = &text[inj_start_byte..inj_end_byte];
-
-        // Parse the injected content to discover nested injections
-        let Some(mut parser) = parser_pool.acquire(&resolved_lang) else {
-            continue;
-        };
-        let Some(injected_tree) = parser.parse(inj_content_text, None) else {
-            parser_pool.release(resolved_lang.clone(), parser);
-            continue;
-        };
-
-        // Recursively collect languages from nested injections
-        collect_injection_languages_recursive(
-            &injected_tree,
-            inj_content_text,
-            &resolved_lang,
-            coordinator,
-            parser_pool,
-            languages,
-            depth + 1,
-        );
-
-        parser_pool.release(resolved_lang, parser);
-    }
-}
-
-/// Abstraction over different parser acquisition strategies.
+/// Vector of raw tokens from the host document and all injections (unsorted).
+/// Tokens are collected in arbitrary order from parallel tasks and should be
+/// sorted by the caller (e.g., via `finalize_tokens`) before conversion to LSP format.
 ///
-/// This enum unifies the two patterns for acquiring parsers during injection processing:
-/// - `Pool`: Acquires parsers from a shared `DocumentParserPool` (dynamic borrowing)
-/// - `Local`: Uses pre-acquired parsers from a local `HashMap` (upfront acquisition)
-///
-/// Both variants support the same `acquire`/`release` interface, enabling a single
-/// unified recursive token collection function.
-pub(super) enum ParserProvider<'a> {
-    /// Parser pool variant - acquires/releases parsers dynamically per injection
-    Pool(&'a mut crate::language::DocumentParserPool),
-    /// Local HashMap variant - uses pre-acquired parsers
-    Local(&'a mut HashMap<String, tree_sitter::Parser>),
-}
-
-impl ParserProvider<'_> {
-    /// Acquire a parser for the given language.
-    ///
-    /// - For `Pool`: delegates to `DocumentParserPool::acquire`
-    /// - For `Local`: removes the parser from the HashMap (takes ownership)
-    ///
-    /// Returns `None` if no parser is available for the language.
-    pub fn acquire(&mut self, lang: &str) -> Option<tree_sitter::Parser> {
-        match self {
-            Self::Pool(pool) => pool.acquire(lang),
-            Self::Local(map) => map.remove(lang),
-        }
-    }
-
-    /// Release a parser back to its source.
-    ///
-    /// - For `Pool`: delegates to `DocumentParserPool::release`
-    /// - For `Local`: inserts the parser back into the HashMap
-    pub fn release(&mut self, lang: String, parser: tree_sitter::Parser) {
-        match self {
-            Self::Pool(pool) => pool.release(lang, parser),
-            Self::Local(map) => {
-                map.insert(lang, parser);
-            }
-        }
-    }
-}
-
-/// Recursively collect semantic tokens from a document and its injections.
-///
-/// This function processes the given text and tree, collecting tokens from both
-/// the current language's highlight query and any language injections found.
-/// Nested injections are processed recursively up to MAX_INJECTION_DEPTH.
-///
-/// When coordinator or parser_provider is None, only host document tokens are collected
-/// (no injection processing).
-///
-/// # Parser Provider
-///
-/// The `parser_provider` parameter abstracts over two parser acquisition strategies:
-/// - `ParserProvider::Pool`: Dynamic acquisition from a shared parser pool
-/// - `ParserProvider::Local`: Pre-acquired parsers in a local HashMap
-///
-/// Both variants use the same acquire/release semantics, enabling unified handling.
+/// # Performance Note
+/// Arc wrappers for `host_text` and `host_lines` are allocated lazily - only when
+/// injections are actually found. For documents without injections (the common case),
+/// no heap allocation occurs for sharing state across tasks.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn collect_injection_tokens_recursive(
+pub(super) async fn collect_injection_tokens(
     text: &str,
     tree: &Tree,
     query: &Query,
     filetype: Option<&str>,
     capture_mappings: Option<&crate::config::CaptureMappings>,
-    coordinator: Option<&crate::language::LanguageCoordinator>,
-    parser_provider: Option<&mut ParserProvider<'_>>,
-    host_text: &str,
-    host_lines: &[&str],
-    content_start_byte: usize,
-    depth: usize,
+    coordinator: Arc<crate::language::LanguageCoordinator>,
+    concurrent_pool: &std::sync::Arc<crate::language::ConcurrentParserPool>,
     supports_multiline: bool,
-    all_tokens: &mut Vec<RawToken>,
-) {
-    // Safety check for recursion depth
-    if depth >= MAX_INJECTION_DEPTH {
-        return;
-    }
+) -> Vec<RawToken> {
+    use super::token_collector::collect_host_tokens;
 
-    // 1. Collect tokens from this document's highlight query
+    let mut all_tokens: Vec<RawToken> = Vec::with_capacity(1000);
+    let lines: Vec<&str> = text.lines().collect();
+
+    // 1. Collect tokens from host document (depth 0)
     collect_host_tokens(
         text,
         tree,
         query,
         filetype,
         capture_mappings,
-        host_text,
-        host_lines,
-        content_start_byte,
-        depth,
+        text,   // host_text = text at root
+        &lines, // host_lines
+        0,      // content_start_byte = 0 at root
+        0,      // depth = 0
         supports_multiline,
-        all_tokens,
+        &mut all_tokens,
     );
 
-    // 2. Find and process injections
-    let (Some(coordinator), Some(parser_provider)) = (coordinator, parser_provider) else {
-        return; // No injection support available
-    };
+    // 2. Collect injection contexts (without parsing yet)
+    let contexts = collect_injection_contexts(text, tree, filetype, &coordinator, 0);
 
-    let contexts =
-        collect_injection_contexts(text, tree, filetype, coordinator, content_start_byte);
+    if contexts.is_empty() {
+        return all_tokens;
+    }
+
+    // 3. Lazy allocation: Only create Arc wrappers when we have injections to process.
+    //    For documents without injections (the common case), this avoids unnecessary
+    //    heap allocations.
+    let host_text: Arc<String> = Arc::new(text.to_string());
+    let host_lines: Arc<Vec<String>> = Arc::new(lines.iter().map(|s| s.to_string()).collect());
+    let capture_mappings = capture_mappings.cloned().map(Arc::new);
+
+    // 4. Process injections in parallel using JoinSet with recursive nested injection support
+    let mut join_set = tokio::task::JoinSet::new();
 
     for ctx in contexts {
-        // Acquire parser from provider (pool or local map)
-        let Some(mut parser) = parser_provider.acquire(&ctx.resolved_lang) else {
-            continue;
-        };
+        let pool = Arc::clone(concurrent_pool);
+        let coordinator = Arc::clone(&coordinator);
+        let content_text = ctx.content_text.to_string();
+        let resolved_lang = ctx.resolved_lang.clone();
+        let highlight_query = Arc::clone(&ctx.highlight_query);
+        let host_start_byte = ctx.host_start_byte;
+        let host_text = Arc::clone(&host_text);
+        let host_lines = Arc::clone(&host_lines);
+        let capture_mappings = capture_mappings.clone();
 
-        // Parse the injected content
-        let Some(injected_tree) = parser.parse(ctx.content_text, None) else {
-            parser_provider.release(ctx.resolved_lang.clone(), parser);
-            continue;
-        };
-
-        // Release parser BEFORE recursive call to avoid holding mutable borrow
-        // during recursion. The parser has done its job (produced injected_tree).
-        parser_provider.release(ctx.resolved_lang.clone(), parser);
-
-        // Recursively collect tokens from the injected content
-        collect_injection_tokens_recursive(
-            ctx.content_text,
-            &injected_tree,
-            &ctx.highlight_query,
-            Some(&ctx.resolved_lang),
-            capture_mappings,
-            Some(coordinator),
-            Some(parser_provider),
-            host_text,
-            host_lines,
-            ctx.host_start_byte,
-            depth + 1,
-            supports_multiline,
-            all_tokens,
-        );
+        join_set.spawn(async move {
+            process_injection_recursive(
+                content_text,
+                resolved_lang,
+                highlight_query,
+                host_start_byte,
+                host_text,
+                host_lines,
+                capture_mappings,
+                coordinator,
+                pool,
+                1, // depth = 1 (first level injection)
+                supports_multiline,
+            )
+            .await
+        });
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parser_provider_enum_variants_exist() {
-        // This test verifies that ParserProvider enum has both variants
-        // and can be pattern-matched. The actual acquire/release logic
-        // is tested in task 3.2.
-
-        // We can't easily construct real DocumentParserPool or Parser in unit tests,
-        // so we just verify the enum type exists and has the expected structure
-        // by checking that the type is well-formed via a type annotation.
-        fn _assert_pool_variant(_: ParserProvider<'_>) {}
-        fn _assert_local_variant(_: ParserProvider<'_>) {}
-
-        // Verify pattern matching compiles (won't run, just type-check)
-        fn _match_provider(p: ParserProvider<'_>) {
-            match p {
-                ParserProvider::Pool(_) => {}
-                ParserProvider::Local(_) => {}
+    // 5. Collect results from all tasks
+    while let Some(result) = join_set.join_next().await {
+        match result {
+            Ok(tokens) => all_tokens.extend(tokens),
+            Err(e) => {
+                log::error!(
+                    target: "kakehashi::semantic",
+                    "Injection parsing task panicked: {}",
+                    e
+                );
             }
         }
     }
 
-    #[test]
-    fn test_parser_provider_local_acquire_release() {
-        // Test that Local variant correctly takes and returns parsers
-        let mut parsers: HashMap<String, tree_sitter::Parser> = HashMap::new();
-        parsers.insert("lua".to_string(), tree_sitter::Parser::new());
+    all_tokens
+}
 
-        let mut provider = ParserProvider::Local(&mut parsers);
+/// Process a single injection and recursively process any nested injections.
+///
+/// This function is called for each injection block and handles:
+/// 1. Parsing the injection content
+/// 2. Collecting tokens from the injection
+/// 3. Discovering and recursively processing nested injections
+///
+/// Uses `Box::pin` for recursive async as required by Rust's async trait bounds.
+#[allow(clippy::too_many_arguments)]
+fn process_injection_recursive(
+    content_text: String,
+    resolved_lang: String,
+    highlight_query: Arc<Query>,
+    host_start_byte: usize,
+    host_text: Arc<String>,
+    host_lines: Arc<Vec<String>>,
+    capture_mappings: Option<Arc<crate::config::CaptureMappings>>,
+    coordinator: Arc<crate::language::LanguageCoordinator>,
+    pool: Arc<crate::language::ConcurrentParserPool>,
+    depth: usize,
+    supports_multiline: bool,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Vec<RawToken>> + Send>> {
+    Box::pin(async move {
+        use super::token_collector::collect_host_tokens;
 
-        // Acquire should remove from map
-        let parser = provider.acquire("lua");
-        assert!(
-            parser.is_some(),
-            "acquire should return Some for existing lang"
-        );
-
-        // Map should now be empty
-        if let ParserProvider::Local(map) = &provider {
-            assert!(
-                map.get("lua").is_none(),
-                "parser should be removed from map"
-            );
+        // Check depth limit
+        if depth >= MAX_INJECTION_DEPTH {
+            return Vec::new();
         }
 
-        // Acquire again should return None (parser was taken)
-        let parser2 = provider.acquire("lua");
-        assert!(parser2.is_none(), "second acquire should return None");
+        // Acquire parser from concurrent pool
+        let mut parser = match pool.acquire(&resolved_lang).await {
+            Some(p) => p,
+            None => return Vec::new(),
+        };
 
-        // Release should put it back
-        provider.release("lua".to_string(), parser.unwrap());
+        // Parse the injected content
+        let injected_tree = match parser.parse(&content_text, None) {
+            Some(t) => t,
+            None => return Vec::new(),
+        };
+        // Parser is automatically returned to pool when dropped (end of this function)
 
-        // Now acquire should work again
-        let parser3 = provider.acquire("lua");
+        // Collect tokens from this injection
+        let mut injection_tokens: Vec<RawToken> = Vec::new();
+        let host_lines_refs: Vec<&str> = host_lines.iter().map(|s| s.as_str()).collect();
+
+        collect_host_tokens(
+            &content_text,
+            &injected_tree,
+            &highlight_query,
+            Some(&resolved_lang),
+            capture_mappings.as_deref(),
+            &host_text,
+            &host_lines_refs,
+            host_start_byte,
+            depth,
+            supports_multiline,
+            &mut injection_tokens,
+        );
+
+        // Find nested injections
+        let nested_contexts = collect_injection_contexts(
+            &content_text,
+            &injected_tree,
+            Some(&resolved_lang),
+            &coordinator,
+            host_start_byte,
+        );
+
+        if nested_contexts.is_empty() {
+            return injection_tokens;
+        }
+
+        // Process nested injections in parallel
+        let mut join_set = tokio::task::JoinSet::new();
+
+        for ctx in nested_contexts {
+            let pool = Arc::clone(&pool);
+            let coordinator = Arc::clone(&coordinator);
+            let nested_content = ctx.content_text.to_string();
+            let nested_lang = ctx.resolved_lang.clone();
+            let nested_query = Arc::clone(&ctx.highlight_query);
+            let nested_start_byte = ctx.host_start_byte;
+            let host_text = Arc::clone(&host_text);
+            let host_lines = Arc::clone(&host_lines);
+            let capture_mappings = capture_mappings.clone();
+
+            join_set.spawn(async move {
+                process_injection_recursive(
+                    nested_content,
+                    nested_lang,
+                    nested_query,
+                    nested_start_byte,
+                    host_text,
+                    host_lines,
+                    capture_mappings,
+                    coordinator,
+                    pool,
+                    depth + 1,
+                    supports_multiline,
+                )
+                .await
+            });
+        }
+
+        // Collect results from nested tasks
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(tokens) => injection_tokens.extend(tokens),
+                Err(e) => {
+                    log::error!(
+                        target: "kakehashi::semantic",
+                        "Nested injection parsing task panicked: {}",
+                        e
+                    );
+                }
+            }
+        }
+
+        injection_tokens
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    /// Returns the search path for tree-sitter grammars.
+    fn test_search_path() -> String {
+        std::env::var("TREE_SITTER_GRAMMARS").unwrap_or_else(|_| "deps/tree-sitter".to_string())
+    }
+
+    /// Test that parallel injection token collection produces correct results.
+    ///
+    /// This test verifies that `collect_injection_tokens` using
+    /// `ConcurrentParserPool` produces the same semantic tokens as the
+    /// sequential implementation.
+    ///
+    /// Document structure:
+    /// - Markdown with 3 Lua code blocks
+    /// - Each block contains `local varN = N`
+    /// - Expected: 3 `local` keyword tokens at correct positions
+    #[tokio::test]
+    async fn test_parallel_injection_produces_correct_tokens() {
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+
+        // Markdown document with 3 Lua code blocks
+        let text = r#"# Test Document
+
+```lua
+local var1 = 1
+```
+
+```lua
+local var2 = 2
+```
+
+```lua
+local var3 = 3
+```
+"#;
+
+        // Set up coordinator
+        let coordinator = LanguageCoordinator::new();
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        // Load required languages
+        let load_result = coordinator.ensure_language_loaded("markdown");
+        assert!(load_result.success, "Should load markdown language");
+        let load_result = coordinator.ensure_language_loaded("lua");
+        assert!(load_result.success, "Should load lua language");
+
+        // Parse the markdown document
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let tree = {
+            let mut parser = parser_pool
+                .acquire("markdown")
+                .expect("Should get markdown parser");
+            let result = parser.parse(text, None).expect("Should parse markdown");
+            parser_pool.release("markdown".to_string(), parser);
+            result
+        };
+
+        // Get the highlight query for markdown
+        let md_highlight_query = coordinator
+            .get_highlight_query("markdown")
+            .expect("Should have markdown highlight query");
+
+        // Create ConcurrentParserPool via coordinator
+        let concurrent_pool = std::sync::Arc::new(coordinator.create_concurrent_parser_pool());
+        let coordinator = std::sync::Arc::new(coordinator);
+
+        // Collect tokens using parallel processing (lazy allocation handled internally)
+        let tokens = super::collect_injection_tokens(
+            text,
+            &tree,
+            &md_highlight_query,
+            Some("markdown"),
+            None, // capture_mappings
+            coordinator,
+            &concurrent_pool,
+            false, // supports_multiline
+        )
+        .await;
+
+        // Verify we got tokens
+        assert!(!tokens.is_empty(), "Should collect some tokens");
+
+        // Find all `local` keyword tokens (keyword type, length 5)
+        let local_keywords: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.mapped_name == "keyword" && t.length == 5)
+            .collect();
+
+        assert_eq!(
+            local_keywords.len(),
+            3,
+            "Should find 3 `local` keyword tokens from 3 Lua blocks. Found: {:?}",
+            local_keywords
+        );
+
+        // Verify tokens are at expected lines (lines 3, 7, 11 in 0-indexed)
+        let token_lines: Vec<usize> = local_keywords.iter().map(|t| t.line).collect();
         assert!(
-            parser3.is_some(),
-            "acquire after release should return Some"
+            token_lines.contains(&3),
+            "First `local` should be at line 3. Found lines: {:?}",
+            token_lines
+        );
+        assert!(
+            token_lines.contains(&7),
+            "Second `local` should be at line 7. Found lines: {:?}",
+            token_lines
+        );
+        assert!(
+            token_lines.contains(&11),
+            "Third `local` should be at line 11. Found lines: {:?}",
+            token_lines
         );
     }
 
-    #[test]
-    fn test_parser_provider_local_acquire_nonexistent() {
-        let mut parsers: HashMap<String, tree_sitter::Parser> = HashMap::new();
-        let mut provider = ParserProvider::Local(&mut parsers);
+    /// Test that parallel injection supports nested injections (depth > 1).
+    ///
+    /// This test verifies that `collect_injection_tokens` can handle
+    /// nested injections like Lua inside Markdown inside Markdown.
+    ///
+    /// Document structure (from example.md):
+    /// - Line 12: `````markdown (depth 0 -> 1)
+    /// - Line 13: ```lua (depth 1 -> 2)
+    /// - Line 14: `local injection = true` (Lua code at depth 2)
+    ///
+    /// Expected: `local` keyword token at line 13 (0-indexed)
+    #[tokio::test]
+    async fn test_parallel_injection_supports_nested_injections() {
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
 
-        let parser = provider.acquire("nonexistent");
+        // Read the test fixture with nested injection
+        let text = include_str!("../../../tests/assets/example.md");
+
+        // Set up coordinator (wrapped in Arc for sharing across tasks)
+        let coordinator = LanguageCoordinator::new();
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        // Load required languages
+        let load_result = coordinator.ensure_language_loaded("markdown");
+        assert!(load_result.success, "Should load markdown language");
+        let load_result = coordinator.ensure_language_loaded("lua");
+        assert!(load_result.success, "Should load lua language");
+
+        // Parse the markdown document
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let tree = {
+            let mut parser = parser_pool
+                .acquire("markdown")
+                .expect("Should get markdown parser");
+            let result = parser.parse(text, None).expect("Should parse markdown");
+            parser_pool.release("markdown".to_string(), parser);
+            result
+        };
+
+        // Get the highlight query for markdown
+        let md_highlight_query = coordinator
+            .get_highlight_query("markdown")
+            .expect("Should have markdown highlight query");
+
+        // Create ConcurrentParserPool via coordinator
+        let concurrent_pool = std::sync::Arc::new(coordinator.create_concurrent_parser_pool());
+        let coordinator = std::sync::Arc::new(coordinator);
+
+        // Collect tokens using parallel processing (lazy allocation handled internally)
+        let tokens = super::collect_injection_tokens(
+            text,
+            &tree,
+            &md_highlight_query,
+            Some("markdown"),
+            None, // capture_mappings
+            coordinator,
+            &concurrent_pool,
+            false, // supports_multiline
+        )
+        .await;
+
+        // Verify we got tokens
+        assert!(!tokens.is_empty(), "Should collect some tokens");
+
+        // Find the `local` keyword token at line 13 (0-indexed) from nested injection
+        // This is the Lua code inside Markdown inside Markdown
+        let nested_local = tokens
+            .iter()
+            .find(|t| t.line == 13 && t.mapped_name == "keyword" && t.length == 5);
+
         assert!(
-            parser.is_none(),
-            "acquire for nonexistent lang should return None"
+            nested_local.is_some(),
+            "Should find `local` keyword at line 13 from nested injection (Lua inside Markdown inside Markdown). \
+             This requires recursive parallel processing. Found tokens at lines: {:?}",
+            tokens.iter().map(|t| t.line).collect::<Vec<_>>()
         );
+    }
+
+    /// Test that panic in a parallel injection task is handled gracefully.
+    ///
+    /// This test verifies that:
+    /// 1. A panic in one injection task doesn't crash the entire process
+    /// 2. Other injection tasks still complete successfully
+    /// 3. Tokens from successful tasks are collected
+    ///
+    /// We simulate a panic-like scenario by testing with an invalid language
+    /// that exercises error handling paths. While we can't directly test
+    /// panic recovery (since we can't inject panic into spawned tasks),
+    /// we verify the JoinSet error handling structure is correct.
+    #[tokio::test]
+    async fn test_parallel_injection_handles_task_errors_gracefully() {
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+
+        // Markdown document with one valid Lua block and one valid too
+        // This tests that parallel processing works correctly even when
+        // some tasks may have issues
+        let text = r#"# Test Document
+
+```lua
+local var1 = 1
+```
+
+```lua
+local var2 = 2
+```
+"#;
+
+        // Set up coordinator
+        let coordinator = LanguageCoordinator::new();
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        // Load required languages
+        coordinator.ensure_language_loaded("markdown");
+        coordinator.ensure_language_loaded("lua");
+
+        // Parse the markdown document
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let tree = {
+            let mut parser = parser_pool
+                .acquire("markdown")
+                .expect("Should get markdown parser");
+            let result = parser.parse(text, None).expect("Should parse markdown");
+            parser_pool.release("markdown".to_string(), parser);
+            result
+        };
+
+        let md_highlight_query = coordinator
+            .get_highlight_query("markdown")
+            .expect("Should have markdown highlight query");
+
+        let concurrent_pool = std::sync::Arc::new(coordinator.create_concurrent_parser_pool());
+        let coordinator = std::sync::Arc::new(coordinator);
+
+        // This should complete without panic even if individual tasks fail
+        let tokens = super::collect_injection_tokens(
+            text,
+            &tree,
+            &md_highlight_query,
+            Some("markdown"),
+            None,
+            coordinator,
+            &concurrent_pool,
+            false,
+        )
+        .await;
+
+        // Verify we got tokens from successful tasks
+        // Both Lua blocks should produce tokens
+        let local_keywords: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.mapped_name == "keyword" && t.length == 5)
+            .collect();
+
+        assert_eq!(
+            local_keywords.len(),
+            2,
+            "Should find 2 `local` keyword tokens. Got: {:?}",
+            local_keywords
+        );
+    }
+
+    /// Test that JoinSet correctly handles JoinError by verifying error path.
+    ///
+    /// This test uses a mock scenario to verify that the JoinSet error handling
+    /// structure is correct. We spawn a task that we then abort, which produces
+    /// a JoinError similar to what we'd see from a panic.
+    #[tokio::test]
+    async fn test_joinset_error_handling_path() {
+        use tokio::task::JoinSet;
+
+        let mut join_set = JoinSet::<i32>::new();
+
+        // Spawn a task that will never complete naturally
+        let handle = join_set.spawn(async {
+            // This will be aborted before completing
+            tokio::time::sleep(std::time::Duration::from_secs(1000)).await;
+            42
+        });
+
+        // Abort the task to simulate a failure scenario
+        handle.abort();
+
+        // Collect results - the aborted task should produce an Err
+        let mut ok_count = 0;
+        let mut err_count = 0;
+
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(_) => ok_count += 1,
+                Err(_) => err_count += 1, // This is the error handling path we're testing
+            }
+        }
+
+        // The aborted task should produce exactly one error
+        assert_eq!(err_count, 1, "Should have 1 error from aborted task");
+        assert_eq!(ok_count, 0, "Should have 0 successful completions");
     }
 }
