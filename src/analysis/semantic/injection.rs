@@ -591,25 +591,22 @@ local var3 = 3
         );
     }
 
-    /// Test that panic in a parallel injection task is handled gracefully.
+    /// Test that parallel injection processing handles multiple injection blocks.
     ///
     /// This test verifies that:
-    /// 1. A panic in one injection task doesn't crash the entire process
-    /// 2. Other injection tasks still complete successfully
-    /// 3. Tokens from successful tasks are collected
+    /// 1. Multiple injection blocks are processed in parallel
+    /// 2. All valid blocks produce semantic tokens
+    /// 3. The concurrent parser pool correctly manages parsers
     ///
-    /// We simulate a panic-like scenario by testing with an invalid language
-    /// that exercises error handling paths. While we can't directly test
-    /// panic recovery (since we can't inject panic into spawned tasks),
-    /// we verify the JoinSet error handling structure is correct.
+    /// Note: Error handling (JoinError from panics/aborts) is tested separately
+    /// in `test_joinset_error_handling_path`.
     #[tokio::test]
-    async fn test_parallel_injection_handles_task_errors_gracefully() {
+    async fn test_parallel_injection_processes_multiple_blocks() {
         use crate::config::WorkspaceSettings;
         use crate::language::LanguageCoordinator;
 
-        // Markdown document with one valid Lua block and one valid too
-        // This tests that parallel processing works correctly even when
-        // some tasks may have issues
+        // Markdown document with two valid Lua blocks
+        // This tests that parallel processing works correctly
         let text = r#"# Test Document
 
 ```lua
