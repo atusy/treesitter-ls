@@ -21,8 +21,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
+use super::outbound_message::OutboundMessage;
 use crate::lsp::bridge::connection::SplitConnectionWriter;
-use crate::lsp::bridge::pool::OutboundMessage;
 
 use super::ResponseRouter;
 

@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use super::connection_handle::ConnectionHandle;
-use super::outbound_message::OutboundMessage;
+use crate::lsp::bridge::actor::OutboundMessage;
 
 /// Abstraction for sending messages to a downstream language server.
 ///

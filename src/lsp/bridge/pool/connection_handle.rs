@@ -22,10 +22,9 @@ use log::warn;
 use tokio::sync::mpsc;
 
 use super::connection_action::BridgeError;
-use super::outbound_message::OutboundMessage;
 use super::{ConnectionState, UpstreamId};
 use crate::lsp::bridge::actor::{
-    OUTBOUND_QUEUE_CAPACITY, ReaderTaskHandle, ResponseRouter, WriterTaskHandle,
+    OUTBOUND_QUEUE_CAPACITY, OutboundMessage, ReaderTaskHandle, ResponseRouter, WriterTaskHandle,
 };
 use crate::lsp::bridge::connection::SplitConnectionWriter;
 use crate::lsp::bridge::protocol::{RequestId, build_exit_notification, build_shutdown_request};

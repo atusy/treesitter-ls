@@ -9,9 +9,12 @@
 //! - `Reader`: Background task that reads from server stdout and routes responses
 //! - `Writer`: Background task that writes to server stdin from unified order queue
 
+mod outbound_message;
 mod reader;
 mod response_router;
 mod writer;
+
+pub(crate) use outbound_message::OutboundMessage;
 
 #[cfg(test)]
 pub(crate) use reader::spawn_reader_task;

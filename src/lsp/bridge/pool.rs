@@ -25,7 +25,6 @@ mod document_tracker;
 mod handshake;
 mod liveness_timeout;
 mod message_sender;
-mod outbound_message;
 mod shutdown;
 mod shutdown_timeout;
 #[cfg(test)]
@@ -41,7 +40,6 @@ use document_tracker::DocumentOpenDecision;
 use document_tracker::DocumentTracker;
 pub(crate) use document_tracker::OpenedVirtualDoc;
 pub(crate) use message_sender::ConnectionHandleSender;
-pub(crate) use outbound_message::OutboundMessage;
 pub(crate) use shutdown_timeout::GlobalShutdownTimeout;
 
 use std::collections::HashMap;
@@ -1037,7 +1035,7 @@ impl LanguageServerPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::bridge::actor::{RouteResult, spawn_reader_task};
+    use crate::lsp::bridge::actor::{OutboundMessage, RouteResult, spawn_reader_task};
     use std::time::Duration;
     use test_helpers::*;
 
