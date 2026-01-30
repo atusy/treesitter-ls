@@ -26,6 +26,18 @@ pub(crate) enum BridgeError {
     Closing,
     /// Server disabled after repeated handshake failures.
     Disabled,
+    // === ADR-0015 Single-Writer Loop variants ===
+    /// Request queue is full; request rejected with REQUEST_FAILED.
+    ///
+    /// Per ADR-0015 Section 3, when the bounded order queue (capacity 256)
+    /// is full, requests are rejected with this error. Notifications are
+    /// dropped instead (with WARN logging).
+    QueueFull,
+    /// Writer channel closed; connection is being torn down.
+    ///
+    /// This occurs when the writer task has exited (normally or via panic)
+    /// and the channel is no longer accepting messages.
+    ChannelClosed,
 }
 
 impl BridgeError {
@@ -35,6 +47,18 @@ impl BridgeError {
     /// instead of failing immediately.
     pub(crate) fn is_initializing(&self) -> bool {
         matches!(self, BridgeError::Initializing)
+    }
+
+    /// Get the LSP error code for this error.
+    ///
+    /// All bridge errors map to REQUEST_FAILED (-32803) per LSP spec,
+    /// indicating the request could not be processed but may be retried.
+    ///
+    /// Note: This is distinct from INTERNAL_ERROR (-32603) used by
+    /// `ResponseRouter::fail_all()` for connection failures/panics.
+    #[cfg(test)]
+    pub(crate) fn lsp_error_code(&self) -> i32 {
+        -32803 // REQUEST_FAILED per LSP spec
     }
 }
 
@@ -51,6 +75,8 @@ impl std::fmt::Display for BridgeError {
                     "bridge: server disabled after repeated handshake failures"
                 )
             }
+            BridgeError::QueueFull => write!(f, "bridge: request queue full"),
+            BridgeError::ChannelClosed => write!(f, "bridge: writer channel closed"),
         }
     }
 }
@@ -202,5 +228,50 @@ mod tests {
         let action =
             decide_connection_action(Some(ConnectionState::Failed), MAX_CONSECUTIVE_PANICS - 1);
         assert_eq!(action, ConnectionAction::SpawnNew);
+    }
+
+    // ========================================
+    // ADR-0015 Single-Writer Loop error tests
+    // ========================================
+
+    /// Test QueueFull error has correct LSP error code.
+    #[test]
+    fn queue_full_error_has_correct_lsp_code() {
+        assert_eq!(BridgeError::QueueFull.lsp_error_code(), -32803);
+    }
+
+    /// Test ChannelClosed error has correct LSP error code.
+    #[test]
+    fn channel_closed_error_has_correct_lsp_code() {
+        assert_eq!(BridgeError::ChannelClosed.lsp_error_code(), -32803);
+    }
+
+    /// Test QueueFull display message.
+    #[test]
+    fn queue_full_display_message() {
+        assert_eq!(
+            format!("{}", BridgeError::QueueFull),
+            "bridge: request queue full"
+        );
+    }
+
+    /// Test ChannelClosed display message.
+    #[test]
+    fn channel_closed_display_message() {
+        assert_eq!(
+            format!("{}", BridgeError::ChannelClosed),
+            "bridge: writer channel closed"
+        );
+    }
+
+    /// Test that all error variants have the same LSP error code (REQUEST_FAILED).
+    #[test]
+    fn all_errors_use_request_failed_code() {
+        // All bridge errors should map to REQUEST_FAILED (-32803)
+        assert_eq!(BridgeError::Initializing.lsp_error_code(), -32803);
+        assert_eq!(BridgeError::Closing.lsp_error_code(), -32803);
+        assert_eq!(BridgeError::Disabled.lsp_error_code(), -32803);
+        assert_eq!(BridgeError::QueueFull.lsp_error_code(), -32803);
+        assert_eq!(BridgeError::ChannelClosed.lsp_error_code(), -32803);
     }
 }

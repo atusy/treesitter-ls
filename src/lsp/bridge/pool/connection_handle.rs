@@ -2,6 +2,16 @@
 //!
 //! This module provides the per-connection wrapper with state management,
 //! request routing, and shutdown logic per ADR-0015.
+//!
+//! # Single-Writer Loop Architecture (ADR-0015)
+//!
+//! Each connection uses a channel-based single-writer pattern:
+//! - `tx`: mpsc channel sender for outbound messages (FIFO ordering)
+//! - `writer_handle`: Owns the SplitConnectionWriter, manages writer task
+//!
+//! Messages flow: Handler → tx channel → Writer Task → stdin
+//!
+//! This ensures strict FIFO ordering and non-blocking sends.
 
 use std::io;
 use std::sync::Arc;
@@ -9,9 +19,14 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use log::warn;
+use tokio::sync::mpsc;
 
+use super::connection_action::BridgeError;
+use super::outbound_message::OutboundMessage;
 use super::{ConnectionState, UpstreamId};
-use crate::lsp::bridge::actor::{ReaderTaskHandle, ResponseRouter};
+use crate::lsp::bridge::actor::{
+    OUTBOUND_QUEUE_CAPACITY, ReaderTaskHandle, ResponseRouter, WriterTaskHandle,
+};
 use crate::lsp::bridge::connection::SplitConnectionWriter;
 use crate::lsp::bridge::protocol::{RequestId, build_exit_notification, build_shutdown_request};
 
@@ -22,17 +37,19 @@ use crate::lsp::bridge::protocol::{RequestId, build_exit_notification, build_shu
 /// - Ready: initialize/initialized handshake complete
 /// - Failed: initialization failed (timeout, error, etc.)
 ///
-/// # Architecture (ADR-0015 Phase A)
+/// # Architecture (ADR-0015 Single-Writer Loop)
 ///
-/// Uses Reader Task separation for non-blocking response waiting:
-/// - `writer`: Mutex-protected for serialized request sending
+/// Uses channel-based message passing for FIFO-ordered writes:
+/// - `tx`: Channel sender for outbound messages (notifications and requests)
+/// - `writer_handle`: Manages the writer task lifecycle and provides graceful shutdown
 /// - `router`: Routes responses to oneshot waiters
 /// - `reader_handle`: Background task reading from stdout
 ///
 /// Request flow:
 /// 1. Register request ID with router to get oneshot receiver
-/// 2. Lock writer, send request, release lock
-/// 3. Await oneshot receiver (no Mutex held)
+/// 2. Queue message via `send_request()` (non-blocking)
+/// 3. Writer task writes to stdin in FIFO order
+/// 4. Await oneshot receiver (no Mutex held)
 pub(crate) struct ConnectionHandle {
     /// Connection state - uses std::sync::RwLock for fast, synchronous state checks
     state: std::sync::RwLock<ConnectionState>,
@@ -42,8 +59,18 @@ pub(crate) struct ConnectionHandle {
     /// using `wait_for_ready()`. The Sender is stored here; receivers are created
     /// via `state_watch.subscribe()`.
     state_watch: tokio::sync::watch::Sender<ConnectionState>,
-    /// Writer for sending messages (Mutex serializes writes)
-    writer: tokio::sync::Mutex<SplitConnectionWriter>,
+    /// Channel sender for outbound messages (ADR-0015 single-writer pattern).
+    ///
+    /// All notifications and requests are queued here and written to stdin
+    /// by the writer task in FIFO order.
+    tx: mpsc::Sender<OutboundMessage>,
+    /// Handle to the writer task (ADR-0015).
+    ///
+    /// Manages the writer task lifecycle:
+    /// - Owns the SplitConnectionWriter (including child process handle)
+    /// - Provides graceful shutdown via 3-phase protocol
+    /// - RAII cleanup on drop
+    writer_handle: std::sync::Mutex<Option<WriterTaskHandle>>,
     /// Router for pending request tracking
     router: Arc<ResponseRouter>,
     /// Handle to the reader task.
@@ -64,7 +91,7 @@ impl ConnectionHandle {
     /// Create a new ConnectionHandle in Ready state (test helper).
     ///
     /// Used in tests where we need a connection handle without going through
-    /// the full initialization flow.
+    /// the full initialization flow. Spawns the writer task immediately.
     #[cfg(test)]
     pub(super) fn new(
         writer: SplitConnectionWriter,
@@ -76,10 +103,15 @@ impl ConnectionHandle {
 
     /// Create a new ConnectionHandle with a specific initial state.
     ///
-    /// Uses default liveness timeout (60s per ADR-0018 Tier 2).
+    /// Spawns the writer task to consume outbound messages from the channel.
+    /// The writer task owns the SplitConnectionWriter and writes messages
+    /// to stdin in FIFO order.
     ///
-    /// Used for async initialization where the connection starts in Initializing
-    /// state and transitions to Ready or Failed based on init result.
+    /// # Writer Task Lifetime (ADR-0015)
+    ///
+    /// The writer task is spawned when the ConnectionHandle is created. All messages,
+    /// including those sent during the LSP handshake, flow through the channel to
+    /// ensure FIFO ordering and eliminate race conditions.
     ///
     /// # State Transitions (ADR-0015)
     /// - Start in `Initializing` state during LSP handshake
@@ -91,11 +123,20 @@ impl ConnectionHandle {
         reader_handle: ReaderTaskHandle,
         initial_state: ConnectionState,
     ) -> Self {
+        use crate::lsp::bridge::actor::spawn_writer_task;
+
+        // Create the outbound message channel
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
+
+        // Spawn the writer task - it owns the writer and writes from the channel
+        let writer_handle = spawn_writer_task(writer, rx, Arc::clone(&router));
+
         let (state_watch, _receiver) = tokio::sync::watch::channel(initial_state);
         Self {
             state: std::sync::RwLock::new(initial_state),
             state_watch,
-            writer: tokio::sync::Mutex::new(writer),
+            tx,
+            writer_handle: std::sync::Mutex::new(Some(writer_handle)),
             router,
             reader_handle,
             // Start at 2 because ID=1 is reserved for the initialize request
@@ -112,6 +153,104 @@ impl ConnectionHandle {
     /// upstream requests have the same ID.
     pub(crate) fn next_request_id(&self) -> i64 {
         self.next_request_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    // ========================================
+    // Message Sending (ADR-0015 Single-Writer Loop)
+    // ========================================
+
+    /// Send a notification to the downstream server.
+    ///
+    /// Non-blocking: if the queue is full, the notification is dropped with WARN logging.
+    /// This is per ADR-0015 backpressure semantics - notifications are fire-and-forget.
+    ///
+    /// # Returns
+    /// - `true` if the notification was queued successfully
+    /// - `false` if the notification was dropped (queue full or channel closed)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let notification = json!({"jsonrpc": "2.0", "method": "textDocument/didChange", ...});
+    /// handle.send_notification(notification); // Fire-and-forget
+    /// ```
+    pub(crate) fn send_notification(&self, payload: serde_json::Value) -> bool {
+        match self.tx.try_send(OutboundMessage::Notification(payload)) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                log::warn!(
+                    target: "kakehashi::bridge",
+                    "Notification dropped: queue full (capacity {})",
+                    OUTBOUND_QUEUE_CAPACITY
+                );
+                false
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                log::warn!(
+                    target: "kakehashi::bridge",
+                    "Notification dropped: channel closed"
+                );
+                false
+            }
+        }
+    }
+
+    /// Send a request to the downstream server.
+    ///
+    /// Non-blocking: if the queue is full, returns `BridgeError::QueueFull`.
+    /// The request must already be registered with the router before calling this.
+    ///
+    /// # Cleanup Guarantee
+    ///
+    /// On failure, this method removes the router registration. The `router.remove()`
+    /// call is idempotent, so it's safe even if the writer task has already cleaned
+    /// up this entry due to a concurrent failure.
+    ///
+    /// # Arguments
+    ///
+    /// * `payload` - The JSON-RPC request payload
+    /// * `request_id` - The request ID (must be pre-registered with router)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the request was queued successfully
+    /// * `Err(BridgeError::QueueFull)` if the queue is full
+    /// * `Err(BridgeError::ChannelClosed)` if the writer channel is closed
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // First register with router to get the response channel
+    /// let (request_id, response_rx) = handle.register_request()?;
+    /// let request = build_hover_request(request_id, ...);
+    ///
+    /// // Then queue the request
+    /// handle.send_request(request, request_id)?;
+    ///
+    /// // Finally wait for response
+    /// let response = handle.wait_for_response(request_id, response_rx).await?;
+    /// ```
+    pub(crate) fn send_request(
+        &self,
+        payload: serde_json::Value,
+        request_id: RequestId,
+    ) -> Result<(), BridgeError> {
+        match self.tx.try_send(OutboundMessage::Request {
+            payload,
+            request_id,
+        }) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                // Clean up router registration on failure (idempotent)
+                self.router.remove(request_id);
+                Err(BridgeError::QueueFull)
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                // Clean up router registration on failure (idempotent)
+                self.router.remove(request_id);
+                Err(BridgeError::ChannelClosed)
+            }
+        }
     }
 
     /// Get the current connection state.
@@ -236,37 +375,27 @@ impl ConnectionHandle {
         self.set_state(ConnectionState::Closed);
     }
 
-    /// Force kill the child process with platform-appropriate escalation.
-    ///
-    /// This is the fallback when LSP shutdown handshake times out or fails.
-    ///
-    /// # Platform-Specific Behavior
-    ///
-    /// **Unix (Linux, macOS)**:
-    /// 1. Send SIGTERM to allow graceful termination
-    /// 2. Wait for up to 2 seconds for the process to exit
-    /// 3. If still alive, send SIGKILL for forced termination
-    ///
-    /// **Windows**:
-    /// - Directly calls `TerminateProcess` via `start_kill()`
-    /// - No graceful period (Windows has no SIGTERM equivalent)
-    pub(crate) async fn force_kill(&self) {
-        let mut writer = self.writer.lock().await;
-        writer.force_kill_with_escalation().await;
-    }
-
     /// Perform graceful shutdown with LSP handshake (ADR-0017).
     ///
     /// Implements the LSP shutdown sequence:
     /// 1. Transition to Closing state (new operations rejected)
-    /// 2. Send LSP "shutdown" request and wait for response
-    /// 3. Send LSP "exit" notification
-    /// 4. Force kill process (Unix: SIGTERM→SIGKILL escalation)
-    /// 5. Transition to Closed state
+    /// 2. Stop writer task and reclaim the writer via 3-phase protocol
+    /// 3. Send LSP "shutdown" request directly and wait for response
+    /// 4. Send LSP "exit" notification directly
+    /// 5. Force kill process (Unix: SIGTERM→SIGKILL escalation)
+    /// 6. Transition to Closed state
+    ///
+    /// # Writer Task Synchronization (ADR-0015)
+    ///
+    /// The writer task must be stopped BEFORE sending shutdown/exit to ensure
+    /// no concurrent writes to stdin. The 3-phase protocol:
+    /// 1. Signal stop to writer task
+    /// 2. Wait for idle confirmation (queue drained)
+    /// 3. Receive writer back for direct use
     ///
     /// # Cleanup Guarantee
     ///
-    /// Steps 4-5 (force kill and state transition) are **always executed**,
+    /// Steps 5-6 (force kill and state transition) are **always executed**,
     /// even if the LSP handshake fails. This prevents connections from getting
     /// stuck in the Closing state.
     ///
@@ -288,17 +417,38 @@ impl ConnectionHandle {
         // 1. Transition to Closing state
         self.begin_shutdown();
 
-        // 2-3. Perform LSP handshake, capturing any error
-        // Wrapped in async block to ensure cleanup (steps 4-5) always runs
+        // 2. Stop writer task and reclaim the writer via 3-phase protocol
+        // This ensures no concurrent writes to stdin during shutdown
+        let writer_handle = {
+            let mut guard = self.writer_handle.lock().unwrap_or_else(|e| e.into_inner());
+            guard.take()
+        };
+
+        let mut maybe_writer = if let Some(mut handle) = writer_handle {
+            handle.stop_and_reclaim().await
+        } else {
+            None
+        };
+
+        // 3-4. Perform LSP handshake if we have the writer
+        // Wrapped in async block to ensure cleanup (steps 5-6) always runs
         let handshake_result: io::Result<()> = async {
-            // 2. Send LSP shutdown request
+            let writer = match maybe_writer.as_mut() {
+                Some(w) => w,
+                None => {
+                    log::warn!(
+                        target: "kakehashi::bridge",
+                        "Writer task lost during shutdown, skipping LSP handshake"
+                    );
+                    return Ok(());
+                }
+            };
+
+            // 3. Send LSP shutdown request directly (writer task is stopped)
             let (request_id, response_rx) = self.register_request()?;
             let shutdown_request = build_shutdown_request(request_id);
 
-            {
-                let mut writer = self.writer().await;
-                writer.write_message(&shutdown_request).await?;
-            }
+            writer.write_message(&shutdown_request).await?;
 
             // Wait for shutdown response (no timeout - global timeout handles this)
             // Per ADR-0018: graceful_shutdown has no internal timeout
@@ -317,28 +467,26 @@ impl ConnectionHandle {
                 }
             }
 
-            // 3. Send exit notification (no response expected)
+            // 4. Send exit notification directly (no response expected)
             let exit_notification = build_exit_notification();
-
-            {
-                let mut writer = self.writer().await;
-                // Best effort - if this fails, process will be killed anyway
-                let _ = writer.write_message(&exit_notification).await;
-            }
+            // Best effort - if this fails, process will be killed anyway
+            let _ = writer.write_message(&exit_notification).await;
 
             Ok(())
         }
         .await;
 
-        // 4. Force kill the process with platform-appropriate escalation
+        // 5. Force kill the process with platform-appropriate escalation
         // This ensures the process is terminated even if it ignores exit notification
         // ALWAYS executed, even if handshake failed
         //
         // Unix: SIGTERM->SIGKILL escalation with 2s grace period
         // Windows: TerminateProcess directly (no grace period)
-        self.force_kill().await;
+        if let Some(ref mut writer) = maybe_writer {
+            writer.force_kill_with_escalation().await;
+        }
 
-        // 5. Transition to Closed state
+        // 6. Transition to Closed state
         // ALWAYS executed, even if handshake failed
         self.complete_shutdown();
 
@@ -353,13 +501,6 @@ impl ConnectionHandle {
 
         // Always return Ok - the connection is now Closed regardless of handshake result
         Ok(())
-    }
-
-    /// Get access to the writer for sending messages.
-    ///
-    /// Returns the tokio::sync::MutexGuard for exclusive write access.
-    pub(crate) async fn writer(&self) -> tokio::sync::MutexGuard<'_, SplitConnectionWriter> {
-        self.writer.lock().await
     }
 
     /// Get the response router for registering pending requests.
@@ -544,9 +685,10 @@ mod tests {
             "State should transition to Failed"
         );
 
-        // Can access writer
-        let _writer_guard = handle.writer().await;
-        // Writer is accessible (test passes if no panic)
+        // Can send notification via channel (ADR-0015)
+        let notification = serde_json::json!({"method": "test", "params": {}});
+        let sent = handle.send_notification(notification);
+        assert!(sent, "Should be able to send notification");
 
         // Can access router
         let _router = handle.router();
@@ -776,7 +918,7 @@ mod tests {
         // Register first request - this starts the liveness timer
         let (request_id1, response_rx1) = handle.register_request().expect("should register");
 
-        // Send a request that will be echoed back
+        // Send a request that will be echoed back (ADR-0015: use send_request)
         let request1 = json!({
             "jsonrpc": "2.0",
             "id": request_id1.as_i64(),
@@ -784,11 +926,8 @@ mod tests {
             "params": {}
         });
         handle
-            .writer()
-            .await
-            .write_message(&request1)
-            .await
-            .expect("should write");
+            .send_request(request1, request_id1)
+            .expect("should send request");
 
         // Wait 100ms (half the timeout), then check we received the response
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -813,7 +952,7 @@ mod tests {
         // Register second request to keep pending > 0 (timer stays active after reset)
         let (request_id2, response_rx2) = handle.register_request().expect("should register");
 
-        // Send second request
+        // Send second request (ADR-0015: use send_request)
         let request2 = json!({
             "jsonrpc": "2.0",
             "id": request_id2.as_i64(),
@@ -821,11 +960,8 @@ mod tests {
             "params": {}
         });
         handle
-            .writer()
-            .await
-            .write_message(&request2)
-            .await
-            .expect("should write");
+            .send_request(request2, request_id2)
+            .expect("should send request");
 
         // Wait another 150ms - this is past the original 200ms timeout from the start
         // but within 200ms of the timer reset from the first response

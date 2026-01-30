@@ -5,6 +5,12 @@
 //! 1. Send `initialize` request
 //! 2. Wait for `initialize` response
 //! 3. Send `initialized` notification
+//!
+//! # Single-Writer Loop (ADR-0015)
+//!
+//! The handshake uses `send_request()` and `send_notification()` to queue messages
+//! via the channel-based writer task. This ensures all messages go through the
+//! unified order queue for consistent FIFO ordering.
 
 use std::io;
 
@@ -19,6 +25,8 @@ use crate::lsp::bridge::protocol::{
 /// Sends the initialize request, waits for the response, and sends the
 /// initialized notification. This function is called by `get_or_create_connection_with_timeout`
 /// after the connection is spawned and the reader task is running.
+///
+/// Uses the channel-based single-writer loop (ADR-0015) to ensure FIFO ordering.
 ///
 /// # Arguments
 /// * `handle` - The connection handle (in Initializing state)
@@ -35,12 +43,11 @@ pub(super) async fn perform_lsp_handshake(
     init_response_rx: tokio::sync::oneshot::Receiver<serde_json::Value>,
     init_options: Option<serde_json::Value>,
 ) -> io::Result<()> {
-    // 1. Build and send initialize request
+    // 1. Build and send initialize request via the single-writer loop
     let init_request = build_initialize_request(init_request_id, init_options);
-    {
-        let mut writer = handle.writer().await;
-        writer.write_message(&init_request).await?;
-    }
+    handle
+        .send_request(init_request, init_request_id)
+        .map_err(|e| -> io::Error { e.into() })?;
 
     // 2. Wait for initialize response via pre-registered receiver
     let response = init_response_rx
@@ -50,11 +57,12 @@ pub(super) async fn perform_lsp_handshake(
     // 3. Validate response
     validate_initialize_response(&response)?;
 
-    // 4. Send initialized notification
+    // 4. Send initialized notification via the single-writer loop
     let initialized = build_initialized_notification();
-    {
-        let mut writer = handle.writer().await;
-        writer.write_message(&initialized).await?;
+    if !handle.send_notification(initialized) {
+        return Err(io::Error::other(
+            "bridge: failed to send initialized notification",
+        ));
     }
 
     Ok(())

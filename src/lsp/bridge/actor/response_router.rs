@@ -220,6 +220,50 @@ impl ResponseRouter {
         removed
     }
 
+    /// Fail a single pending request with an error response.
+    ///
+    /// Called when a write fails or the connection is closing (ADR-0015). The request
+    /// is removed from pending and the waiter receives an error response.
+    ///
+    /// Uses `REQUEST_FAILED` (-32803) for queue/write errors, which is distinct
+    /// from `INTERNAL_ERROR` (-32603) used by `fail_all()` for connection failures.
+    ///
+    /// Returns `true` if the request was found and failed, `false` if not pending.
+    ///
+    /// # Idempotency
+    ///
+    /// This method is idempotent: calling it multiple times for the same request ID
+    /// is safe and will simply return `false` on subsequent calls. This property is
+    /// critical for avoiding double-cleanup races between sender cleanup and writer
+    /// task cleanup (see ADR-0015 Appendix A).
+    pub(crate) fn fail_request(&self, id: RequestId, reason: &str) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+
+        let tx = state.pending.remove(&id);
+
+        // Clean up bidirectional cancel map entries in O(1)
+        Self::remove_cancel_mapping_inner(&mut state, id);
+
+        // Release lock before sending to avoid holding it during channel operations
+        drop(state);
+
+        match tx {
+            Some(sender) => {
+                let error_response = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id.as_i64(),
+                    "error": {
+                        "code": -32803, // REQUEST_FAILED per LSP spec
+                        "message": format!("bridge: {}", reason)
+                    }
+                });
+                let _ = sender.send(error_response);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Fail all pending requests with an internal error response.
     ///
     /// Called when the connection fails (e.g., reader task panic, liveness timeout)
@@ -671,5 +715,116 @@ mod tests {
                 "cancel map entry should persist after lookup"
             );
         }
+    }
+
+    // ========================================
+    // fail_request tests (ADR-0015 Single-Writer Loop)
+    // ========================================
+
+    /// Test that fail_request sends REQUEST_FAILED error to waiter.
+    #[tokio::test]
+    async fn fail_request_sends_request_failed_error() {
+        let router = ResponseRouter::new();
+        let id = RequestId::new(42);
+
+        let rx = router.register(id).expect("should register");
+
+        let removed = router.fail_request(id, "queue full");
+        assert!(
+            removed,
+            "fail_request should return true for pending request"
+        );
+
+        let response = rx.await.expect("should receive error response");
+        assert_eq!(response["error"]["code"], -32803); // REQUEST_FAILED
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("queue full")
+        );
+        assert_eq!(response["id"], 42);
+    }
+
+    /// Test that fail_request returns false for unknown ID.
+    #[test]
+    fn fail_request_returns_false_for_unknown_id() {
+        let router = ResponseRouter::new();
+        let id = RequestId::new(999);
+
+        let removed = router.fail_request(id, "test");
+        assert!(!removed, "fail_request should return false for unknown ID");
+    }
+
+    /// Test that fail_request is idempotent (critical for double-cleanup races).
+    ///
+    /// ADR-0015 Appendix A: Cleanup operations MUST be idempotent to handle
+    /// concurrent cleanup from sender and writer task.
+    #[test]
+    fn fail_request_is_idempotent() {
+        let router = ResponseRouter::new();
+        let id = RequestId::new(42);
+
+        let _rx = router.register(id).expect("should register");
+
+        // First call removes the entry
+        let first = router.fail_request(id, "first");
+        assert!(first);
+
+        // Second call is a no-op
+        let second = router.fail_request(id, "second");
+        assert!(!second, "fail_request should be idempotent");
+    }
+
+    /// Test that fail_request cleans up cancel map.
+    #[test]
+    fn fail_request_cleans_up_cancel_map() {
+        let router = ResponseRouter::new();
+        let downstream_id = RequestId::new(42);
+        let upstream_id = UpstreamId::Number(100);
+
+        let _rx = router
+            .register_with_upstream(downstream_id, Some(upstream_id.clone()))
+            .expect("should register");
+
+        // Verify mapping exists
+        assert!(router.lookup_downstream_id(&upstream_id).is_some());
+
+        // Fail the request
+        router.fail_request(downstream_id, "test");
+
+        // Cancel mapping should be cleaned up
+        assert_eq!(router.lookup_downstream_id(&upstream_id), None);
+    }
+
+    /// Test double cleanup is safe (both remove and fail_request on same ID).
+    ///
+    /// ADR-0015 Appendix A: When a request fails, cleanup can happen from two places:
+    /// 1. Sender cleanup: send_request() failure calls router.remove()
+    /// 2. Writer cleanup: writer task calls router.fail_request() on write error
+    ///
+    /// This test verifies that exactly one cleanup succeeds regardless of order.
+    #[tokio::test]
+    async fn double_cleanup_is_safe() {
+        let router = std::sync::Arc::new(ResponseRouter::new());
+        let id = RequestId::new(42);
+
+        let _rx = router.register(id).expect("should register");
+
+        // Simulate both sender and writer task trying to clean up
+        let router1 = router.clone();
+        let router2 = router.clone();
+
+        let (result1, result2) = tokio::join!(async move { router1.remove(id) }, async move {
+            router2.fail_request(id, "concurrent cleanup")
+        });
+
+        // Exactly one should succeed
+        assert!(
+            (result1 && !result2) || (!result1 && result2),
+            "Exactly one cleanup should succeed: remove={}, fail_request={}",
+            result1,
+            result2
+        );
     }
 }

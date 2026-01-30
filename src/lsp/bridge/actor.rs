@@ -7,9 +7,11 @@
 //!
 //! - `ResponseRouter`: Routes responses to pending requests via oneshot channels
 //! - `Reader`: Background task that reads from server stdout and routes responses
+//! - `Writer`: Background task that writes to server stdin from unified order queue
 
 mod reader;
 mod response_router;
+mod writer;
 
 #[cfg(test)]
 pub(crate) use reader::spawn_reader_task;
@@ -19,3 +21,4 @@ pub(crate) use reader::{ReaderTaskHandle, spawn_reader_task_for_language};
 pub(crate) use response_router::ResponseRouter;
 #[cfg(test)]
 pub(crate) use response_router::RouteResult;
+pub(crate) use writer::{OUTBOUND_QUEUE_CAPACITY, WriterTaskHandle, spawn_writer_task};

@@ -24,6 +24,8 @@ mod connection_state;
 mod document_tracker;
 mod handshake;
 mod liveness_timeout;
+mod message_sender;
+mod outbound_message;
 mod shutdown;
 mod shutdown_timeout;
 #[cfg(test)]
@@ -38,6 +40,8 @@ pub(crate) use connection_state::ConnectionState;
 use document_tracker::DocumentOpenDecision;
 use document_tracker::DocumentTracker;
 pub(crate) use document_tracker::OpenedVirtualDoc;
+pub(crate) use message_sender::ConnectionHandleSender;
+pub(crate) use outbound_message::OutboundMessage;
 pub(crate) use shutdown_timeout::GlobalShutdownTimeout;
 
 use std::collections::HashMap;
@@ -49,7 +53,6 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use url::Url;
 
-use super::connection::SplitConnectionWriter;
 use super::protocol::{VirtualDocumentUri, build_bridge_didopen_notification};
 
 /// Timeout for LSP initialize handshake (ADR-0018 Tier 0: 30-60s recommended).
@@ -377,7 +380,7 @@ impl LanguageServerPool {
     ///
     /// # Arguments
     ///
-    /// * `writer` - Connection writer for sending didOpen
+    /// * `sender` - Message sender for sending didOpen (either direct writer or channel)
     /// * `host_uri` - The host document URI
     /// * `virtual_uri` - The virtual document URI
     /// * `virtual_content` - Content for the didOpen notification
@@ -389,9 +392,15 @@ impl LanguageServerPool {
     /// - `SendDidOpen`: Send didOpen notification, mark as opened
     /// - `AlreadyOpened`: Skip (no-op), document was already opened
     /// - `PendingError`: Race condition, return error
-    pub(crate) async fn ensure_document_opened(
+    ///
+    /// # MessageSender Trait (ADR-0015)
+    ///
+    /// This function is generic over `MessageSender` for channel-based sends:
+    /// - `mpsc::Sender<OutboundMessage>`: Direct channel sender
+    /// - `ConnectionHandleSender`: Wrapper around `Arc<ConnectionHandle>`
+    pub(crate) async fn ensure_document_opened<S: message_sender::MessageSender>(
         &self,
-        writer: &mut SplitConnectionWriter,
+        sender: &mut S,
         host_uri: &Url,
         virtual_uri: &VirtualDocumentUri,
         virtual_content: &str,
@@ -404,7 +413,7 @@ impl LanguageServerPool {
         {
             DocumentOpenDecision::SendDidOpen => {
                 let did_open = build_bridge_didopen_notification(virtual_uri, virtual_content);
-                writer.write_message(&did_open).await?;
+                sender.send_notification(did_open).await?;
                 self.document_tracker.mark_document_opened(virtual_uri);
                 Ok(())
             }
@@ -895,7 +904,7 @@ impl LanguageServerPool {
             }
         };
 
-        // Build and send the cancel notification
+        // Build and send the cancel notification via single-writer loop (ADR-0015)
         // Per LSP spec: $/cancelRequest is a notification with { id: request_id }
         let notification = serde_json::json!({
             "jsonrpc": "2.0",
@@ -905,10 +914,9 @@ impl LanguageServerPool {
             }
         });
 
-        let mut writer = handle.writer().await;
-        let result = writer.write_message(&notification).await;
+        let success = handle.send_notification(notification);
 
-        if result.is_ok() {
+        if success {
             self.cancel_metrics.record_success();
             log::debug!(
                 target: "kakehashi::bridge::cancel",
@@ -917,9 +925,13 @@ impl LanguageServerPool {
                 downstream_id.as_i64(),
                 server_name
             );
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "bridge: failed to send cancel notification",
+            ))
         }
-
-        result
     }
 
     /// Forward a $/cancelRequest notification using only the upstream request ID.
@@ -1638,12 +1650,12 @@ mod tests {
         }
     }
 
-    /// Test that forward_didchange_to_opened_docs does not block on a busy connection.
+    /// Test that forward_didchange_to_opened_docs completes quickly with channel-based sending.
     ///
-    /// When a downstream request is in-flight (holding the connection lock),
-    /// didChange forwarding should return quickly and enqueue the send in the background.
+    /// ADR-0015: Channel-based sends via try_send() are non-blocking.
+    /// This verifies forward_didchange_to_opened_docs returns promptly.
     #[tokio::test]
-    async fn forward_didchange_does_not_block_on_busy_connection() {
+    async fn forward_didchange_is_non_blocking() {
         use super::super::protocol::VirtualDocumentUri;
         use std::sync::Arc;
         use std::time::{Duration, Instant};
@@ -1665,9 +1677,7 @@ mod tests {
             .await
             .insert("lua".to_string(), Arc::clone(&handle));
 
-        // Hold the writer lock to simulate an in-flight request.
-        let _writer_guard = handle.writer().await;
-
+        // ADR-0015: No need to hold a writer lock - sends are channel-based and non-blocking
         let injections = vec![(
             "lua".to_string(),
             TEST_ULID_LUA_0.to_string(),
@@ -1679,7 +1689,7 @@ mod tests {
             .await;
         assert!(
             start.elapsed() < Duration::from_millis(100),
-            "forward_didchange_to_opened_docs should not block on connection lock"
+            "forward_didchange_to_opened_docs should complete quickly (channel-based sends are non-blocking)"
         );
     }
 
@@ -1699,22 +1709,15 @@ mod tests {
     #[tokio::test]
     async fn ensure_document_opened_sends_didopen_for_new_document() {
         use super::super::protocol::VirtualDocumentUri;
+        use tokio::sync::mpsc;
 
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", TEST_ULID_LUA_0);
         let virtual_content = "print('hello')";
 
-        // Create a mock writer using cat (will discard our didOpen notification)
-        let mut conn = AsyncBridgeConnection::spawn(vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            "cat > /dev/null".to_string(),
-        ])
-        .await
-        .expect("should spawn cat process");
-
-        let (mut writer, _reader) = conn.split();
+        // Create a channel-based sender (same as production code path)
+        let (mut sender, mut rx) = mpsc::channel::<OutboundMessage>(16);
 
         // Before ensure_document_opened, document should not be marked as opened
         assert!(
@@ -1724,7 +1727,7 @@ mod tests {
 
         // Call ensure_document_opened
         let result = pool
-            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content, "lua")
+            .ensure_document_opened(&mut sender, &host_uri, &virtual_uri, virtual_content, "lua")
             .await;
 
         // Should succeed
@@ -1735,6 +1738,18 @@ mod tests {
             pool.is_document_opened(&virtual_uri),
             "Document should be marked as opened after ensure_document_opened"
         );
+
+        // Verify that a didOpen notification was queued
+        let msg = rx.try_recv().expect("should have queued didOpen");
+        match msg {
+            OutboundMessage::Notification(payload) => {
+                assert_eq!(
+                    payload["method"], "textDocument/didOpen",
+                    "Should be didOpen notification"
+                );
+            }
+            _ => panic!("Expected Notification, got Request"),
+        }
     }
 
     /// Test that ensure_document_opened skips didOpen when document is already opened.
@@ -1745,6 +1760,7 @@ mod tests {
     #[tokio::test]
     async fn ensure_document_opened_skips_didopen_for_already_opened_document() {
         use super::super::protocol::VirtualDocumentUri;
+        use tokio::sync::mpsc;
 
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
@@ -1762,21 +1778,12 @@ mod tests {
             "Document should be marked as opened"
         );
 
-        // Create a mock writer - we use a command that will fail if we try to write
-        // This verifies that no didOpen is actually sent
-        let mut conn = AsyncBridgeConnection::spawn(vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            "cat > /dev/null".to_string(),
-        ])
-        .await
-        .expect("should spawn cat process");
-
-        let (mut writer, _reader) = conn.split();
+        // Create a channel-based sender (same as production code path)
+        let (mut sender, mut rx) = mpsc::channel::<OutboundMessage>(16);
 
         // Call ensure_document_opened - should skip didOpen
         let result = pool
-            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content, "lua")
+            .ensure_document_opened(&mut sender, &host_uri, &virtual_uri, virtual_content, "lua")
             .await;
 
         // Should succeed (just skips didOpen)
@@ -1789,6 +1796,12 @@ mod tests {
         assert!(
             pool.is_document_opened(&virtual_uri),
             "Document should still be marked as opened"
+        );
+
+        // Verify that NO didOpen was queued
+        assert!(
+            rx.try_recv().is_err(),
+            "Should NOT have queued any message for already opened document"
         );
     }
 
@@ -1804,6 +1817,7 @@ mod tests {
     #[tokio::test]
     async fn ensure_document_opened_returns_error_for_pending_didopen() {
         use super::super::protocol::VirtualDocumentUri;
+        use tokio::sync::mpsc;
 
         let pool = LanguageServerPool::new();
         let host_uri = Url::parse("file:///test/doc.md").unwrap();
@@ -1830,20 +1844,12 @@ mod tests {
             "Document should NOT be marked as opened"
         );
 
-        // Create a mock writer
-        let mut conn = AsyncBridgeConnection::spawn(vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            "cat > /dev/null".to_string(),
-        ])
-        .await
-        .expect("should spawn cat process");
-
-        let (mut writer, _reader) = conn.split();
+        // Create a channel-based sender (same as production code path)
+        let (mut sender, _rx) = mpsc::channel::<OutboundMessage>(16);
 
         // Call ensure_document_opened - should fail
         let result = pool
-            .ensure_document_opened(&mut writer, &host_uri, &virtual_uri, virtual_content, "lua")
+            .ensure_document_opened(&mut sender, &host_uri, &virtual_uri, virtual_content, "lua")
             .await;
 
         // Should return error
@@ -2108,14 +2114,20 @@ mod tests {
     // Forced Shutdown Tests
     // ========================================
 
-    /// Test SIGTERM->SIGKILL escalation for unresponsive processes (Unix only).
+    /// Test that pool.shutdown_all_with_timeout force-kills unresponsive processes.
+    ///
+    /// ADR-0017/ADR-0018: When graceful shutdown times out, force_kill_all is called
+    /// which escalates to SIGKILL for processes that don't respond to SIGTERM.
     #[cfg(unix)]
     #[tokio::test]
-    async fn unresponsive_process_receives_sigterm_then_sigkill() {
+    async fn shutdown_all_force_kills_unresponsive_process() {
+        use std::sync::Arc;
         use std::time::Instant;
 
-        // Create a connection to a process that ignores SIGTERM
-        // This script traps SIGTERM and continues, requiring SIGKILL to terminate
+        // Create a pool with an unresponsive process
+        let pool = Arc::new(LanguageServerPool::new());
+
+        // Spawn a process that ignores SIGTERM and doesn't respond to LSP
         let mut conn = AsyncBridgeConnection::spawn(vec![
             "sh".to_string(),
             "-c".to_string(),
@@ -2136,25 +2148,40 @@ mod tests {
             ConnectionState::Ready,
         ));
 
-        // Start timer to verify escalation doesn't wait too long
+        // Add connection to pool
+        pool.connections
+            .lock()
+            .await
+            .insert("test".to_string(), handle);
+
+        // Start timer
         let start = Instant::now();
 
-        // Call force_kill which should:
-        // 1. Send SIGTERM
-        // 2. Wait 2 seconds for graceful termination
-        // 3. Send SIGKILL if process still alive
-        handle.force_kill().await;
+        // Call shutdown_all with minimum valid timeout (5 seconds per ADR-0018)
+        // This should:
+        // 1. Try graceful shutdown (will hang waiting for LSP response)
+        // 2. After 5s timeout, call force_kill_all
+        // 3. Force kill sends SIGTERM, waits, then SIGKILL
+        let timeout =
+            GlobalShutdownTimeout::new(Duration::from_secs(5)).expect("5s is valid timeout");
+        pool.shutdown_all_with_timeout(timeout).await;
 
-        // Escalation should complete within reasonable time (SIGTERM wait + SIGKILL)
-        // We use 5 seconds as upper bound to account for SIGTERM wait period
+        // Should complete within global timeout + SIGTERM grace period + buffer
+        // (5s timeout + 2s SIGTERM grace + 1s buffer = 8s)
         assert!(
-            start.elapsed() < Duration::from_secs(5),
-            "Signal escalation should complete within 5 seconds"
+            start.elapsed() < Duration::from_secs(8),
+            "Shutdown should complete within 8 seconds, took {:?}",
+            start.elapsed()
         );
 
-        // Process should be terminated
-        // Note: After force_kill, we can't directly check process status via handle,
-        // but the absence of a hang confirms the process was killed
+        // Connection should be Closed
+        let connections = pool.connections.lock().await;
+        let handle = connections.get("test").expect("connection should exist");
+        assert_eq!(
+            handle.state(),
+            ConnectionState::Closed,
+            "Connection should be Closed after force-kill"
+        );
     }
 
     /// Test that shutdown with pending requests fails those requests and then completes.
@@ -2362,44 +2389,38 @@ mod tests {
     }
 
     // ============================================================
-    // Writer Synchronization Tests
+    // Writer Task Coordination Tests
     // ============================================================
 
-    /// Test that writer synchronization is within graceful_shutdown scope.
+    /// Test that graceful_shutdown waits for writer task to drain and return.
+    ///
+    /// ADR-0015: The 3-phase shutdown protocol ensures:
+    /// 1. Stop signal sent to writer task
+    /// 2. Writer task drains queue and confirms idle
+    /// 3. Writer is reclaimed for LSP shutdown sequence
     #[tokio::test]
-    async fn writer_synchronization_is_within_graceful_shutdown_scope() {
+    async fn graceful_shutdown_coordinates_with_writer_task() {
         let handle = create_handle_with_state(ConnectionState::Ready).await;
 
-        // Hold the writer lock to simulate ongoing write
-        let _writer_guard = handle.writer().await;
+        // Send a notification before shutdown (will be queued)
+        let sent = handle.send_notification(serde_json::json!({"method": "test", "params": {}}));
+        assert!(sent, "Should be able to send notification before shutdown");
 
-        // Spawn a task to perform graceful_shutdown (will block on writer lock)
-        let shutdown_handle = Arc::clone(&handle);
-        let shutdown_task = tokio::spawn(async move {
-            // This will block until writer lock is released
-            let _ = shutdown_handle.graceful_shutdown().await;
-        });
+        // Perform graceful shutdown
+        let start = std::time::Instant::now();
+        let _ = handle.graceful_shutdown().await;
 
-        // Give the shutdown task a moment to start and block
-        tokio::time::sleep(Duration::from_millis(50)).await;
-
-        // Shutdown is blocked waiting for writer lock
+        // Shutdown should complete reasonably quickly (writer task drains and returns)
         assert!(
-            !shutdown_task.is_finished(),
-            "Shutdown should be blocked on writer lock"
+            start.elapsed() < Duration::from_secs(2),
+            "Graceful shutdown should complete within 2 seconds"
         );
-
-        // Release the writer lock
-        drop(_writer_guard);
-
-        // Now shutdown should proceed
-        let _ = tokio::time::timeout(Duration::from_secs(2), shutdown_task).await;
 
         // Verify shutdown completed (state is Closed)
         assert_eq!(
             handle.state(),
             ConnectionState::Closed,
-            "State should be Closed after writer released and shutdown completed"
+            "State should be Closed after graceful shutdown completed"
         );
     }
 
