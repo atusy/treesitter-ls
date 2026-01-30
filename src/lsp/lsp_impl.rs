@@ -1,4 +1,4 @@
-mod text_document;
+pub(crate) mod text_document;
 
 use std::collections::HashSet;
 
@@ -16,20 +16,21 @@ use tower_lsp_server::ls_types::{
     CompletionOptions, CompletionParams, CompletionResponse, DeclarationCapability,
     DiagnosticOptions, DiagnosticServerCapabilities, DidChangeConfigurationParams,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentDiagnosticParams, DocumentDiagnosticReportResult, DocumentHighlight,
-    DocumentHighlightParams, DocumentLink, DocumentLinkOptions, DocumentLinkParams,
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    Hover, HoverParams, HoverProviderCapability, ImplementationProviderCapability,
-    InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location,
-    Moniker, MonikerParams, OneOf, ReferenceParams, RenameParams, SaveOptions, SelectionRange,
-    SelectionRangeParams, SelectionRangeProviderCapability, SemanticTokenModifier,
-    SemanticTokenType, SemanticTokensDeltaParams, SemanticTokensFullDeltaResult,
-    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
-    SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
-    SignatureHelpOptions, SignatureHelpParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TypeDefinitionProviderCapability, Uri,
-    WorkDoneProgressOptions, WorkspaceEdit,
+    DidSaveTextDocumentParams, DocumentDiagnosticParams, DocumentDiagnosticReportResult,
+    DocumentHighlight, DocumentHighlightParams, DocumentLink, DocumentLinkOptions,
+    DocumentLinkParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
+    ImplementationProviderCapability, InitializeParams, InitializeResult, InitializedParams,
+    InlayHint, InlayHintParams, Location, Moniker, MonikerParams, OneOf, ReferenceParams,
+    RenameParams, SaveOptions, SelectionRange, SelectionRangeParams,
+    SelectionRangeProviderCapability, SemanticTokenModifier, SemanticTokenType,
+    SemanticTokensDeltaParams, SemanticTokensFullDeltaResult, SemanticTokensFullOptions,
+    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensRangeParams,
+    SemanticTokensRangeResult, SemanticTokensResult, SemanticTokensServerCapabilities,
+    ServerCapabilities, ServerInfo, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, TypeDefinitionProviderCapability, Uri, WorkDoneProgressOptions,
+    WorkspaceEdit,
 };
 use tower_lsp_server::{Client, LanguageServer};
 use tree_sitter::InputEdit;
@@ -54,6 +55,8 @@ use super::auto_install::{
     AutoInstallManager, InstallEvent, InstallingLanguages, get_injected_languages,
 };
 use super::cache::CacheCoordinator;
+use super::debounced_diagnostics::DebouncedDiagnosticsManager;
+use super::synthetic_diagnostics::SyntheticDiagnosticsManager;
 
 /// Convert ls_types::Uri to url::Url
 ///
@@ -115,6 +118,11 @@ pub struct Kakehashi {
     auto_install: AutoInstallManager,
     /// Bridge coordinator for downstream LS pool and region ID tracking
     bridge: BridgeCoordinator,
+    /// Manager for synthetic (background) diagnostic push tasks (ADR-0020 Phase 2).
+    /// Wrapped in Arc for sharing with debounced diagnostics (Phase 3).
+    synthetic_diagnostics: std::sync::Arc<SyntheticDiagnosticsManager>,
+    /// Manager for debounced didChange diagnostic triggers (ADR-0020 Phase 3)
+    debounced_diagnostics: DebouncedDiagnosticsManager,
 }
 
 impl std::fmt::Debug for Kakehashi {
@@ -128,6 +136,8 @@ impl std::fmt::Debug for Kakehashi {
             .field("settings_manager", &"SettingsManager")
             .field("auto_install", &"AutoInstallManager")
             .field("bridge", &"BridgeCoordinator")
+            .field("synthetic_diagnostics", &"SyntheticDiagnosticsManager")
+            .field("debounced_diagnostics", &"DebouncedDiagnosticsManager")
             .finish_non_exhaustive()
     }
 }
@@ -150,6 +160,8 @@ impl Kakehashi {
             settings_manager: SettingsManager::new(),
             auto_install,
             bridge: BridgeCoordinator::new(),
+            synthetic_diagnostics: std::sync::Arc::new(SyntheticDiagnosticsManager::new()),
+            debounced_diagnostics: DebouncedDiagnosticsManager::new(),
         }
     }
 
@@ -181,6 +193,8 @@ impl Kakehashi {
             settings_manager: SettingsManager::new(),
             auto_install,
             bridge: BridgeCoordinator::with_cancel_forwarder(pool, cancel_forwarder),
+            synthetic_diagnostics: std::sync::Arc::new(SyntheticDiagnosticsManager::new()),
+            debounced_diagnostics: DebouncedDiagnosticsManager::new(),
         }
     }
 
@@ -786,6 +800,29 @@ impl Kakehashi {
             .eager_spawn_servers(&settings, &host_language, languages)
             .await;
     }
+
+    /// Schedule a debounced diagnostic for a document (ADR-0020 Phase 3).
+    ///
+    /// This schedules a diagnostic collection to run after a debounce delay.
+    /// If another change arrives before the delay expires, the previous timer
+    /// is cancelled and a new one is started.
+    ///
+    /// The diagnostic snapshot is captured immediately (at schedule time) to
+    /// ensure consistency with the document state that triggered the change.
+    fn schedule_debounced_diagnostic(&self, uri: Url, lsp_uri: Uri) {
+        // Capture snapshot data synchronously (same as spawn_synthetic_diagnostic_task)
+        let snapshot_data = self.prepare_diagnostic_snapshot(&uri);
+
+        // Schedule the debounced diagnostic
+        self.debounced_diagnostics.schedule(
+            uri,
+            lsp_uri,
+            self.client.clone(),
+            snapshot_data,
+            self.bridge.pool_arc(),
+            std::sync::Arc::clone(&self.synthetic_diagnostics),
+        );
+    }
 }
 
 impl LanguageServer for Kakehashi {
@@ -954,6 +991,12 @@ impl LanguageServer for Kakehashi {
             );
         }
 
+        // Abort all synthetic diagnostic tasks (ADR-0020 Phase 2)
+        self.synthetic_diagnostics.abort_all();
+
+        // Cancel all debounced diagnostic timers (ADR-0020 Phase 3)
+        self.debounced_diagnostics.cancel_all();
+
         // Graceful shutdown of all downstream language server connections (ADR-0017)
         // - Transitions to Closing state, sends LSP shutdown/exit handshake
         // - Escalates to SIGTERM/SIGKILL for unresponsive servers (Unix)
@@ -1044,6 +1087,11 @@ impl LanguageServer for Kakehashi {
         // This must be called AFTER parse_document so we have access to the AST.
         self.process_injected_languages(&uri).await;
 
+        // ADR-0020 Phase 2: Trigger synthetic diagnostic push on didOpen
+        // This provides proactive diagnostics for clients that don't support pull diagnostics.
+        // Note: We use the already-cloned lsp_uri here (it was cloned at the start of the method).
+        self.spawn_synthetic_diagnostic_task(uri, lsp_uri);
+
         // NOTE: No semantic_tokens_refresh() on didOpen.
         // Capable LSP clients should request by themselves.
         // Calling refresh would be redundant and can cause deadlocks with clients
@@ -1070,6 +1118,12 @@ impl LanguageServer for Kakehashi {
 
         // Clean up region ID mappings for this document (ADR-0019)
         self.bridge.cleanup(&uri);
+
+        // Abort any in-progress synthetic diagnostic task for this document (ADR-0020 Phase 2)
+        self.synthetic_diagnostics.remove_document(&uri);
+
+        // Cancel any pending debounced diagnostic for this document (ADR-0020 Phase 3)
+        self.debounced_diagnostics.cancel(&uri);
 
         // Close all virtual documents associated with this host document
         // This sends didClose notifications to downstream language servers
@@ -1165,12 +1219,42 @@ impl LanguageServer for Kakehashi {
         // This must be called AFTER parse_document so we have access to the updated AST.
         self.process_injected_languages(&uri).await;
 
+        // ADR-0020 Phase 3: Schedule debounced diagnostic push on didChange.
+        // After 500ms of no changes, diagnostics will be collected and published.
+        // This provides near-real-time feedback while avoiding excessive requests during typing.
+        self.schedule_debounced_diagnostic(uri, lsp_uri);
+
         // NOTE: We intentionally do NOT call semantic_tokens_refresh() here.
         // LSP clients already request new tokens after didChange (via semanticTokens/full/delta).
         // Calling refresh would be redundant and can cause deadlocks with synchronous clients
         // like vim-lsp on Vim, which cannot respond to server requests while processing.
 
         self.notifier().log_info("file changed!").await;
+    }
+
+    /// Handle textDocument/didSave notification.
+    ///
+    /// ADR-0020 Phase 2: Triggers synthetic diagnostic push.
+    /// Collects diagnostics from downstream servers and publishes via publishDiagnostics.
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        let lsp_uri = params.text_document.uri;
+
+        // Convert ls_types::Uri to url::Url for internal use
+        let Ok(uri) = uri_to_url(&lsp_uri) else {
+            log::warn!("Invalid URI in didSave: {}", lsp_uri.as_str());
+            return;
+        };
+
+        log::debug!(
+            target: "kakehashi::synthetic_diag",
+            "didSave received for {}",
+            uri
+        );
+
+        // Spawn background task for synthetic diagnostic collection
+        self.spawn_synthetic_diagnostic_task(uri, lsp_uri);
+
+        self.notifier().log_info("file saved!").await;
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {

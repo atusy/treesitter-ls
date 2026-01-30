@@ -2,8 +2,10 @@ pub mod auto_install;
 mod bridge;
 mod cache;
 mod client;
+mod debounced_diagnostics;
 pub(crate) mod in_progress_set;
 mod settings_manager;
+mod synthetic_diagnostics;
 mod text_sync;
 
 mod lsp_impl;
