@@ -173,7 +173,7 @@ async fn writer_loop(
                             );
                             // Fail the request if write failed
                             if let OutboundMessage::Request { request_id, .. } = msg {
-                                router.fail_request(request_id, "write error during shutdown");
+                                router.fail_request(request_id, "bridge: write error during shutdown");
                             }
                         }
                     }
@@ -194,7 +194,7 @@ async fn writer_loop(
                 // Drain remaining queued requests and fail them
                 while let Ok(msg) = rx.try_recv() {
                     if let OutboundMessage::Request { request_id, .. } = msg {
-                        router.fail_request(request_id, "connection closing");
+                        router.fail_request(request_id, "bridge: connection closing");
                     }
                 }
                 // Don't send idle/writer - caller is force-cancelling
@@ -213,7 +213,7 @@ async fn writer_loop(
                             );
                             // Clean up request from router if write failed
                             if let OutboundMessage::Request { request_id, .. } = &outbound {
-                                router.fail_request(*request_id, "write error");
+                                router.fail_request(*request_id, "bridge: write error");
                             }
                             // Note: Connection will transition to Failed via reader task
                             // when it detects the write error (broken pipe, etc.)
@@ -226,7 +226,7 @@ async fn writer_loop(
                             "Writer channel closed, cleaning up router entries"
                         );
                         // Fail any requests that were queued but not yet written
-                        router.fail_all("writer channel closed");
+                        router.fail_all("bridge: writer channel closed");
                         return;
                     }
                 }
