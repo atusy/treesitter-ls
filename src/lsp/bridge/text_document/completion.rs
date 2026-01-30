@@ -2,6 +2,11 @@
 //!
 //! This module provides completion request functionality for downstream language servers,
 //! handling the coordinate transformation between host and virtual documents.
+//!
+//! # Single-Writer Loop (ADR-0015)
+//!
+//! This handler uses `send_request()` and `send_notification()` to queue messages via
+//! the channel-based writer task, ensuring FIFO ordering with other messages.
 
 use std::io;
 
@@ -9,7 +14,7 @@ use crate::config::settings::BridgeServerConfig;
 use tower_lsp_server::ls_types::Position;
 use url::Url;
 
-use super::super::pool::{LanguageServerPool, UpstreamId};
+use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
 use super::super::protocol::{
     VirtualDocumentUri, build_bridge_completion_request, build_bridge_didchange_notification,
     transform_completion_response_to_host,
@@ -79,58 +84,59 @@ impl LanguageServerPool {
             request_id,
         );
 
-        // Send messages while holding writer lock, then release
         // Use a closure for cleanup on any failure path
         let cleanup = || {
             handle.router().remove(request_id);
             self.unregister_upstream_request(&upstream_request_id);
         };
 
+        // Track if we need to send didChange (when document was already opened)
+        let was_already_opened = self.is_document_opened(&virtual_uri);
+
+        // Send didOpen notification only if document hasn't been opened yet
+        // Uses ConnectionHandleSender wrapper for MessageSender trait
+        if let Err(e) = self
+            .ensure_document_opened(
+                &mut ConnectionHandleSender(&handle),
+                host_uri,
+                &virtual_uri,
+                virtual_content,
+                server_name,
+            )
+            .await
         {
-            let mut writer = handle.writer().await;
+            cleanup();
+            return Err(e);
+        }
 
-            // Track if we need to send didChange (when document was already opened)
-            let was_already_opened = self.is_document_opened(&virtual_uri);
-
-            // Send didOpen notification only if document hasn't been opened yet
-            if let Err(e) = self
-                .ensure_document_opened(
-                    &mut writer,
-                    host_uri,
-                    &virtual_uri,
-                    virtual_content,
-                    server_name,
-                )
+        // Document already opened: send didChange with incremented version
+        if was_already_opened
+            && let Some(version) = self
+                .increment_document_version(&virtual_uri, server_name)
                 .await
-            {
+        {
+            let did_change = build_bridge_didchange_notification(
+                &host_uri_lsp,
+                injection_language,
+                region_id,
+                virtual_content,
+                version,
+            );
+            // Queue didChange notification via single-writer loop (ADR-0015)
+            if !handle.send_notification(did_change) {
                 cleanup();
-                return Err(e);
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "bridge: failed to send didChange notification",
+                ));
             }
+        }
 
-            // Document already opened: send didChange with incremented version
-            if was_already_opened
-                && let Some(version) = self
-                    .increment_document_version(&virtual_uri, server_name)
-                    .await
-            {
-                let did_change = build_bridge_didchange_notification(
-                    &host_uri_lsp,
-                    injection_language,
-                    region_id,
-                    virtual_content,
-                    version,
-                );
-                if let Err(e) = writer.write_message(&did_change).await {
-                    cleanup();
-                    return Err(e);
-                }
-            }
-
-            if let Err(e) = writer.write_message(&completion_request).await {
-                cleanup();
-                return Err(e);
-            }
-        } // writer lock released here
+        // Queue the completion request via single-writer loop (ADR-0015)
+        if let Err(e) = handle.send_request(completion_request, request_id) {
+            cleanup();
+            return Err(e.into());
+        }
 
         // Wait for response via oneshot channel (no Mutex held) with timeout
         let response = handle.wait_for_response(request_id, response_rx).await;

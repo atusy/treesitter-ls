@@ -2,8 +2,13 @@
 //!
 //! This module provides didChange notification forwarding for downstream language servers,
 //! propagating document changes from host documents to their virtual documents.
+//!
+//! # Single-Writer Loop (ADR-0015)
+//!
+//! This handler uses `send_notification()` to queue didChange notifications via the
+//! channel-based writer task. This replaces the previous `tokio::spawn` fire-and-forget
+//! pattern that could violate FIFO ordering.
 
-use std::io;
 use std::sync::Arc;
 use url::Url;
 
@@ -19,6 +24,12 @@ impl LanguageServerPool {
     /// 3. Skips injections that haven't been opened yet (didOpen will be sent on first request)
     ///
     /// Uses full content sync (TextDocumentSyncKind::Full) for simplicity.
+    ///
+    /// # Single-Writer Loop (ADR-0015)
+    ///
+    /// All didChange notifications are queued via `send_notification()` which ensures
+    /// FIFO ordering. This is non-blocking (fire-and-forget semantics) but maintains
+    /// proper message ordering, unlike the previous `tokio::spawn` approach.
     ///
     /// # Arguments
     /// * `host_uri` - The host document URI
@@ -80,20 +91,17 @@ impl LanguageServerPool {
                         Arc::clone(handle)
                     };
 
-                    let virtual_uri_string = virtual_uri.to_uri_string();
-                    let content = content.clone();
-
-                    // Fire-and-forget to avoid blocking didChange on downstream I/O.
-                    // TODO: Replace with ADR-0015 single-writer loop for ordered, non-blocking sends.
-                    tokio::spawn(async move {
-                        let _ = Self::send_didchange_for_virtual_doc(
-                            handle,
-                            virtual_uri_string,
-                            content,
-                            version,
-                        )
-                        .await;
-                    });
+                    // Send didChange notification via single-writer loop (ADR-0015).
+                    // This is non-blocking and maintains FIFO ordering.
+                    // Unlike the previous tokio::spawn approach, this ensures
+                    // didChange notifications are ordered correctly relative
+                    // to subsequent requests.
+                    Self::send_didchange_for_virtual_doc(
+                        &handle,
+                        &virtual_uri.to_uri_string(),
+                        content,
+                        version,
+                    );
                 }
             }
             // If not opened, skip - didOpen will be sent on first request
@@ -102,21 +110,22 @@ impl LanguageServerPool {
 
     /// Send a didChange notification for a virtual document.
     ///
-    /// This method sends a didChange notification to the downstream language server
-    /// for the specified virtual document URI. Uses full content sync.
+    /// Uses the channel-based single-writer loop (ADR-0015) to send the notification.
+    /// This is non-blocking - if the queue is full, the notification is dropped
+    /// with a warning log.
     ///
     /// # Arguments
-    /// * `language` - The injection language (e.g., "lua")
+    /// * `handle` - The connection handle
     /// * `virtual_uri` - The virtual document URI string
     /// * `content` - The new content for the virtual document
     /// * `version` - The document version number
-    async fn send_didchange_for_virtual_doc(
-        handle: Arc<ConnectionHandle>,
-        virtual_uri: String,
-        content: String,
+    fn send_didchange_for_virtual_doc(
+        handle: &Arc<ConnectionHandle>,
+        virtual_uri: &str,
+        content: &str,
         version: i32,
-    ) -> io::Result<()> {
-        // Build and send the didChange notification
+    ) {
+        // Build the didChange notification
         let notification = serde_json::json!({
             "jsonrpc": "2.0",
             "method": "textDocument/didChange",
@@ -133,7 +142,7 @@ impl LanguageServerPool {
             }
         });
 
-        let mut writer = handle.writer().await;
-        writer.write_message(&notification).await
+        // Send via the single-writer loop (non-blocking, fire-and-forget)
+        handle.send_notification(notification);
     }
 }

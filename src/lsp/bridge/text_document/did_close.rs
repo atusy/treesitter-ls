@@ -2,6 +2,11 @@
 //!
 //! This module provides didClose notification functionality for downstream language servers,
 //! handling cleanup when host documents are closed or regions are invalidated.
+//!
+//! # Single-Writer Loop (ADR-0015)
+//!
+//! This handler uses `send_notification()` to queue didClose notifications via the
+//! channel-based writer task, ensuring FIFO ordering.
 
 use std::io;
 use std::sync::Arc;
@@ -17,6 +22,8 @@ impl LanguageServerPool {
     /// This method sends a didClose notification to the downstream language server
     /// for the specified virtual document URI. The connection is NOT closed after
     /// sending - it remains available for other documents.
+    ///
+    /// Uses the channel-based single-writer loop (ADR-0015) for FIFO ordering.
     ///
     /// Returns Ok(()) if the notification was sent successfully, or if no connection
     /// exists for the server (nothing to do).
@@ -47,11 +54,17 @@ impl LanguageServerPool {
         let handle = Arc::clone(handle);
         drop(connections); // Release lock before I/O
 
-        // Build and send the didClose notification
+        // Build and send the didClose notification via single-writer loop (ADR-0015)
         let notification = build_didclose_notification(&uri_string);
 
-        let mut writer = handle.writer().await;
-        writer.write_message(&notification).await
+        if handle.send_notification(notification) {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "bridge: failed to send didClose notification",
+            ))
+        }
     }
 
     /// Close a single virtual document: send didClose and remove from tracking.

@@ -173,6 +173,11 @@ impl LanguageServerPool {
     /// **Windows**: Uses TerminateProcess directly (no grace period)
     ///
     /// The method executes kills in parallel to minimize total shutdown time.
+    ///
+    /// # Single-Writer Loop (ADR-0015)
+    ///
+    /// Uses `graceful_shutdown()` which handles the writer task coordination
+    /// and process killing. Since we're past the global timeout, this is best-effort.
     async fn force_kill_all(&self) {
         // Collect handles to force-kill (minimize lock duration - no logging inside lock)
         let handles_with_info: Vec<(String, ConnectionState, Arc<super::ConnectionHandle>)> = {
@@ -190,9 +195,9 @@ impl LanguageServerPool {
                 .collect()
         };
 
-        // Force-kill all connections in parallel with SIGTERM->SIGKILL escalation.
-        // Using JoinSet for parallel execution ensures O(1) force-kill time for N connections
-        // instead of O(N * 2s) when done sequentially (2s is SIGTERM->SIGKILL wait).
+        // Force-kill all connections in parallel.
+        // Using JoinSet for parallel execution ensures O(1) force-kill time for N connections.
+        // We use graceful_shutdown which handles writer task coordination and process killing.
         let mut join_set = tokio::task::JoinSet::new();
         for (language, state, handle) in handles_with_info {
             log::debug!(
@@ -202,8 +207,8 @@ impl LanguageServerPool {
                 state
             );
             join_set.spawn(async move {
-                handle.force_kill().await;
-                handle.complete_shutdown();
+                // graceful_shutdown handles: cancel writer, reclaim, send shutdown/exit, kill process
+                let _ = handle.graceful_shutdown().await;
             });
         }
 
