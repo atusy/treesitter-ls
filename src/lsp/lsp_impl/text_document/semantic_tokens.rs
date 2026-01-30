@@ -17,10 +17,8 @@ use tower_lsp_server::ls_types::{
 };
 
 use crate::analysis::{
-    IncrementalDecision, collect_injection_languages, compute_incremental_tokens,
-    decide_tokenization_strategy, decode_semantic_tokens, encode_semantic_tokens,
-    handle_semantic_tokens_full_delta, handle_semantic_tokens_full_with_local_parsers,
-    next_result_id,
+    IncrementalDecision, compute_incremental_tokens, decide_tokenization_strategy,
+    decode_semantic_tokens, encode_semantic_tokens, next_result_id,
 };
 
 use super::super::{Kakehashi, uri_to_url};
@@ -315,57 +313,22 @@ impl Kakehashi {
             // Get capture mappings
             let capture_mappings = self.language.get_capture_mappings();
 
-            // Narrow lock scope pattern (Task 1.1):
-            // 1. Acquire lock, collect injection languages recursively, pre-acquire parsers, release lock
-            // 2. Process tokens without holding lock (100ms-1s)
-            // 3. Acquire lock, return parsers (~10μs)
-            //
-            // Note: collect_injection_languages now recursively parses nested injections
-            // to discover all required languages. This uses the pool during discovery,
-            // but the overall lock time is still much shorter than holding it during
-            // the entire token processing phase.
-            let mut local_parsers = {
-                let mut pool = self.parser_pool.lock().await;
-
-                // Discover all injection languages recursively (requires pool for nested parsing)
-                let injection_languages = collect_injection_languages(
-                    &tree,
-                    &text,
-                    &language_name,
-                    &self.language,
-                    &mut pool,
-                );
-
-                // Pre-acquire parsers for all discovered languages
-                let mut parsers = std::collections::HashMap::new();
-                for lang_id in &injection_languages {
-                    if let Some(parser) = pool.acquire(lang_id) {
-                        parsers.insert(lang_id.clone(), parser);
-                    }
-                }
-                parsers
-            }; // Lock released here
-
-            // Step 3: Process tokens (no lock held)
+            // Use parallel injection processing with ConcurrentParserPool.
+            // This processes multiple injection blocks concurrently using a semaphore-based
+            // pool, improving performance for documents with many injections (e.g., Markdown
+            // with multiple code blocks). Supports nested injections recursively.
             let supports_multiline = self.supports_multiline_tokens();
-            let result = handle_semantic_tokens_full_with_local_parsers(
+            let result = crate::analysis::handle_semantic_tokens_full(
                 &text,
                 &tree,
                 &query,
                 Some(&language_name),
                 Some(&capture_mappings),
-                Some(&self.language),
-                &mut local_parsers,
+                std::sync::Arc::clone(&self.language),
+                &self.concurrent_parser_pool,
                 supports_multiline,
-            );
-
-            // Step 4: Return parsers with brief lock
-            {
-                let mut pool = self.parser_pool.lock().await;
-                for (lang_id, parser) in local_parsers {
-                    pool.release(lang_id, parser);
-                }
-            }
+            )
+            .await;
 
             (result, text)
         }; // doc reference is dropped here
@@ -543,9 +506,6 @@ impl Kakehashi {
             // Get capture mappings
             let capture_mappings = self.language.get_capture_mappings();
 
-            // Use injection-aware handler (works with or without injection support)
-            let mut pool = self.parser_pool.lock().await;
-
             // Incremental Tokenization Path
             // ==============================
             // When UseIncremental strategy is selected AND we have all required state:
@@ -578,6 +538,9 @@ impl Kakehashi {
                 None
             };
 
+            // Use parallel injection processing with ConcurrentParserPool for both paths.
+            // This provides consistent nested injection support and better performance
+            // for documents with many injection blocks.
             let result = if let Some((prev_tokens, inc_state)) = incremental_context {
                 log::debug!(
                     target: "kakehashi::semantic",
@@ -587,9 +550,9 @@ impl Kakehashi {
                 // Decode previous tokens to AbsoluteToken format
                 let old_absolute = decode_semantic_tokens(&prev_tokens);
 
-                // Get new tokens via full computation (still needed for changed region)
+                // Get new tokens via parallel computation (still needed for changed region)
                 let supports_multiline = self.supports_multiline_tokens();
-                let new_tokens_result = handle_semantic_tokens_full_delta(
+                let new_tokens_result = crate::analysis::handle_semantic_tokens_full_delta(
                     &text,
                     &tree,
                     &query,
@@ -597,10 +560,11 @@ impl Kakehashi {
                     None, // Don't pass previous - we'll merge ourselves
                     Some(&language_name),
                     Some(&capture_mappings),
-                    Some(&self.language),
-                    Some(&mut pool),
+                    std::sync::Arc::clone(&self.language),
+                    &self.concurrent_parser_pool,
                     supports_multiline,
-                );
+                )
+                .await;
 
                 // Extract current tokens from the result
                 if let Some(result) = new_tokens_result {
@@ -682,9 +646,9 @@ impl Kakehashi {
                     incremental_state.is_some()
                 );
 
-                // Delegate to handler with injection support
+                // Delegate to parallel handler with injection support
                 let supports_multiline = self.supports_multiline_tokens();
-                handle_semantic_tokens_full_delta(
+                crate::analysis::handle_semantic_tokens_full_delta(
                     &text,
                     &tree,
                     &query,
@@ -692,10 +656,11 @@ impl Kakehashi {
                     previous_tokens_for_delta.as_ref(),
                     Some(&language_name),
                     Some(&capture_mappings),
-                    Some(&self.language),
-                    Some(&mut pool),
+                    std::sync::Arc::clone(&self.language),
+                    &self.concurrent_parser_pool,
                     supports_multiline,
                 )
+                .await
             };
             (result, text)
         }; // doc reference is dropped here
@@ -790,8 +755,7 @@ impl Kakehashi {
         // Get capture mappings
         let capture_mappings = self.language.get_capture_mappings();
 
-        // Use injection-aware handler (works with or without injection support)
-        let mut pool = self.parser_pool.lock().await;
+        // Use parallel injection handler for consistent nested injection support
         let supports_multiline = self.supports_multiline_tokens();
         let result = crate::analysis::handle_semantic_tokens_range(
             text,
@@ -800,10 +764,11 @@ impl Kakehashi {
             &domain_range,
             Some(&language_name),
             Some(&capture_mappings),
-            Some(&self.language),
-            Some(&mut pool),
+            std::sync::Arc::clone(&self.language),
+            &self.concurrent_parser_pool,
             supports_multiline,
-        );
+        )
+        .await;
 
         // Convert to RangeResult, treating partial responses as empty for now
         let domain_range_result = match result.unwrap_or_else(|| {

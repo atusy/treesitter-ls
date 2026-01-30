@@ -1,6 +1,7 @@
 pub(crate) mod text_document;
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::ls_types::request::{
@@ -42,7 +43,7 @@ use crate::document::DocumentStore;
 use crate::language::LanguageEvent;
 use crate::language::injection::{InjectionResolver, collect_all_injections};
 use crate::language::region_id_tracker::EditInfo;
-use crate::language::{DocumentParserPool, LanguageCoordinator};
+use crate::language::{ConcurrentParserPool, DocumentParserPool, LanguageCoordinator};
 use crate::lsp::bridge::BridgeCoordinator;
 use crate::lsp::client::{ClientNotifier, check_semantic_tokens_refresh_support};
 use crate::lsp::settings_manager::SettingsManager;
@@ -107,8 +108,14 @@ fn lsp_legend_modifiers() -> Vec<SemanticTokenModifier> {
 
 pub struct Kakehashi {
     client: Client,
-    language: LanguageCoordinator,
+    /// Language coordinator for parser and query management.
+    /// Wrapped in Arc to enable sharing across parallel async tasks (e.g., recursive
+    /// nested injection processing in semantic tokens).
+    language: Arc<LanguageCoordinator>,
     parser_pool: Mutex<DocumentParserPool>,
+    /// Concurrent parser pool for parallel injection processing in semantic tokens.
+    /// Wrapped in Arc to enable sharing across async tasks in parallel handlers.
+    concurrent_parser_pool: Arc<ConcurrentParserPool>,
     documents: DocumentStore,
     /// Unified cache coordinator for semantic tokens, injections, and request tracking
     cache: CacheCoordinator,
@@ -131,6 +138,7 @@ impl std::fmt::Debug for Kakehashi {
             .field("client", &self.client)
             .field("language", &"LanguageCoordinator")
             .field("parser_pool", &"Mutex<DocumentParserPool>")
+            .field("concurrent_parser_pool", &"Arc<ConcurrentParserPool>")
             .field("documents", &"DocumentStore")
             .field("cache", &"CacheCoordinator")
             .field("settings_manager", &"SettingsManager")
@@ -144,8 +152,9 @@ impl std::fmt::Debug for Kakehashi {
 
 impl Kakehashi {
     pub fn new(client: Client) -> Self {
-        let language = LanguageCoordinator::new();
+        let language = Arc::new(LanguageCoordinator::new());
         let parser_pool = language.create_document_parser_pool();
+        let concurrent_parser_pool = Arc::new(language.create_concurrent_parser_pool());
 
         // Initialize auto-install manager with crash detection
         let failed_parsers = AutoInstallManager::init_failed_parser_registry();
@@ -155,6 +164,7 @@ impl Kakehashi {
             client,
             language,
             parser_pool: Mutex::new(parser_pool),
+            concurrent_parser_pool,
             documents: DocumentStore::new(),
             cache: CacheCoordinator::new(),
             settings_manager: SettingsManager::new(),
@@ -177,8 +187,9 @@ impl Kakehashi {
         pool: std::sync::Arc<super::bridge::LanguageServerPool>,
         cancel_forwarder: super::request_id::CancelForwarder,
     ) -> Self {
-        let language = LanguageCoordinator::new();
+        let language = Arc::new(LanguageCoordinator::new());
         let parser_pool = language.create_document_parser_pool();
+        let concurrent_parser_pool = Arc::new(language.create_concurrent_parser_pool());
 
         // Initialize auto-install manager with crash detection
         let failed_parsers = AutoInstallManager::init_failed_parser_registry();
@@ -188,6 +199,7 @@ impl Kakehashi {
             client,
             language,
             parser_pool: Mutex::new(parser_pool),
+            concurrent_parser_pool,
             documents: DocumentStore::new(),
             cache: CacheCoordinator::new(),
             settings_manager: SettingsManager::new(),
