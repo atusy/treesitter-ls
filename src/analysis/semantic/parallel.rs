@@ -291,7 +291,6 @@ fn collect_injection_contexts_sync<'a>(
 ///
 /// # Returns
 /// Vector of raw tokens from all injections, sorted by (line, column)
-#[allow(dead_code)] // Will be used in async bridge
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn collect_injection_tokens_parallel(
     host_text: &str,

@@ -19,7 +19,9 @@ pub use semantic::{
     LEGEND_MODIFIERS, LEGEND_TYPES, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
     handle_semantic_tokens_range,
 };
+#[allow(unused_imports)] // Will be used in LSP integration
 pub(crate) use semantic::{
-    collect_injection_languages, handle_semantic_tokens_full_with_local_parsers,
+    collect_injection_languages, collect_injection_tokens_parallel,
+    handle_semantic_tokens_full_parallel, handle_semantic_tokens_full_with_local_parsers,
 };
 pub use semantic_cache::{InjectionMap, InjectionTokenCache, SemanticTokenCache};

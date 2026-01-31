@@ -19,6 +19,7 @@ pub use range::handle_semantic_tokens_range;
 
 // Re-export for crate-internal use
 pub(crate) use injection::collect_injection_languages;
+pub(crate) use parallel::collect_injection_tokens_parallel;
 
 // Internal re-exports for use within this module
 use delta::calculate_semantic_tokens_delta;
@@ -179,6 +180,70 @@ pub(crate) fn handle_semantic_tokens_full_with_local_parsers(
         supports_multiline,
         &mut all_tokens,
     );
+
+    finalize_tokens(all_tokens)
+}
+
+/// Handle semantic tokens full request with Rayon parallel injection processing.
+///
+/// This variant uses Rayon's work-stealing parallelism for processing multiple
+/// injections concurrently. Unlike the local-parsers version which requires
+/// pre-acquiring parsers, this version uses thread-local parser caching.
+///
+/// # Arguments
+/// * `text` - The source text
+/// * `tree` - The parsed syntax tree
+/// * `query` - The tree-sitter query for semantic highlighting (host language)
+/// * `filetype` - The filetype of the document being processed
+/// * `capture_mappings` - The capture mappings to apply
+/// * `coordinator` - Language coordinator for injection queries and language loading
+/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
+///
+/// # Returns
+/// Semantic tokens for the entire document including injected content
+#[allow(dead_code)] // Will be used in LSP integration
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn handle_semantic_tokens_full_parallel(
+    text: &str,
+    tree: &Tree,
+    query: &Query,
+    filetype: Option<&str>,
+    capture_mappings: Option<&CaptureMappings>,
+    coordinator: &crate::language::LanguageCoordinator,
+    supports_multiline: bool,
+) -> Option<SemanticTokensResult> {
+    let mut all_tokens: Vec<RawToken> = Vec::with_capacity(1000);
+    let lines: Vec<&str> = text.lines().collect();
+
+    // Collect host document tokens first (not parallelized - typically fast)
+    injection::collect_injection_tokens_recursive(
+        text,
+        tree,
+        query,
+        filetype,
+        capture_mappings,
+        None, // No coordinator for host tokens - handled separately
+        None, // No parser provider - host only
+        text,
+        &lines,
+        0,
+        0,
+        supports_multiline,
+        &mut all_tokens,
+    );
+
+    // Collect injection tokens in parallel using Rayon
+    let injection_tokens = collect_injection_tokens_parallel(
+        text,
+        tree,
+        filetype,
+        coordinator,
+        capture_mappings,
+        supports_multiline,
+    );
+
+    // Merge injection tokens with host tokens
+    all_tokens.extend(injection_tokens);
 
     finalize_tokens(all_tokens)
 }
