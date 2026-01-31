@@ -205,9 +205,8 @@ pub(crate) fn handle_semantic_tokens_full_with_local_parsers(
 ///
 /// # Returns
 /// Semantic tokens for the entire document including injected content
-#[allow(dead_code)] // Will be used in LSP integration
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn handle_semantic_tokens_full_parallel(
+pub fn handle_semantic_tokens_full_parallel(
     text: &str,
     tree: &Tree,
     query: &Query,

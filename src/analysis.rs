@@ -17,7 +17,7 @@ pub use result_id::next_result_id;
 pub use selection::handle_selection_range;
 pub use semantic::{
     LEGEND_MODIFIERS, LEGEND_TYPES, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
-    handle_semantic_tokens_range,
+    handle_semantic_tokens_full_parallel, handle_semantic_tokens_range,
 };
 // Re-export parallel processing functions for LSP integration
 pub(crate) use semantic::{
@@ -28,6 +28,6 @@ pub(crate) use semantic::{
 #[allow(unused_imports)]
 pub(crate) use semantic::{
     collect_injection_languages, collect_injection_tokens_parallel,
-    handle_semantic_tokens_full_parallel, handle_semantic_tokens_full_with_local_parsers,
+    handle_semantic_tokens_full_with_local_parsers,
 };
 pub use semantic_cache::{InjectionMap, InjectionTokenCache, SemanticTokenCache};
