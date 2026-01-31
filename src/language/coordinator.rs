@@ -944,6 +944,15 @@ impl LanguageCoordinator {
     pub(crate) fn language_registry_for_testing(&self) -> LanguageRegistry {
         self.language_registry.clone()
     }
+
+    /// Get a clone of the language registry for parallel processing.
+    ///
+    /// This allows the parallel injection processor to create thread-local
+    /// parser factories without going through the coordinator's document
+    /// parser pool. The registry is safely clonable (uses Arc internally).
+    pub(crate) fn language_registry_for_parallel(&self) -> LanguageRegistry {
+        self.language_registry.clone()
+    }
 }
 
 /// Truncate a pattern string for display in log messages.

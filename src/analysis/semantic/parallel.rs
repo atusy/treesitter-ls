@@ -271,6 +271,76 @@ fn collect_injection_contexts_sync<'a>(
     contexts
 }
 
+/// Collect semantic tokens from all injections in parallel using Rayon.
+///
+/// This is the main entry point for parallel injection processing. It:
+/// 1. Collects all top-level injection contexts from the host document
+/// 2. Processes each injection in parallel using Rayon's work-stealing
+/// 3. Merges all tokens and returns them sorted by position
+///
+/// Nested injections are processed recursively within the same Rayon worker
+/// thread (no additional parallelism), avoiding coordination overhead.
+///
+/// # Arguments
+/// * `host_text` - The full text of the host document
+/// * `host_tree` - The parsed tree of the host document
+/// * `host_filetype` - The filetype of the host document (e.g., "markdown")
+/// * `coordinator` - Language coordinator for injection resolution
+/// * `capture_mappings` - Optional capture mappings for token type translation
+/// * `supports_multiline` - Whether the client supports multiline tokens
+///
+/// # Returns
+/// Vector of raw tokens from all injections, sorted by (line, column)
+#[allow(dead_code)] // Will be used in async bridge
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn collect_injection_tokens_parallel(
+    host_text: &str,
+    host_tree: &Tree,
+    host_filetype: Option<&str>,
+    coordinator: &LanguageCoordinator,
+    capture_mappings: Option<&CaptureMappings>,
+    supports_multiline: bool,
+) -> Vec<RawToken> {
+    use rayon::prelude::*;
+
+    // Pre-compute host lines for position calculations
+    let host_lines: Vec<&str> = host_text.lines().collect();
+
+    // Collect top-level injection contexts
+    let contexts =
+        collect_injection_contexts_sync(host_text, host_tree, host_filetype, coordinator, 0);
+
+    if contexts.is_empty() {
+        return Vec::new();
+    }
+
+    // Create factory from coordinator's registry (cloned for thread safety)
+    let factory = ThreadLocalParserFactory::new(coordinator.language_registry_for_parallel());
+
+    // Process all injections in parallel
+    // Each injection (and its nested children) is processed on a single Rayon worker
+    let mut all_tokens: Vec<RawToken> = contexts
+        .par_iter()
+        .flat_map(|ctx| {
+            process_injection_sync(
+                ctx,
+                &factory,
+                coordinator,
+                capture_mappings,
+                host_text,
+                &host_lines,
+                1, // depth 1 (first level of injection, host is 0)
+                supports_multiline,
+            )
+        })
+        .collect();
+
+    // Sort tokens by position (line, then column)
+    all_tokens.sort_by(|a, b| a.line.cmp(&b.line).then_with(|| a.column.cmp(&b.column)));
+
+    all_tokens
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,5 +588,179 @@ mod tests {
     /// Returns the search path for tree-sitter grammars.
     fn test_search_path() -> String {
         std::env::var("TREE_SITTER_GRAMMARS").unwrap_or_else(|_| "deps/tree-sitter".to_string())
+    }
+
+    // Tests for parallel token collection
+
+    #[test]
+    fn test_collect_injection_tokens_parallel_empty_document() {
+        use crate::config::WorkspaceSettings;
+
+        let coordinator = LanguageCoordinator::new();
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        // Load markdown (host language)
+        let load_result = coordinator.ensure_language_loaded("markdown");
+        if !load_result.success {
+            return;
+        }
+
+        // Parse an empty markdown document
+        let text = "";
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let Some(mut parser) = parser_pool.acquire("markdown") else {
+            return;
+        };
+        let Some(tree) = parser.parse(text, None) else {
+            return;
+        };
+        parser_pool.release("markdown".to_string(), parser);
+
+        // Collect tokens - should be empty for empty document
+        let tokens = collect_injection_tokens_parallel(
+            text,
+            &tree,
+            Some("markdown"),
+            &coordinator,
+            None,
+            false,
+        );
+
+        assert!(tokens.is_empty(), "Empty document should have no tokens");
+    }
+
+    #[test]
+    fn test_collect_injection_tokens_parallel_with_lua_block() {
+        use crate::config::WorkspaceSettings;
+
+        let coordinator = LanguageCoordinator::new();
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        // Load both markdown and lua
+        let md_result = coordinator.ensure_language_loaded("markdown");
+        let lua_result = coordinator.ensure_language_loaded("lua");
+        if !md_result.success || !lua_result.success {
+            return;
+        }
+
+        // Markdown with a Lua code block
+        let text = r#"# Hello
+
+```lua
+local x = 42
+```
+"#;
+
+        // Parse the markdown document
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let Some(mut parser) = parser_pool.acquire("markdown") else {
+            return;
+        };
+        let Some(tree) = parser.parse(text, None) else {
+            return;
+        };
+        parser_pool.release("markdown".to_string(), parser);
+
+        // Collect tokens in parallel
+        let tokens = collect_injection_tokens_parallel(
+            text,
+            &tree,
+            Some("markdown"),
+            &coordinator,
+            None,
+            false,
+        );
+
+        // Should have tokens from the Lua injection
+        assert!(
+            !tokens.is_empty(),
+            "Should have tokens from Lua injection. Got: {:?}",
+            tokens
+        );
+
+        // Look for the "local" keyword token (should be at line 3, col 0)
+        let has_local_keyword = tokens
+            .iter()
+            .any(|t| t.line == 3 && t.column == 0 && t.mapped_name == "keyword");
+
+        assert!(
+            has_local_keyword,
+            "Should have 'local' keyword token at line 3, col 0. Got: {:?}",
+            tokens
+        );
+    }
+
+    #[test]
+    fn test_collect_injection_tokens_parallel_tokens_sorted() {
+        use crate::config::WorkspaceSettings;
+
+        let coordinator = LanguageCoordinator::new();
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        let md_result = coordinator.ensure_language_loaded("markdown");
+        let lua_result = coordinator.ensure_language_loaded("lua");
+        if !md_result.success || !lua_result.success {
+            return;
+        }
+
+        // Multiple Lua code blocks at different positions
+        let text = r#"# Doc
+
+```lua
+local a = 1
+```
+
+More text
+
+```lua
+local b = 2
+```
+"#;
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let Some(mut parser) = parser_pool.acquire("markdown") else {
+            return;
+        };
+        let Some(tree) = parser.parse(text, None) else {
+            return;
+        };
+        parser_pool.release("markdown".to_string(), parser);
+
+        let tokens = collect_injection_tokens_parallel(
+            text,
+            &tree,
+            Some("markdown"),
+            &coordinator,
+            None,
+            false,
+        );
+
+        // Verify tokens are sorted by position
+        let mut prev_line = 0usize;
+        let mut prev_col = 0usize;
+        for token in &tokens {
+            assert!(
+                token.line > prev_line || (token.line == prev_line && token.column >= prev_col),
+                "Tokens should be sorted by (line, column). Got line {} col {} after line {} col {}",
+                token.line,
+                token.column,
+                prev_line,
+                prev_col
+            );
+            prev_line = token.line;
+            prev_col = token.column;
+        }
     }
 }
