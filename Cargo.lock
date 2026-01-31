@@ -1066,6 +1066,7 @@ dependencies = [
  "nix",
  "path-clean",
  "percent-encoding",
+ "rayon",
  "regex",
  "reqwest",
  "rstest",
