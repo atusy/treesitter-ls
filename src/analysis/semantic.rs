@@ -2,6 +2,7 @@ mod delta;
 mod finalize;
 mod injection;
 mod legend;
+mod parallel;
 mod range;
 mod token_collector;
 
