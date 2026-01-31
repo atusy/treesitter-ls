@@ -18,8 +18,9 @@ use tower_lsp_server::ls_types::{
 
 use crate::analysis::{
     IncrementalDecision, compute_incremental_tokens, decide_tokenization_strategy,
-    decode_semantic_tokens, encode_semantic_tokens, handle_semantic_tokens_full_delta,
-    handle_semantic_tokens_full_parallel_async, next_result_id,
+    decode_semantic_tokens, encode_semantic_tokens,
+    handle_semantic_tokens_full_delta_parallel_async, handle_semantic_tokens_full_parallel_async,
+    next_result_id,
 };
 
 use super::super::{Kakehashi, uri_to_url};
@@ -504,11 +505,8 @@ impl Kakehashi {
                 text.len(),
             );
 
-            // Get capture mappings
+            // Get capture mappings for token type resolution
             let capture_mappings = self.language.get_capture_mappings();
-
-            // Use injection-aware handler (works with or without injection support)
-            let mut pool = self.parser_pool.lock().await;
 
             // Incremental Tokenization Path
             // ==============================
@@ -542,6 +540,10 @@ impl Kakehashi {
                 None
             };
 
+            // Use Rayon-based parallel injection processing
+            let supports_multiline = self.supports_multiline_tokens();
+            let coordinator = std::sync::Arc::clone(&self.language);
+
             let result = if let Some((prev_tokens, inc_state)) = incremental_context {
                 log::debug!(
                     target: "kakehashi::semantic",
@@ -551,34 +553,28 @@ impl Kakehashi {
                 // Decode previous tokens to AbsoluteToken format
                 let old_absolute = decode_semantic_tokens(&prev_tokens);
 
-                // Get new tokens via full computation (still needed for changed region)
-                let supports_multiline = self.supports_multiline_tokens();
-                let new_tokens_result = handle_semantic_tokens_full_delta(
-                    &text,
-                    &tree,
-                    &query,
-                    &previous_result_id,
-                    None, // Don't pass previous - we'll merge ourselves
-                    Some(&language_name),
-                    Some(&capture_mappings),
-                    Some(&self.language),
-                    Some(&mut pool),
+                // Get new tokens via full computation using parallel processing
+                let new_tokens_result = handle_semantic_tokens_full_parallel_async(
+                    text.clone(),
+                    tree.clone(),
+                    query,
+                    Some(language_name.clone()),
+                    Some(capture_mappings.clone()),
+                    coordinator,
                     supports_multiline,
-                );
+                )
+                .await;
 
                 // Extract current tokens from the result
                 if let Some(result) = new_tokens_result {
-                    let current_tokens = match &result {
-                        SemanticTokensFullDeltaResult::Tokens(tokens) => tokens.clone(),
-                        SemanticTokensFullDeltaResult::TokensDelta(_)
-                        | SemanticTokensFullDeltaResult::PartialTokensDelta { .. } => {
-                            // If we got a delta, we need the full tokens
-                            // This shouldn't happen since we passed None for previous
+                    let current_tokens = match result {
+                        SemanticTokensResult::Tokens(tokens) => tokens,
+                        SemanticTokensResult::Partial(_) => {
                             log::warn!(
                                 target: "kakehashi::semantic",
-                                "Unexpected delta result when computing full tokens"
+                                "Unexpected partial result when computing full tokens"
                             );
-                            return Ok(Some(result));
+                            return Ok(None);
                         }
                     };
 
@@ -646,20 +642,19 @@ impl Kakehashi {
                     incremental_state.is_some()
                 );
 
-                // Delegate to handler with injection support
-                let supports_multiline = self.supports_multiline_tokens();
-                handle_semantic_tokens_full_delta(
-                    &text,
-                    &tree,
-                    &query,
-                    &previous_result_id,
-                    previous_tokens_for_delta.as_ref(),
-                    Some(&language_name),
-                    Some(&capture_mappings),
-                    Some(&self.language),
-                    Some(&mut pool),
+                // Delegate to parallel handler
+                handle_semantic_tokens_full_delta_parallel_async(
+                    text.clone(),
+                    tree.clone(),
+                    query,
+                    previous_result_id.clone(),
+                    previous_tokens_for_delta,
+                    Some(language_name.clone()),
+                    Some(capture_mappings),
+                    coordinator,
                     supports_multiline,
                 )
+                .await
             };
             (result, text)
         }; // doc reference is dropped here
