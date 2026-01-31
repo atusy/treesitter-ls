@@ -22,6 +22,7 @@ pub use semantic::{
 #[allow(unused_imports)] // Will be used in LSP integration
 pub(crate) use semantic::{
     collect_injection_languages, collect_injection_tokens_parallel,
-    handle_semantic_tokens_full_parallel, handle_semantic_tokens_full_with_local_parsers,
+    handle_semantic_tokens_full_parallel, handle_semantic_tokens_full_parallel_async,
+    handle_semantic_tokens_full_with_local_parsers,
 };
 pub use semantic_cache::{InjectionMap, InjectionTokenCache, SemanticTokenCache};

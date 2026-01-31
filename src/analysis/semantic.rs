@@ -248,6 +248,51 @@ pub(crate) fn handle_semantic_tokens_full_parallel(
     finalize_tokens(all_tokens)
 }
 
+/// Handle semantic tokens full request with Rayon parallel injection processing (async).
+///
+/// This is an async wrapper around `handle_semantic_tokens_full_parallel` that uses
+/// `tokio::task::spawn_blocking` to run the CPU-bound Rayon work on a dedicated
+/// thread pool, avoiding blocking the tokio runtime.
+///
+/// # Arguments
+/// * `text` - The source text (owned for moving into spawn_blocking)
+/// * `tree` - The parsed syntax tree (owned for moving into spawn_blocking)
+/// * `query` - The tree-sitter query for semantic highlighting (host language)
+/// * `filetype` - The filetype of the document being processed
+/// * `capture_mappings` - The capture mappings to apply
+/// * `coordinator` - Language coordinator for injection queries and language loading
+/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
+///
+/// # Returns
+/// Semantic tokens for the entire document including injected content,
+/// or None if the task was cancelled or failed.
+#[allow(dead_code)] // Will be used in LSP integration
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn handle_semantic_tokens_full_parallel_async(
+    text: String,
+    tree: Tree,
+    query: std::sync::Arc<Query>,
+    filetype: Option<String>,
+    capture_mappings: Option<CaptureMappings>,
+    coordinator: std::sync::Arc<crate::language::LanguageCoordinator>,
+    supports_multiline: bool,
+) -> Option<SemanticTokensResult> {
+    tokio::task::spawn_blocking(move || {
+        handle_semantic_tokens_full_parallel(
+            &text,
+            &tree,
+            &query,
+            filetype.as_deref(),
+            capture_mappings.as_ref(),
+            &coordinator,
+            supports_multiline,
+        )
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// Handle semantic tokens full delta request
 ///
 /// Analyzes the document and returns either a delta from the previous version
@@ -1720,6 +1765,145 @@ fn main() {}
             first_token.length > 7,
             "Multiline token length ({}) should be greater than single line (7)",
             first_token.length
+        );
+    }
+
+    /// Test async wrapper for parallel injection processing.
+    ///
+    /// This verifies the spawn_blocking bridge works correctly when calling
+    /// the Rayon-based parallel injection processing from an async context.
+    #[tokio::test]
+    async fn test_handle_semantic_tokens_full_parallel_async() {
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+        use std::sync::Arc;
+
+        // Set up coordinator with search paths
+        let coordinator = Arc::new(LanguageCoordinator::new());
+
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        // Load markdown and lua languages
+        let md_result = coordinator.ensure_language_loaded("markdown");
+        let lua_result = coordinator.ensure_language_loaded("lua");
+        if !md_result.success || !lua_result.success {
+            eprintln!("Skipping: markdown or lua language parser not available");
+            return;
+        }
+
+        let Some(query) = coordinator.get_highlight_query("markdown") else {
+            eprintln!("Skipping: markdown highlight query not available");
+            return;
+        };
+
+        // Markdown with a Lua code block
+        let text = r#"# Hello
+
+```lua
+local x = 42
+```
+"#
+        .to_string();
+
+        // Parse the markdown document
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let Some(mut parser) = parser_pool.acquire("markdown") else {
+            eprintln!("Skipping: could not acquire markdown parser");
+            return;
+        };
+        let Some(tree) = parser.parse(&text, None) else {
+            eprintln!("Skipping: could not parse markdown");
+            return;
+        };
+        parser_pool.release("markdown".to_string(), parser);
+
+        // Call the async handler
+        let result = handle_semantic_tokens_full_parallel_async(
+            text,
+            tree,
+            query,
+            Some("markdown".to_string()),
+            None,
+            coordinator,
+            false,
+        )
+        .await;
+
+        // Should return tokens including injection tokens
+        assert!(result.is_some(), "Should return semantic tokens");
+
+        let SemanticTokensResult::Tokens(tokens) = result.unwrap() else {
+            panic!("Expected full tokens result");
+        };
+
+        // Should have tokens from the Lua injection
+        // Look for a keyword token (the 'local' keyword in Lua)
+        let has_keyword_token = tokens.data.iter().any(|t| t.token_type == 1); // keyword = 1
+        assert!(
+            has_keyword_token,
+            "Should have keyword tokens from Lua injection. Got {} tokens",
+            tokens.data.len()
+        );
+    }
+
+    /// Test that async handler returns None for empty document (consistent with sync behavior).
+    #[tokio::test]
+    async fn test_handle_semantic_tokens_full_parallel_async_with_empty_document() {
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+        use std::sync::Arc;
+
+        let coordinator = Arc::new(LanguageCoordinator::new());
+
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        let md_result = coordinator.ensure_language_loaded("markdown");
+        if !md_result.success {
+            eprintln!("Skipping: markdown language parser not available");
+            return;
+        }
+
+        let Some(query) = coordinator.get_highlight_query("markdown") else {
+            eprintln!("Skipping: markdown highlight query not available");
+            return;
+        };
+
+        // Empty document
+        let text = "".to_string();
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let Some(mut parser) = parser_pool.acquire("markdown") else {
+            return;
+        };
+        let Some(tree) = parser.parse(&text, None) else {
+            return;
+        };
+        parser_pool.release("markdown".to_string(), parser);
+
+        // Call the async handler with empty document
+        let result = handle_semantic_tokens_full_parallel_async(
+            text,
+            tree,
+            query,
+            Some("markdown".to_string()),
+            None,
+            coordinator,
+            false,
+        )
+        .await;
+
+        // Empty document returns None (consistent with finalize_tokens behavior)
+        assert!(
+            result.is_none(),
+            "Empty document should return None (no tokens to return)"
         );
     }
 }
