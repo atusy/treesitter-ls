@@ -32,12 +32,10 @@ thread_local! {
 ///
 /// Uses the `LanguageRegistry` to create parsers on demand, caching them
 /// in thread-local storage for reuse within the same Rayon worker.
-#[allow(dead_code)] // Will be used in collect_injection_tokens_parallel
 pub(crate) struct ThreadLocalParserFactory {
     registry: crate::language::registry::LanguageRegistry,
 }
 
-#[allow(dead_code)] // Will be used in collect_injection_tokens_parallel
 impl ThreadLocalParserFactory {
     /// Create a new factory with the given language registry.
     pub fn new(registry: crate::language::registry::LanguageRegistry) -> Self {
@@ -78,6 +76,7 @@ impl ThreadLocalParserFactory {
     ///
     /// # Returns
     /// `true` if the language is registered in the registry
+    #[cfg(test)]
     pub fn has_language(&self, language_id: &str) -> bool {
         self.registry.contains(language_id)
     }
@@ -85,6 +84,7 @@ impl ThreadLocalParserFactory {
     /// Clear the thread-local parser cache.
     ///
     /// Useful for testing or when languages are reloaded.
+    #[cfg(test)]
     pub fn clear_cache() {
         PARSER_CACHE.with(|cache| {
             cache.borrow_mut().clear();
@@ -96,7 +96,6 @@ impl ThreadLocalParserFactory {
 ///
 /// This struct captures all the information needed to process one injection,
 /// including the content text, language info, and position mappings.
-#[allow(dead_code)] // Will be used in parallel processing
 pub(crate) struct InjectionContext<'a> {
     /// The resolved language name (e.g., "lua", "python")
     pub resolved_lang: String,
@@ -125,7 +124,6 @@ pub(crate) struct InjectionContext<'a> {
 ///
 /// # Returns
 /// Vector of raw tokens collected from this injection and any nested injections
-#[allow(dead_code)] // Will be used in collect_injection_tokens_parallel
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn process_injection_sync(
     ctx: &InjectionContext<'_>,
@@ -195,7 +193,6 @@ pub(crate) fn process_injection_sync(
 /// This is a synchronous version of the injection context collection that
 /// works without mutable parser access. It discovers all injections in the
 /// given tree and returns their contexts for processing.
-#[allow(dead_code)] // Will be used by process_injection_sync
 fn collect_injection_contexts_sync<'a>(
     text: &'a str,
     tree: &Tree,

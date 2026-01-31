@@ -950,7 +950,6 @@ impl LanguageCoordinator {
     /// This allows the parallel injection processor to create thread-local
     /// parser factories without going through the coordinator's document
     /// parser pool. The registry is safely clonable (uses Arc internally).
-    #[allow(dead_code)] // Will be used in parallel injection processing
     pub(crate) fn language_registry_for_parallel(&self) -> LanguageRegistry {
         self.language_registry.clone()
     }
