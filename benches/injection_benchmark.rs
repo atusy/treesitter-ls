@@ -122,55 +122,5 @@ fn benchmark_injection_processing(c: &mut Criterion) {
     group.finish();
 }
 
-fn benchmark_large_document(c: &mut Criterion) {
-    let Some(coordinator) = setup_coordinator() else {
-        eprintln!("Skipping benchmark: Could not load markdown/lua parsers");
-        return;
-    };
-
-    let Some(query) = coordinator.get_highlight_query("markdown") else {
-        eprintln!("Skipping benchmark: Could not get markdown highlight query");
-        return;
-    };
-
-    let mut parser_pool = coordinator.create_document_parser_pool();
-
-    // Generate a large document similar to the problem statement (2000+ blocks)
-    let num_blocks = 2000;
-    let doc = generate_markdown_with_injections(num_blocks);
-
-    let tree = {
-        let mut parser = parser_pool
-            .acquire("markdown")
-            .expect("Should get markdown parser");
-        let result = parser.parse(&doc, None).expect("Should parse markdown");
-        parser_pool.release("markdown".to_string(), parser);
-        result
-    };
-
-    let mut group = c.benchmark_group("large_document");
-    group.sample_size(10); // Fewer samples for large documents
-
-    group.bench_function("2000_blocks_rayon", |b| {
-        b.iter(|| {
-            handle_semantic_tokens_full_parallel(
-                &doc,
-                &tree,
-                &query,
-                Some("markdown"),
-                None,
-                &coordinator,
-                false,
-            )
-        })
-    });
-
-    group.finish();
-}
-
-criterion_group!(
-    benches,
-    benchmark_injection_processing,
-    benchmark_large_document
-);
+criterion_group!(benches, benchmark_injection_processing);
 criterion_main!(benches);
