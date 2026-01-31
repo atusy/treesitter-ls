@@ -684,6 +684,27 @@ impl LanguageCoordinator {
         DocumentParserPool::new(parser_factory)
     }
 
+    /// Create a concurrent parser pool for parallel parsing operations.
+    ///
+    /// Visibility: Public - used for parallel injection token collection where
+    /// multiple parsers can be acquired concurrently.
+    pub fn create_concurrent_parser_pool(&self) -> super::ConcurrentParserPool {
+        let parser_factory = ParserFactory::new(self.language_registry.clone());
+        super::ConcurrentParserPool::new(parser_factory)
+    }
+
+    /// Create a concurrent parser pool with a custom concurrency limit.
+    ///
+    /// Visibility: Public - used for benchmarking or environments where
+    /// the default concurrency limit is not appropriate.
+    pub fn create_concurrent_parser_pool_with_limit(
+        &self,
+        concurrency_limit: usize,
+    ) -> super::ConcurrentParserPool {
+        let parser_factory = ParserFactory::new(self.language_registry.clone());
+        super::ConcurrentParserPool::with_concurrency_limit(parser_factory, concurrency_limit)
+    }
+
     /// Check if queries exist for a language.
     ///
     /// Visibility: Public - called by LSP layer (lsp_impl) to determine if
