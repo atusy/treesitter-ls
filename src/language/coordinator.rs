@@ -934,6 +934,16 @@ impl LanguageCoordinator {
         self.query_store
             .insert_injection_query(language_id.to_string(), Arc::new(query));
     }
+
+    /// Get a clone of the language registry for testing purposes.
+    ///
+    /// This allows test code to access the registry directly for creating
+    /// parser factories without going through the coordinator's normal
+    /// document parser pool creation.
+    #[cfg(test)]
+    pub(crate) fn language_registry_for_testing(&self) -> LanguageRegistry {
+        self.language_registry.clone()
+    }
 }
 
 /// Truncate a pattern string for display in log messages.
