@@ -16,9 +16,12 @@ use tree_sitter::{Query, Tree};
 pub use delta::calculate_delta_or_full;
 pub use legend::{LEGEND_MODIFIERS, LEGEND_TYPES};
 pub use range::handle_semantic_tokens_range;
+pub(crate) use range::handle_semantic_tokens_range_parallel_async;
 
-// Re-export for crate-internal use
+// Re-export for crate-internal use (legacy - will be removed in Phase 6)
+#[allow(dead_code)]
 pub(crate) use injection::collect_injection_languages;
+#[allow(dead_code)]
 pub(crate) use parallel::collect_injection_tokens_parallel;
 
 // Internal re-exports for use within this module

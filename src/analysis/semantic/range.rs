@@ -13,6 +13,7 @@
 use tower_lsp_server::ls_types::{Range, SemanticToken, SemanticTokens, SemanticTokensResult};
 use tree_sitter::{Query, Tree};
 
+use super::handle_semantic_tokens_full_parallel_async;
 use super::handle_semantic_tokens_full_with_multiline;
 
 /// Handle semantic tokens range request
@@ -71,6 +72,61 @@ pub fn handle_semantic_tokens_range(
 
     // Filter tokens by range and re-encode as deltas
     let filtered_data = filter_tokens_by_range(&full_tokens.data, range);
+
+    Some(SemanticTokensResult::Tokens(SemanticTokens {
+        result_id: None,
+        data: filtered_data,
+    }))
+}
+
+/// Handle semantic tokens range request with Rayon parallel injection processing (async).
+///
+/// This is an async version of `handle_semantic_tokens_range` that uses
+/// `tokio::task::spawn_blocking` to run the CPU-bound Rayon work.
+///
+/// # Arguments
+/// * `text` - The source text (owned for moving into spawn_blocking)
+/// * `tree` - The parsed syntax tree (owned for moving into spawn_blocking)
+/// * `query` - The tree-sitter query for semantic highlighting (host language)
+/// * `range` - The range to get tokens for (LSP positions)
+/// * `filetype` - The filetype of the document being processed
+/// * `capture_mappings` - The capture mappings to apply
+/// * `coordinator` - Language coordinator for injection queries and language loading
+/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
+///
+/// # Returns
+/// Semantic tokens for the specified range including injected content,
+/// or None if the task was cancelled or failed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn handle_semantic_tokens_range_parallel_async(
+    text: String,
+    tree: Tree,
+    query: std::sync::Arc<Query>,
+    range: Range,
+    filetype: Option<String>,
+    capture_mappings: Option<crate::config::CaptureMappings>,
+    coordinator: std::sync::Arc<crate::language::LanguageCoordinator>,
+    supports_multiline: bool,
+) -> Option<SemanticTokensResult> {
+    // Get all tokens using the parallel full handler
+    let full_result = handle_semantic_tokens_full_parallel_async(
+        text,
+        tree,
+        query,
+        filetype,
+        capture_mappings,
+        coordinator,
+        supports_multiline,
+    )
+    .await?;
+
+    // Extract tokens from result
+    let SemanticTokensResult::Tokens(full_tokens) = full_result else {
+        return Some(full_result);
+    };
+
+    // Filter tokens by range and re-encode as deltas
+    let filtered_data = filter_tokens_by_range(&full_tokens.data, &range);
 
     Some(SemanticTokensResult::Tokens(SemanticTokens {
         result_id: None,

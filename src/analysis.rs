@@ -22,6 +22,7 @@ pub use semantic::{
 // Re-export parallel processing functions for LSP integration
 pub(crate) use semantic::{
     handle_semantic_tokens_full_delta_parallel_async, handle_semantic_tokens_full_parallel_async,
+    handle_semantic_tokens_range_parallel_async,
 };
 // Legacy exports - will be removed in Phase 6 cleanup
 #[allow(unused_imports)]

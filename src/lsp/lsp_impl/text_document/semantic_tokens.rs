@@ -20,7 +20,7 @@ use crate::analysis::{
     IncrementalDecision, compute_incremental_tokens, decide_tokenization_strategy,
     decode_semantic_tokens, encode_semantic_tokens,
     handle_semantic_tokens_full_delta_parallel_async, handle_semantic_tokens_full_parallel_async,
-    next_result_id,
+    handle_semantic_tokens_range_parallel_async, next_result_id,
 };
 
 use super::super::{Kakehashi, uri_to_url};
@@ -746,23 +746,24 @@ impl Kakehashi {
             })));
         };
 
-        // Get capture mappings
+        // Get capture mappings for token type resolution
         let capture_mappings = self.language.get_capture_mappings();
 
-        // Use injection-aware handler (works with or without injection support)
-        let mut pool = self.parser_pool.lock().await;
+        // Use Rayon-based parallel injection processing
         let supports_multiline = self.supports_multiline_tokens();
-        let result = crate::analysis::handle_semantic_tokens_range(
-            text,
-            tree,
-            &query,
-            &domain_range,
-            Some(&language_name),
-            Some(&capture_mappings),
-            Some(&self.language),
-            Some(&mut pool),
+        let coordinator = std::sync::Arc::clone(&self.language);
+
+        let result = handle_semantic_tokens_range_parallel_async(
+            text.to_string(),
+            tree.clone(),
+            query,
+            domain_range,
+            Some(language_name.clone()),
+            Some(capture_mappings),
+            coordinator,
             supports_multiline,
-        );
+        )
+        .await;
 
         // Convert to RangeResult, treating partial responses as empty for now
         let domain_range_result = match result.unwrap_or_else(|| {
