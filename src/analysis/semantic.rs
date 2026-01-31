@@ -132,8 +132,8 @@ pub fn handle_semantic_tokens_full_with_multiline(
 /// Handle semantic tokens full request with Rayon parallel injection processing.
 ///
 /// This variant uses Rayon's work-stealing parallelism for processing multiple
-/// injections concurrently. Unlike the local-parsers version which requires
-/// pre-acquiring parsers, this version uses thread-local parser caching.
+/// injections concurrently. Thread-local parser caching eliminates the need
+/// for cross-thread synchronization during parsing.
 ///
 /// # Arguments
 /// * `text` - The source text
