@@ -251,4 +251,3 @@ pub(super) fn collect_injection_tokens_recursive(
         );
     }
 }
-
