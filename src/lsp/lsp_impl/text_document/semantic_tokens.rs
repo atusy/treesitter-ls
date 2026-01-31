@@ -17,10 +17,9 @@ use tower_lsp_server::ls_types::{
 };
 
 use crate::analysis::{
-    IncrementalDecision, collect_injection_languages, compute_incremental_tokens,
-    decide_tokenization_strategy, decode_semantic_tokens, encode_semantic_tokens,
-    handle_semantic_tokens_full_delta, handle_semantic_tokens_full_with_local_parsers,
-    next_result_id,
+    IncrementalDecision, compute_incremental_tokens, decide_tokenization_strategy,
+    decode_semantic_tokens, encode_semantic_tokens, handle_semantic_tokens_full_delta,
+    handle_semantic_tokens_full_parallel_async, next_result_id,
 };
 
 use super::super::{Kakehashi, uri_to_url};
@@ -312,60 +311,25 @@ impl Kakehashi {
                 return Ok(None);
             }
 
-            // Get capture mappings
+            // Get capture mappings for token type resolution
             let capture_mappings = self.language.get_capture_mappings();
 
-            // Narrow lock scope pattern (Task 1.1):
-            // 1. Acquire lock, collect injection languages recursively, pre-acquire parsers, release lock
-            // 2. Process tokens without holding lock (100ms-1s)
-            // 3. Acquire lock, return parsers (~10μs)
-            //
-            // Note: collect_injection_languages now recursively parses nested injections
-            // to discover all required languages. This uses the pool during discovery,
-            // but the overall lock time is still much shorter than holding it during
-            // the entire token processing phase.
-            let mut local_parsers = {
-                let mut pool = self.parser_pool.lock().await;
-
-                // Discover all injection languages recursively (requires pool for nested parsing)
-                let injection_languages = collect_injection_languages(
-                    &tree,
-                    &text,
-                    &language_name,
-                    &self.language,
-                    &mut pool,
-                );
-
-                // Pre-acquire parsers for all discovered languages
-                let mut parsers = std::collections::HashMap::new();
-                for lang_id in &injection_languages {
-                    if let Some(parser) = pool.acquire(lang_id) {
-                        parsers.insert(lang_id.clone(), parser);
-                    }
-                }
-                parsers
-            }; // Lock released here
-
-            // Step 3: Process tokens (no lock held)
+            // Use Rayon-based parallel injection processing.
+            // This uses thread-local parser caching instead of the shared parser pool,
+            // avoiding lock contention during parallel processing.
             let supports_multiline = self.supports_multiline_tokens();
-            let result = handle_semantic_tokens_full_with_local_parsers(
-                &text,
-                &tree,
-                &query,
-                Some(&language_name),
-                Some(&capture_mappings),
-                Some(&self.language),
-                &mut local_parsers,
-                supports_multiline,
-            );
+            let coordinator = std::sync::Arc::clone(&self.language);
 
-            // Step 4: Return parsers with brief lock
-            {
-                let mut pool = self.parser_pool.lock().await;
-                for (lang_id, parser) in local_parsers {
-                    pool.release(lang_id, parser);
-                }
-            }
+            let result = handle_semantic_tokens_full_parallel_async(
+                text.clone(),
+                tree.clone(),
+                query,
+                Some(language_name.clone()),
+                Some(capture_mappings),
+                coordinator,
+                supports_multiline,
+            )
+            .await;
 
             (result, text)
         }; // doc reference is dropped here

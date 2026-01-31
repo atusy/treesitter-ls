@@ -158,6 +158,7 @@ fn collect_injection_contexts<'a>(
 /// # Returns
 /// A vector of unique resolved language identifiers for all injections found,
 /// including those nested inside other injections (up to MAX_INJECTION_DEPTH).
+#[allow(dead_code)] // Will be removed in Phase 6 cleanup
 pub(crate) fn collect_injection_languages(
     tree: &Tree,
     text: &str,
@@ -181,6 +182,7 @@ pub(crate) fn collect_injection_languages(
 }
 
 /// Recursive helper for collecting injection languages at all depths.
+#[allow(dead_code)] // Will be removed in Phase 6 cleanup
 fn collect_injection_languages_recursive(
     tree: &Tree,
     text: &str,
@@ -279,6 +281,7 @@ fn collect_injection_languages_recursive(
 ///
 /// Both variants support the same `acquire`/`release` interface, enabling a single
 /// unified recursive token collection function.
+#[allow(dead_code)] // Will be removed in Phase 6 cleanup
 pub(super) enum ParserProvider<'a> {
     /// Parser pool variant - acquires/releases parsers dynamically per injection
     Pool(&'a mut crate::language::DocumentParserPool),

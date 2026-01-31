@@ -107,7 +107,7 @@ fn lsp_legend_modifiers() -> Vec<SemanticTokenModifier> {
 
 pub struct Kakehashi {
     client: Client,
-    language: LanguageCoordinator,
+    language: std::sync::Arc<LanguageCoordinator>,
     parser_pool: Mutex<DocumentParserPool>,
     documents: DocumentStore,
     /// Unified cache coordinator for semantic tokens, injections, and request tracking
@@ -144,7 +144,7 @@ impl std::fmt::Debug for Kakehashi {
 
 impl Kakehashi {
     pub fn new(client: Client) -> Self {
-        let language = LanguageCoordinator::new();
+        let language = std::sync::Arc::new(LanguageCoordinator::new());
         let parser_pool = language.create_document_parser_pool();
 
         // Initialize auto-install manager with crash detection
@@ -177,7 +177,7 @@ impl Kakehashi {
         pool: std::sync::Arc<super::bridge::LanguageServerPool>,
         cancel_forwarder: super::request_id::CancelForwarder,
     ) -> Self {
-        let language = LanguageCoordinator::new();
+        let language = std::sync::Arc::new(LanguageCoordinator::new());
         let parser_pool = language.create_document_parser_pool();
 
         // Initialize auto-install manager with crash detection

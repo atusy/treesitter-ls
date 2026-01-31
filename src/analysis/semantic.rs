@@ -147,6 +147,7 @@ pub fn handle_semantic_tokens_full_with_multiline(
 ///
 /// # Returns
 /// Semantic tokens for the entire document including injected content
+#[allow(dead_code)] // Will be removed in Phase 6 cleanup
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_semantic_tokens_full_with_local_parsers(
     text: &str,

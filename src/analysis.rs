@@ -19,10 +19,12 @@ pub use semantic::{
     LEGEND_MODIFIERS, LEGEND_TYPES, handle_semantic_tokens_full, handle_semantic_tokens_full_delta,
     handle_semantic_tokens_range,
 };
-#[allow(unused_imports)] // Will be used in LSP integration
+// Re-export parallel processing function for LSP integration
+pub(crate) use semantic::handle_semantic_tokens_full_parallel_async;
+// Legacy exports - will be removed in Phase 6 cleanup
+#[allow(unused_imports)]
 pub(crate) use semantic::{
     collect_injection_languages, collect_injection_tokens_parallel,
-    handle_semantic_tokens_full_parallel, handle_semantic_tokens_full_parallel_async,
-    handle_semantic_tokens_full_with_local_parsers,
+    handle_semantic_tokens_full_parallel, handle_semantic_tokens_full_with_local_parsers,
 };
 pub use semantic_cache::{InjectionMap, InjectionTokenCache, SemanticTokenCache};
