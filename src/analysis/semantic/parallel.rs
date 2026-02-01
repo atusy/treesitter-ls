@@ -313,23 +313,45 @@ pub(crate) fn collect_injection_tokens_parallel(
     // Create factory from coordinator's registry (cloned for thread safety)
     let factory = ThreadLocalParserFactory::new(coordinator.language_registry_for_parallel());
 
-    // Process all injections in parallel
-    // Each injection (and its nested children) is processed on a single Rayon worker
-    let mut all_tokens: Vec<RawToken> = contexts
-        .par_iter()
-        .flat_map(|ctx| {
-            process_injection_sync(
-                ctx,
-                &factory,
-                coordinator,
-                capture_mappings,
-                host_text,
-                &host_lines,
-                1, // depth 1 (first level of injection, host is 0)
-                supports_multiline,
-            )
-        })
-        .collect();
+    // Threshold for parallel processing - below this, Rayon scheduling overhead exceeds benefit
+    const PARALLEL_THRESHOLD: usize = 4;
+
+    // Process injections: parallel for larger collections, sequential for small ones
+    let mut all_tokens: Vec<RawToken> = if contexts.len() >= PARALLEL_THRESHOLD {
+        // Parallel processing for larger collections
+        contexts
+            .par_iter()
+            .flat_map(|ctx| {
+                process_injection_sync(
+                    ctx,
+                    &factory,
+                    coordinator,
+                    capture_mappings,
+                    host_text,
+                    &host_lines,
+                    1, // depth 1 (first level of injection, host is 0)
+                    supports_multiline,
+                )
+            })
+            .collect()
+    } else {
+        // Sequential processing for small collections to avoid Rayon overhead
+        contexts
+            .iter()
+            .flat_map(|ctx| {
+                process_injection_sync(
+                    ctx,
+                    &factory,
+                    coordinator,
+                    capture_mappings,
+                    host_text,
+                    &host_lines,
+                    1,
+                    supports_multiline,
+                )
+            })
+            .collect()
+    };
 
     // Sort tokens by position (line, then column)
     all_tokens.sort_by(|a, b| a.line.cmp(&b.line).then_with(|| a.column.cmp(&b.column)));
