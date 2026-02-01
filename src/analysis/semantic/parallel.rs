@@ -19,12 +19,89 @@ use super::token_collector::{RawToken, collect_host_tokens};
 use crate::config::CaptureMappings;
 use crate::language::LanguageCoordinator;
 
+/// Maximum number of parsers to cache per Rayon worker thread.
+///
+/// This bounds memory usage for long-running LSP servers. The value balances:
+/// - Typical workloads (Markdown with 3-5 different injection languages)
+/// - Memory per parser (roughly 1-5MB depending on grammar complexity)
+/// - Rayon worker threads (typically num_cpus, e.g., 8-16 threads)
+///
+/// With 8 parsers × 16 threads × 5MB = ~640MB worst case, though typical
+/// usage is much lower since most documents use only 1-2 injection languages.
+const MAX_CACHED_PARSERS: usize = 8;
+
+/// Simple LRU cache for parsers with bounded size.
+///
+/// Uses a HashMap for O(1) lookup and a Vec for LRU tracking.
+/// When full, evicts the least recently used parser.
+struct LruParserCache {
+    /// Map from language_id to parser
+    parsers: HashMap<String, Parser>,
+    /// LRU order: most recently used at the end
+    order: Vec<String>,
+}
+
+impl LruParserCache {
+    fn new() -> Self {
+        Self {
+            parsers: HashMap::with_capacity(MAX_CACHED_PARSERS),
+            order: Vec::with_capacity(MAX_CACHED_PARSERS),
+        }
+    }
+
+    /// Get a mutable reference to a parser, updating LRU order.
+    fn get_mut(&mut self, language_id: &str) -> Option<&mut Parser> {
+        if self.parsers.contains_key(language_id) {
+            // Move to end of LRU order (most recently used)
+            if let Some(pos) = self.order.iter().position(|k| k == language_id) {
+                let key = self.order.remove(pos);
+                self.order.push(key);
+            }
+            self.parsers.get_mut(language_id)
+        } else {
+            None
+        }
+    }
+
+    /// Insert a parser, evicting LRU entry if at capacity.
+    fn insert(&mut self, language_id: String, parser: Parser) {
+        if self.parsers.len() >= MAX_CACHED_PARSERS {
+            // Evict least recently used (front of order vec)
+            if let Some(lru_key) = self.order.first().cloned() {
+                self.parsers.remove(&lru_key);
+                self.order.remove(0);
+            }
+        }
+        self.parsers.insert(language_id.clone(), parser);
+        self.order.push(language_id);
+    }
+
+    /// Check if language is cached.
+    fn contains(&self, language_id: &str) -> bool {
+        self.parsers.contains_key(language_id)
+    }
+
+    /// Clear the cache.
+    #[cfg(test)]
+    fn clear(&mut self) {
+        self.parsers.clear();
+        self.order.clear();
+    }
+
+    /// Get current cache size (for testing).
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.parsers.len()
+    }
+}
+
 // Thread-local parser cache for Rayon worker threads.
 //
-// Each Rayon worker thread maintains its own cache of parsers keyed by language.
-// This avoids cross-thread synchronization during parallel injection processing.
+// Each Rayon worker thread maintains its own bounded LRU cache of parsers.
+// This avoids cross-thread synchronization during parallel injection processing
+// while preventing unbounded memory growth in long-running LSP servers.
 thread_local! {
-    static PARSER_CACHE: RefCell<HashMap<String, Parser>> = RefCell::new(HashMap::new());
+    static PARSER_CACHE: RefCell<LruParserCache> = RefCell::new(LruParserCache::new());
 }
 
 /// Factory for creating parsers with thread-local caching.
@@ -58,7 +135,7 @@ impl ThreadLocalParserFactory {
             let mut cache = cache.borrow_mut();
 
             // Get or create parser for this language
-            if !cache.contains_key(language_id) {
+            if !cache.contains(language_id) {
                 let language = self.registry.get(language_id)?;
                 let mut parser = Parser::new();
                 parser.set_language(&language).ok()?;
@@ -768,5 +845,120 @@ local b = 2
             prev_line = token.line;
             prev_col = token.column;
         }
+    }
+
+    // Tests for LRU cache behavior
+
+    #[test]
+    fn test_lru_parser_cache_basic_operations() {
+        let mut cache = LruParserCache::new();
+
+        // Initially empty
+        assert!(!cache.contains("rust"));
+        assert_eq!(cache.len(), 0);
+
+        // Create a test parser
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+
+        // Insert
+        cache.insert("rust".to_string(), parser);
+        assert!(cache.contains("rust"));
+        assert_eq!(cache.len(), 1);
+
+        // Get mutable reference
+        let parser_ref = cache.get_mut("rust");
+        assert!(parser_ref.is_some());
+
+        // Unknown language returns None
+        assert!(cache.get_mut("unknown").is_none());
+    }
+
+    #[test]
+    fn test_lru_parser_cache_eviction() {
+        let mut cache = LruParserCache::new();
+
+        // Fill cache to MAX_CACHED_PARSERS
+        for i in 0..MAX_CACHED_PARSERS {
+            let mut parser = Parser::new();
+            parser
+                .set_language(&tree_sitter_rust::LANGUAGE.into())
+                .unwrap();
+            cache.insert(format!("lang{}", i), parser);
+        }
+
+        assert_eq!(cache.len(), MAX_CACHED_PARSERS);
+        assert!(cache.contains("lang0")); // First inserted (LRU)
+
+        // Insert one more - should evict lang0 (least recently used)
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        cache.insert("lang_new".to_string(), parser);
+
+        assert_eq!(cache.len(), MAX_CACHED_PARSERS);
+        assert!(!cache.contains("lang0"), "LRU entry should be evicted");
+        assert!(cache.contains("lang_new"), "New entry should be present");
+        assert!(cache.contains("lang1"), "Second-oldest should still exist");
+    }
+
+    #[test]
+    fn test_lru_parser_cache_access_updates_order() {
+        let mut cache = LruParserCache::new();
+
+        // Insert two parsers
+        for lang in ["lang0", "lang1"] {
+            let mut parser = Parser::new();
+            parser
+                .set_language(&tree_sitter_rust::LANGUAGE.into())
+                .unwrap();
+            cache.insert(lang.to_string(), parser);
+        }
+
+        // Access lang0 to make it recently used
+        let _ = cache.get_mut("lang0");
+
+        // Fill the rest of the cache
+        for i in 2..MAX_CACHED_PARSERS {
+            let mut parser = Parser::new();
+            parser
+                .set_language(&tree_sitter_rust::LANGUAGE.into())
+                .unwrap();
+            cache.insert(format!("lang{}", i), parser);
+        }
+
+        // Insert one more - should evict lang1 (now LRU), not lang0
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        cache.insert("lang_new".to_string(), parser);
+
+        assert!(
+            cache.contains("lang0"),
+            "Recently accessed lang0 should not be evicted"
+        );
+        assert!(!cache.contains("lang1"), "LRU lang1 should be evicted");
+    }
+
+    #[test]
+    fn test_lru_parser_cache_clear() {
+        let mut cache = LruParserCache::new();
+
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        cache.insert("rust".to_string(), parser);
+
+        assert_eq!(cache.len(), 1);
+
+        cache.clear();
+
+        assert_eq!(cache.len(), 0);
+        assert!(!cache.contains("rust"));
     }
 }
