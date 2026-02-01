@@ -11,11 +11,10 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use tree_sitter::{Parser, Query, Tree};
+use tree_sitter::{Parser, Tree};
 
-use super::injection::MAX_INJECTION_DEPTH;
+use super::injection::{InjectionContext, MAX_INJECTION_DEPTH};
 use super::token_collector::{RawToken, collect_host_tokens};
 use crate::config::CaptureMappings;
 use crate::language::LanguageCoordinator;
@@ -90,21 +89,6 @@ impl ThreadLocalParserFactory {
             cache.borrow_mut().clear();
         });
     }
-}
-
-/// Context for processing a single injection synchronously.
-///
-/// This struct captures all the information needed to process one injection,
-/// including the content text, language info, and position mappings.
-pub(crate) struct InjectionContext<'a> {
-    /// The resolved language name (e.g., "lua", "python")
-    pub resolved_lang: String,
-    /// The highlight query for this language
-    pub highlight_query: Arc<Query>,
-    /// The text content of the injection
-    pub content_text: &'a str,
-    /// Byte offset in the host document where this injection starts
-    pub host_start_byte: usize,
 }
 
 /// Process a single injection synchronously, collecting tokens.
@@ -361,6 +345,10 @@ pub(crate) fn collect_injection_tokens_parallel(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use tree_sitter::Query;
+
     use super::*;
     use crate::language::registry::LanguageRegistry;
 

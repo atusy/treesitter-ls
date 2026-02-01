@@ -53,12 +53,17 @@ fn validate_injection_bounds(
 /// Data for processing a single injection (parser-agnostic).
 ///
 /// This struct captures all the information needed to process an injection
-/// before the actual parsing step.
-struct InjectionContext<'a> {
-    resolved_lang: String,
-    highlight_query: Arc<Query>,
-    content_text: &'a str,
-    host_start_byte: usize,
+/// before the actual parsing step. Used by both sequential (recursive) and
+/// parallel injection processing.
+pub(super) struct InjectionContext<'a> {
+    /// The resolved language name (e.g., "lua", "python")
+    pub resolved_lang: String,
+    /// The highlight query for this language
+    pub highlight_query: Arc<Query>,
+    /// The text content of the injection
+    pub content_text: &'a str,
+    /// Byte offset in the host document where this injection starts
+    pub host_start_byte: usize,
 }
 
 /// Collect all injection contexts from a document tree.
