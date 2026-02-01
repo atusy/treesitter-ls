@@ -7,6 +7,7 @@ pub(crate) struct DocumentSnapshot {
 }
 
 /// State required for incremental tokenization, atomically extracted
+#[allow(dead_code)] // TODO: Remove in cleanup commit
 pub(crate) struct IncrementalTokenizationState {
     pub previous_tree: Tree,
     pub previous_text: String,
@@ -155,6 +156,7 @@ impl Document {
     ///
     /// Returns `Some(IncrementalTokenizationState)` only if BOTH previous_tree
     /// and previous_text are available, `None` otherwise.
+    #[allow(dead_code)] // TODO: Remove in cleanup commit
     pub(crate) fn incremental_tokenization_state(&self) -> Option<IncrementalTokenizationState> {
         let previous_tree = self.previous_tree.as_ref()?.clone();
         let previous_text = self.previous_text.as_ref()?.clone();

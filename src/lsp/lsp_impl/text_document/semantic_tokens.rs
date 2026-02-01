@@ -17,9 +17,7 @@ use tower_lsp_server::ls_types::{
 };
 
 use crate::analysis::{
-    IncrementalDecision, compute_incremental_tokens, decide_tokenization_strategy,
-    decode_semantic_tokens, encode_semantic_tokens,
-    handle_semantic_tokens_full_delta_parallel_async, handle_semantic_tokens_full_parallel_async,
+    calculate_delta_or_full, handle_semantic_tokens_full_parallel_async,
     handle_semantic_tokens_range_parallel_async, next_result_id,
 };
 
@@ -426,6 +424,30 @@ impl Kakehashi {
             )));
         };
 
+        // Ensure language is loaded before trying to get queries.
+        // This handles the race condition where semanticTokens/full/delta arrives
+        // before didOpen finishes loading the language.
+        let load_result = self.language.ensure_language_loaded(&language_name);
+        if !load_result.success {
+            self.cache.finish_request(&uri, request_id);
+            return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
+                SemanticTokens {
+                    result_id: None,
+                    data: vec![],
+                },
+            )));
+        }
+
+        // Early exit check after loading language
+        if !self.cache.is_request_active(&uri, request_id) {
+            log::debug!(
+                target: "kakehashi::semantic",
+                "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} (after language load)",
+                uri, request_id
+            );
+            return Ok(None);
+        }
+
         let Some(query) = self.language.get_highlight_query(&language_name) else {
             self.cache.finish_request(&uri, request_id);
             return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
@@ -457,7 +479,7 @@ impl Kakehashi {
             )));
         };
 
-        // Get document data and compute delta
+        // Get document data and compute tokens (same as semanticTokens/full)
         let (result, text_used) = {
             if let Some(reason) = self.check_text_staleness(&uri, &text) {
                 self.cache.finish_request(&uri, request_id);
@@ -479,199 +501,29 @@ impl Kakehashi {
                 return Ok(None);
             }
 
-            // Get document reference for delta computation
-            let doc = match self.documents.get(&uri) {
-                Some(d) => d,
-                None => {
-                    self.cache.finish_request(&uri, request_id);
-                    return Ok(Some(SemanticTokensFullDeltaResult::Tokens(
-                        SemanticTokens {
-                            result_id: None,
-                            data: vec![],
-                        },
-                    )));
-                }
-            };
-
-            // Atomically extract all state required for incremental tokenization.
-            // This eliminates TOCTOU race conditions by extracting previous_tree
-            // and previous_text together in a single operation.
-            let incremental_state = doc.incremental_tokenization_state();
-
-            // Decide tokenization strategy based on change size
-            let strategy = decide_tokenization_strategy(
-                incremental_state.as_ref().map(|s| &s.previous_tree),
-                &tree,
-                text.len(),
-            );
-
             // Get capture mappings for token type resolution
             let capture_mappings = self.language.get_capture_mappings();
 
-            // Incremental Tokenization Path
-            // ==============================
-            // When UseIncremental strategy is selected AND we have all required state:
-            // 1. Decode previous tokens to absolute (line, column) format
-            // 2. Compute new tokens for the ENTIRE document (needed for changed regions)
-            // 3. Use Tree-sitter's changed_ranges() to find what lines changed
-            // 4. Merge: preserve old tokens outside changed lines, use new for changed lines
-            // 5. Encode back to delta format and compute LSP delta
-            //
-            // This preserves cached tokens for unchanged regions, reducing redundant work.
-            // Falls back to full path if any required state is missing.
-            //
-            // Note: We use pattern matching to ensure all required state is available
-            // atomically, eliminating TOCTOU (time-of-check-to-time-of-use) issues.
-            let incremental_context = if matches!(strategy, IncrementalDecision::UseIncremental) {
-                match &incremental_state {
-                    Some(state) => {
-                        let previous_text_hash =
-                            crate::lsp::cache::calculate_text_hash(&state.previous_text);
-                        let previous_tokens = self.cache.get_tokens_if_valid_with_text_hash(
-                            &uri,
-                            &previous_result_id,
-                            previous_text_hash,
-                        );
-                        previous_tokens.map(|tokens| (tokens, state))
-                    }
-                    None => None,
-                }
-            } else {
-                None
-            };
-
-            // Use Rayon-based parallel injection processing
+            // Use Rayon-based parallel injection processing (SAME as semanticTokens/full)
             let supports_multiline = self.supports_multiline_tokens();
             let coordinator = std::sync::Arc::clone(&self.language);
 
-            let result = if let Some((prev_tokens, inc_state)) = incremental_context {
-                log::debug!(
-                    target: "kakehashi::semantic",
-                    "Using incremental tokenization path"
-                );
-
-                // Decode previous tokens to AbsoluteToken format
-                let old_absolute = decode_semantic_tokens(&prev_tokens);
-
-                // Get new tokens via full computation using parallel processing
-                let new_tokens_result = handle_semantic_tokens_full_parallel_async(
-                    text.clone(),
-                    tree.clone(),
-                    query,
-                    Some(language_name.clone()),
-                    Some(capture_mappings.clone()),
-                    coordinator,
-                    supports_multiline,
-                )
-                .await;
-
-                // Extract current tokens from the result
-                if let Some(result) = new_tokens_result {
-                    let current_tokens = match result {
-                        SemanticTokensResult::Tokens(tokens) => tokens,
-                        SemanticTokensResult::Partial(_) => {
-                            log::warn!(
-                                target: "kakehashi::semantic",
-                                "Unexpected partial result when computing full tokens"
-                            );
-                            return Ok(None);
-                        }
-                    };
-
-                    // Decode new tokens to AbsoluteToken format
-                    let new_absolute = decode_semantic_tokens(&current_tokens);
-
-                    // Use incremental merge
-                    let merge_result = compute_incremental_tokens(
-                        &old_absolute,
-                        &inc_state.previous_tree,
-                        &tree,
-                        &inc_state.previous_text,
-                        &text,
-                        &new_absolute,
-                    );
-
-                    log::debug!(
-                        target: "kakehashi::semantic",
-                        "Incremental merge: {} changed lines, line_delta={}",
-                        merge_result.changed_lines.len(),
-                        merge_result.line_delta
-                    );
-
-                    // Encode merged tokens back to SemanticTokens
-                    let merged_tokens = encode_semantic_tokens(
-                        &merge_result.tokens,
-                        current_tokens.result_id.clone(),
-                    );
-
-                    // Calculate delta against original previous tokens
-                    Some(crate::analysis::semantic::calculate_delta_or_full(
-                        &prev_tokens,
-                        &merged_tokens,
-                        &previous_result_id,
-                    ))
-                } else {
-                    None
-                }
-            } else {
-                // Get previous tokens from cache for delta computation in full path.
-                // This lookup is deferred until here to avoid redundant cache access
-                // when taking the incremental path (which uses get_tokens_if_valid_with_text_hash).
-                //
-                // If we have incremental_state with previous_text, also validate text hash
-                // to avoid computing deltas against stale cached tokens from a different
-                // text snapshot.
-                let previous_tokens_for_delta = match &incremental_state {
-                    Some(state) => {
-                        let previous_text_hash =
-                            crate::lsp::cache::calculate_text_hash(&state.previous_text);
-                        self.cache.get_tokens_if_valid_with_text_hash(
-                            &uri,
-                            &previous_result_id,
-                            previous_text_hash,
-                        )
-                    }
-                    None => self.cache.get_tokens_if_valid(&uri, &previous_result_id),
-                };
-
-                log::debug!(
-                    target: "kakehashi::semantic",
-                    "Using full tokenization path (strategy={:?}, has_prev_tokens={}, has_incremental_state={})",
-                    strategy,
-                    previous_tokens_for_delta.is_some(),
-                    incremental_state.is_some()
-                );
-
-                // Delegate to parallel handler
-                handle_semantic_tokens_full_delta_parallel_async(
-                    text.clone(),
-                    tree.clone(),
-                    query,
-                    previous_result_id.clone(),
-                    previous_tokens_for_delta,
-                    Some(language_name.clone()),
-                    Some(capture_mappings),
-                    coordinator,
-                    supports_multiline,
-                )
-                .await
-            };
-            (result, text)
-        }; // doc reference is dropped here
-
-        let domain_result = result.unwrap_or_else(|| {
-            tower_lsp_server::ls_types::SemanticTokensFullDeltaResult::Tokens(
-                tower_lsp_server::ls_types::SemanticTokens {
-                    result_id: None,
-                    data: Vec::new(),
-                },
+            let result = handle_semantic_tokens_full_parallel_async(
+                text.clone(),
+                tree.clone(),
+                query,
+                Some(language_name.clone()),
+                Some(capture_mappings),
+                coordinator,
+                supports_multiline,
             )
-        });
+            .await;
 
-        // Finish tracking this request
-        self.cache.finish_request(&uri, request_id);
+            (result, text)
+        };
 
         if let Some(reason) = self.check_text_staleness(&uri, &text_used) {
+            self.cache.finish_request(&uri, request_id);
             log::debug!(
                 target: "kakehashi::semantic",
                 "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} ({:?})",
@@ -680,26 +532,59 @@ impl Kakehashi {
             return Ok(None);
         }
 
+        // Extract current tokens from the result
+        let current_tokens = match result.unwrap_or_else(|| {
+            SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: Vec::new(),
+            })
+        }) {
+            SemanticTokensResult::Tokens(tokens) => tokens,
+            SemanticTokensResult::Partial(_) => SemanticTokens {
+                result_id: None,
+                data: Vec::new(),
+            },
+        };
+
+        // Get previous tokens from cache for delta calculation
+        let previous_tokens = self.cache.get_tokens_if_valid(&uri, &previous_result_id);
+
+        // Calculate delta or return full tokens
+        let delta_result = match previous_tokens {
+            Some(prev) => calculate_delta_or_full(&prev, &current_tokens, &previous_result_id),
+            None => SemanticTokensFullDeltaResult::Tokens(current_tokens.clone()),
+        };
+
+        // Assign new result_id and store in cache
+        let final_result = match delta_result {
+            SemanticTokensFullDeltaResult::Tokens(mut tokens) => {
+                tokens.result_id = Some(next_result_id());
+                self.cache
+                    .store_tokens(uri.clone(), tokens.clone(), &text_used);
+                SemanticTokensFullDeltaResult::Tokens(tokens)
+            }
+            SemanticTokensFullDeltaResult::TokensDelta(mut delta) => {
+                // For delta, we still need to store the current tokens with new result_id
+                let mut stored_tokens = current_tokens;
+                stored_tokens.result_id = Some(next_result_id());
+                delta.result_id = stored_tokens.result_id.clone();
+                self.cache
+                    .store_tokens(uri.clone(), stored_tokens, &text_used);
+                SemanticTokensFullDeltaResult::TokensDelta(delta)
+            }
+            other => other,
+        };
+
+        // Finish tracking this request
+        self.cache.finish_request(&uri, request_id);
+
         log::debug!(
             target: "kakehashi::semantic",
             "[SEMANTIC_TOKENS_DELTA] DONE uri={} req={}",
             uri, request_id
         );
 
-        match domain_result {
-            tower_lsp_server::ls_types::SemanticTokensFullDeltaResult::Tokens(tokens) => {
-                let mut tokens_with_id = tokens;
-                // Use atomic sequential ID for efficient cache validation
-                tokens_with_id.result_id = Some(next_result_id());
-                let stored_tokens = tokens_with_id.clone();
-                let lsp_tokens = tokens_with_id;
-                // Store in dedicated cache for next delta request
-                self.cache
-                    .store_tokens(uri.clone(), stored_tokens, &text_used);
-                Ok(Some(SemanticTokensFullDeltaResult::Tokens(lsp_tokens)))
-            }
-            other => Ok(Some(other)),
-        }
+        Ok(Some(final_result))
     }
 
     pub(crate) async fn semantic_tokens_range_impl(

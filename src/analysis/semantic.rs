@@ -256,6 +256,7 @@ pub(crate) async fn handle_semantic_tokens_full_parallel_async(
 /// Either a delta or full semantic tokens for the document,
 /// or None if the task was cancelled or failed.
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)] // TODO: Remove in cleanup commit
 pub(crate) async fn handle_semantic_tokens_full_delta_parallel_async(
     text: String,
     tree: Tree,

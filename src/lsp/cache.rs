@@ -321,6 +321,7 @@ impl CacheCoordinator {
     /// - No tokens are cached for this URI
     /// - The cached result_id doesn't match the expected one
     /// - The cached text_hash doesn't match the expected one
+    #[allow(dead_code)] // TODO: Remove in cleanup commit
     pub(crate) fn get_tokens_if_valid_with_text_hash(
         &self,
         uri: &Url,
