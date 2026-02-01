@@ -210,7 +210,6 @@ pub fn handle_semantic_tokens_full_parallel(
 /// # Returns
 /// Semantic tokens for the entire document including injected content,
 /// or None if the task was cancelled or failed.
-#[allow(dead_code)] // Will be used in LSP integration
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_semantic_tokens_full_parallel_async(
     text: String,
