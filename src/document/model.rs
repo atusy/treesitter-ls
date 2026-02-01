@@ -6,13 +6,6 @@ pub(crate) struct DocumentSnapshot {
     tree: Tree,
 }
 
-/// State required for incremental tokenization, atomically extracted
-#[allow(dead_code)] // TODO: Remove in cleanup commit
-pub(crate) struct IncrementalTokenizationState {
-    pub previous_tree: Tree,
-    pub previous_text: String,
-}
-
 impl DocumentSnapshot {
     /// Get the text content
     pub(crate) fn text(&self) -> &str {
@@ -145,25 +138,6 @@ impl Document {
     /// Get the previous text for line delta calculation
     pub fn previous_text(&self) -> Option<&str> {
         self.previous_text.as_deref()
-    }
-
-    /// Atomically extract all state required for incremental tokenization.
-    ///
-    /// This method extracts both `previous_tree` and `previous_text` together,
-    /// ensuring consistency and eliminating TOCTOU (time-of-check-to-time-of-use)
-    /// race conditions where individual checks might succeed but values could
-    /// change before use.
-    ///
-    /// Returns `Some(IncrementalTokenizationState)` only if BOTH previous_tree
-    /// and previous_text are available, `None` otherwise.
-    #[allow(dead_code)] // TODO: Remove in cleanup commit
-    pub(crate) fn incremental_tokenization_state(&self) -> Option<IncrementalTokenizationState> {
-        let previous_tree = self.previous_tree.as_ref()?.clone();
-        let previous_text = self.previous_text.as_ref()?.clone();
-        Some(IncrementalTokenizationState {
-            previous_tree,
-            previous_text,
-        })
     }
 
     /// Update tree, moving current tree to previous_tree

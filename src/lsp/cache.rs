@@ -315,40 +315,6 @@ impl CacheCoordinator {
         result.map(|cached| cached.tokens)
     }
 
-    /// Get cached semantic tokens if both result_id and text_hash match.
-    ///
-    /// Returns None if:
-    /// - No tokens are cached for this URI
-    /// - The cached result_id doesn't match the expected one
-    /// - The cached text_hash doesn't match the expected one
-    #[allow(dead_code)] // TODO: Remove in cleanup commit
-    pub(crate) fn get_tokens_if_valid_with_text_hash(
-        &self,
-        uri: &Url,
-        expected_result_id: &str,
-        expected_text_hash: u64,
-    ) -> Option<SemanticTokens> {
-        let result = self.semantic_cache.get_if_valid(uri, expected_result_id);
-
-        if let Some(cached) = result {
-            if cached.text_hash == expected_text_hash {
-                return Some(cached.tokens);
-            }
-
-            log::debug!(
-                target: "kakehashi::semantic_cache",
-                "Cache MISS: text_hash mismatch for {} - expected '{}', cached '{}'",
-                uri.path(),
-                expected_text_hash,
-                cached.text_hash
-            );
-            return None;
-        }
-
-        self.log_cache_miss(uri, expected_result_id);
-        None
-    }
-
     /// Log diagnostic information for cache misses.
     fn log_cache_miss(&self, uri: &Url, expected_result_id: &str) {
         if let Some(cached) = self.semantic_cache.get(uri) {

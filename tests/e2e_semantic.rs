@@ -25,8 +25,7 @@ use std::time::Duration;
 
 /// Represents a decoded semantic token with absolute positions.
 ///
-/// This matches the AbsoluteToken struct from src/analysis/incremental_tokens.rs
-/// but is defined here to avoid coupling tests to internal implementation.
+/// This is defined locally to avoid coupling tests to internal implementation.
 #[derive(Debug, Clone, PartialEq)]
 struct DecodedToken {
     line: u32,
