@@ -30,7 +30,7 @@ use crate::config::settings::BridgeServerConfig;
 use crate::language::InjectionResolver;
 use crate::lsp::bridge::{LanguageServerPool, UpstreamId};
 use crate::lsp::get_current_request_id;
-use crate::lsp::request_id::CancelForwarder;
+use crate::lsp::request_id::CancelSubscriptionGuard;
 
 use super::super::{Kakehashi, uri_to_url};
 
@@ -205,32 +205,6 @@ pub(crate) async fn fan_out_diagnostic_requests(
 // ============================================================================
 // Pull diagnostics implementation (textDocument/diagnostic)
 // ============================================================================
-
-/// RAII guard that ensures cancel subscription is cleaned up on drop.
-///
-/// This guard automatically calls `unsubscribe()` when dropped, preventing
-/// subscription leaks on early return paths. The unsubscribe is idempotent,
-/// so it's safe to call even after the subscription was already cleaned up
-/// by cancel notification.
-struct CancelSubscriptionGuard<'a> {
-    cancel_forwarder: &'a CancelForwarder,
-    upstream_id: UpstreamId,
-}
-
-impl<'a> CancelSubscriptionGuard<'a> {
-    fn new(cancel_forwarder: &'a CancelForwarder, upstream_id: UpstreamId) -> Self {
-        Self {
-            cancel_forwarder,
-            upstream_id,
-        }
-    }
-}
-
-impl Drop for CancelSubscriptionGuard<'_> {
-    fn drop(&mut self) {
-        self.cancel_forwarder.unsubscribe(&self.upstream_id);
-    }
-}
 
 /// Logging target for pull diagnostics.
 const LOG_TARGET: &str = "kakehashi::diagnostic";

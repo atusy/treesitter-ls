@@ -30,7 +30,9 @@ use crate::analysis::{
     calculate_delta_or_full, handle_semantic_tokens_full_parallel_async,
     handle_semantic_tokens_range_parallel_async, next_result_id,
 };
-use crate::lsp::request_id::CancelReceiver;
+use crate::lsp::bridge::UpstreamId;
+use crate::lsp::get_current_request_id;
+use crate::lsp::request_id::{CancelReceiver, CancelSubscriptionGuard};
 
 use super::super::{Kakehashi, uri_to_url};
 
@@ -215,7 +217,41 @@ impl Kakehashi {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        self.semantic_tokens_full_with_cancel(params, None).await
+        // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
+        let upstream_request_id = match get_current_request_id() {
+            Some(tower_lsp_server::jsonrpc::Id::Number(n)) => UpstreamId::Number(n),
+            Some(tower_lsp_server::jsonrpc::Id::String(s)) => UpstreamId::String(s),
+            None | Some(tower_lsp_server::jsonrpc::Id::Null) => UpstreamId::Null,
+        };
+
+        // Subscribe to cancel notifications for this request
+        // The receiver completes when $/cancelRequest arrives for this ID
+        // The guard ensures unsubscribe is called on all return paths
+        let (cancel_rx, _subscription_guard) = match self
+            .bridge
+            .cancel_forwarder()
+            .subscribe(upstream_request_id.clone())
+        {
+            Ok(rx) => {
+                let guard = CancelSubscriptionGuard::new(
+                    self.bridge.cancel_forwarder(),
+                    upstream_request_id,
+                );
+                (Some(rx), Some(guard))
+            }
+            Err(e) => {
+                log::error!(
+                    target: "kakehashi::semantic",
+                    "Failed to subscribe to cancel notifications for {}: already subscribed. \
+                     Proceeding without cancel support.",
+                    e.0
+                );
+                (None, None)
+            }
+        };
+
+        self.semantic_tokens_full_with_cancel(params, cancel_rx)
+            .await
     }
 
     /// Semantic tokens full implementation with optional cancel support.

@@ -223,6 +223,46 @@ impl CancelForwarder {
     }
 }
 
+/// RAII guard that automatically unsubscribes from cancel notifications on drop.
+///
+/// This guard automatically calls `unsubscribe()` when dropped, preventing
+/// subscription leaks on early return paths. The unsubscribe is idempotent,
+/// so it's safe to call even after the subscription was already cleaned up
+/// by cancel notification.
+///
+/// # Example
+///
+/// ```ignore
+/// let (cancel_rx, _guard) = match cancel_forwarder.subscribe(upstream_id.clone()) {
+///     Ok(rx) => {
+///         let guard = CancelSubscriptionGuard::new(cancel_forwarder, upstream_id);
+///         (Some(rx), Some(guard))
+///     }
+///     Err(_) => (None, None),
+/// };
+/// // _guard is dropped here, automatically unsubscribing
+/// ```
+pub struct CancelSubscriptionGuard<'a> {
+    cancel_forwarder: &'a CancelForwarder,
+    upstream_id: UpstreamId,
+}
+
+impl<'a> CancelSubscriptionGuard<'a> {
+    /// Create a new guard that will unsubscribe on drop.
+    pub fn new(cancel_forwarder: &'a CancelForwarder, upstream_id: UpstreamId) -> Self {
+        Self {
+            cancel_forwarder,
+            upstream_id,
+        }
+    }
+}
+
+impl Drop for CancelSubscriptionGuard<'_> {
+    fn drop(&mut self) {
+        self.cancel_forwarder.unsubscribe(&self.upstream_id);
+    }
+}
+
 /// Tower Service wrapper that captures request IDs from incoming LSP requests.
 ///
 /// This middleware extracts the request ID from each incoming request and stores
