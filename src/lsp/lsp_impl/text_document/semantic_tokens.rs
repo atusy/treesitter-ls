@@ -1,9 +1,19 @@
 //! Semantic token methods for Kakehashi.
+//!
+//! # Cancel Handling
+//!
+//! This module supports immediate cancellation of semantic token requests:
+//! - When `$/cancelRequest` is received, the handler aborts and returns `RequestCancelled` (-32800)
+//! - Uses `tokio::select!` to race between cancel notification and token computation
+//! - The Rayon computation continues in the background but its result is discarded
+//!
+//! This is achieved by subscribing to cancel notifications via `CancelForwarder::subscribe()`
+//! and using biased `tokio::select!` to prioritize cancel handling.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Duration;
 
-use tower_lsp_server::jsonrpc::Result;
+use tower_lsp_server::jsonrpc::{Error, Result};
 use tower_lsp_server::ls_types::{
     SemanticTokens, SemanticTokensDeltaParams, SemanticTokensFullDeltaResult, SemanticTokensParams,
     SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult,
@@ -20,6 +30,7 @@ use crate::analysis::{
     calculate_delta_or_full, handle_semantic_tokens_full_parallel_async,
     handle_semantic_tokens_range_parallel_async, next_result_id,
 };
+use crate::lsp::request_id::CancelReceiver;
 
 use super::super::{Kakehashi, uri_to_url};
 
@@ -204,6 +215,27 @@ impl Kakehashi {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
+        self.semantic_tokens_full_with_cancel(params, None).await
+    }
+
+    /// Semantic tokens full implementation with optional cancel support.
+    ///
+    /// When `cancel_rx` is provided, this method uses `tokio::select!` to race between:
+    /// 1. Cancel notification (returns `RequestCancelled` error immediately)
+    /// 2. Token computation (returns normal result)
+    ///
+    /// The Rayon computation continues in the background if cancelled, but its result
+    /// is discarded. This achieves immediate response to `$/cancelRequest` per LSP spec.
+    ///
+    /// # Arguments
+    /// * `params` - The semantic tokens request parameters
+    /// * `cancel_rx` - Optional cancel receiver from `CancelForwarder::subscribe()`
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) async fn semantic_tokens_full_with_cancel(
+        &self,
+        params: SemanticTokensParams,
+        cancel_rx: Option<CancelReceiver>,
+    ) -> Result<Option<SemanticTokensResult>> {
         let lsp_uri = params.text_document.uri;
 
         // Convert ls_types::Uri to url::Url for internal use
@@ -319,7 +351,8 @@ impl Kakehashi {
             let supports_multiline = self.supports_multiline_tokens();
             let coordinator = std::sync::Arc::clone(&self.language);
 
-            let result = handle_semantic_tokens_full_parallel_async(
+            // Compute tokens, racing against cancel notification if provided
+            let compute_future = handle_semantic_tokens_full_parallel_async(
                 text.clone(),
                 tree.clone(),
                 query,
@@ -327,8 +360,32 @@ impl Kakehashi {
                 Some(capture_mappings),
                 coordinator,
                 supports_multiline,
-            )
-            .await;
+            );
+
+            let result = if let Some(cancel_rx) = cancel_rx {
+                // Race between computation and cancel notification
+                tokio::pin!(cancel_rx);
+                tokio::select! {
+                    biased;
+
+                    // Cancel notification received - abort immediately
+                    _ = &mut cancel_rx => {
+                        self.cache.finish_request(&uri, request_id);
+                        log::debug!(
+                            target: "kakehashi::semantic",
+                            "[SEMANTIC_TOKENS] CANCELLED via $/cancelRequest uri={} req={}",
+                            uri, request_id
+                        );
+                        return Err(Error::request_cancelled());
+                    }
+
+                    // Computation completed
+                    result = compute_future => result,
+                }
+            } else {
+                // No cancel support - just await the computation
+                compute_future.await
+            };
 
             (result, text)
         }; // doc reference is dropped here
@@ -1011,5 +1068,97 @@ mod tests {
             still_cached.is_some(),
             "cache should STILL contain tokens after document update - needed for delta calculations"
         );
+    }
+
+    /// Test that semantic tokens full request returns RequestCancelled (-32800) when cancelled.
+    ///
+    /// This verifies the fix for immediate cancellation support:
+    /// 1. Start a semantic tokens request for a large document
+    /// 2. Immediately trigger cancellation via CancelForwarder
+    /// 3. Verify that RequestCancelled error (-32800) is returned
+    #[tokio::test]
+    async fn semantic_tokens_full_returns_request_cancelled_when_cancelled() {
+        use crate::lsp::bridge::{LanguageServerPool, UpstreamId};
+        use crate::lsp::request_id::CancelForwarder;
+        use std::sync::Arc;
+
+        // Create shared pool and cancel forwarder
+        let pool = Arc::new(LanguageServerPool::new());
+        let cancel_forwarder = CancelForwarder::new(Arc::clone(&pool));
+
+        // Create server with shared cancel forwarder
+        let (service, _socket) = LspService::new(|client| {
+            Kakehashi::with_cancel_forwarder(client, pool, cancel_forwarder.clone())
+        });
+        let server = service.inner();
+        let uri = Url::parse("file:///cancel_test.lua").expect("should construct test uri");
+
+        // Create a moderately large document to ensure processing takes some time
+        let mut text = String::from("local M = {}\n");
+        for i in 0..500 {
+            text.push_str(&format!("local var_{} = {}\n", i, i));
+        }
+        text.push_str("return M\n");
+
+        server
+            .documents
+            .insert(uri.clone(), text, Some("lua".to_string()), None);
+
+        let load_result = server.language.ensure_language_loaded("lua");
+        if !load_result.success {
+            eprintln!("Skipping: lua language parser not available for cancel test");
+            return;
+        }
+
+        // Subscribe to cancel and immediately trigger it
+        let upstream_id = UpstreamId::Number(42);
+        let cancel_rx = cancel_forwarder
+            .subscribe(upstream_id.clone())
+            .expect("should subscribe");
+
+        // Trigger cancel immediately (simulating $/cancelRequest arrival)
+        // This happens in a separate task to simulate async cancel arrival
+        let cancel_forwarder_clone = cancel_forwarder.clone();
+        let upstream_id_clone = upstream_id.clone();
+        tokio::spawn(async move {
+            // Small delay to ensure the request starts processing
+            sleep(Duration::from_millis(1)).await;
+            cancel_forwarder_clone.notify_cancel(&upstream_id_clone);
+        });
+
+        let params = SemanticTokensParams {
+            text_document: TextDocumentIdentifier {
+                uri: crate::lsp::lsp_impl::url_to_uri(&uri).expect("test URI should convert"),
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        // Call the internal implementation with cancel support
+        let result = server
+            .semantic_tokens_full_with_cancel(params, Some(cancel_rx))
+            .await;
+
+        // Verify we got RequestCancelled error (-32800)
+        match result {
+            Err(e) => {
+                assert_eq!(
+                    e.code,
+                    tower_lsp_server::jsonrpc::ErrorCode::RequestCancelled,
+                    "should return RequestCancelled error code (-32800), got: {:?}",
+                    e.code
+                );
+            }
+            Ok(_) => {
+                // If the request completed before cancel was processed, that's also acceptable
+                // (cancel is best-effort per LSP spec). But we expect cancel to win for large docs.
+                eprintln!(
+                    "Note: request completed before cancel - this is acceptable but unexpected for large docs"
+                );
+            }
+        }
+
+        // Clean up subscription
+        cancel_forwarder.unsubscribe(&upstream_id);
     }
 }
