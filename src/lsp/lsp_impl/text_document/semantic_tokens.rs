@@ -485,6 +485,48 @@ impl Kakehashi {
         &self,
         params: SemanticTokensDeltaParams,
     ) -> Result<Option<SemanticTokensFullDeltaResult>> {
+        // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
+        let upstream_request_id = match get_current_request_id() {
+            Some(tower_lsp_server::jsonrpc::Id::Number(n)) => UpstreamId::Number(n),
+            Some(tower_lsp_server::jsonrpc::Id::String(s)) => UpstreamId::String(s),
+            None | Some(tower_lsp_server::jsonrpc::Id::Null) => UpstreamId::Null,
+        };
+
+        // Subscribe to cancel notifications for this request
+        let (cancel_rx, _subscription_guard) = match self
+            .bridge
+            .cancel_forwarder()
+            .subscribe(upstream_request_id.clone())
+        {
+            Ok(rx) => {
+                let guard = CancelSubscriptionGuard::new(
+                    self.bridge.cancel_forwarder(),
+                    upstream_request_id,
+                );
+                (Some(rx), Some(guard))
+            }
+            Err(e) => {
+                log::error!(
+                    target: "kakehashi::semantic",
+                    "Failed to subscribe to cancel notifications for {}: already subscribed. \
+                     Proceeding without cancel support.",
+                    e.0
+                );
+                (None, None)
+            }
+        };
+
+        self.semantic_tokens_full_delta_with_cancel(params, cancel_rx)
+            .await
+    }
+
+    /// Semantic tokens full delta implementation with optional cancel support.
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) async fn semantic_tokens_full_delta_with_cancel(
+        &self,
+        params: SemanticTokensDeltaParams,
+        cancel_rx: Option<CancelReceiver>,
+    ) -> Result<Option<SemanticTokensFullDeltaResult>> {
         let lsp_uri = params.text_document.uri;
         let previous_result_id = params.previous_result_id;
 
@@ -610,7 +652,8 @@ impl Kakehashi {
             let supports_multiline = self.supports_multiline_tokens();
             let coordinator = std::sync::Arc::clone(&self.language);
 
-            let result = handle_semantic_tokens_full_parallel_async(
+            // Compute tokens, racing against cancel notification if provided
+            let compute_future = handle_semantic_tokens_full_parallel_async(
                 text.clone(),
                 tree.clone(),
                 query,
@@ -618,8 +661,32 @@ impl Kakehashi {
                 Some(capture_mappings),
                 coordinator,
                 supports_multiline,
-            )
-            .await;
+            );
+
+            let result = if let Some(cancel_rx) = cancel_rx {
+                // Race between computation and cancel notification
+                tokio::pin!(cancel_rx);
+                tokio::select! {
+                    biased;
+
+                    // Cancel notification received - abort immediately
+                    _ = &mut cancel_rx => {
+                        self.cache.finish_request(&uri, request_id);
+                        log::debug!(
+                            target: "kakehashi::semantic",
+                            "[SEMANTIC_TOKENS_DELTA] CANCELLED via $/cancelRequest uri={} req={}",
+                            uri, request_id
+                        );
+                        return Err(Error::request_cancelled());
+                    }
+
+                    // Computation completed
+                    result = compute_future => result,
+                }
+            } else {
+                // No cancel support - just await the computation
+                compute_future.await
+            };
 
             (result, text)
         };
