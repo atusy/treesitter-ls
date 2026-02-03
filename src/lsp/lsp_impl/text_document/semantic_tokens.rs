@@ -729,8 +729,8 @@ mod tests {
             .insert(uri.clone(), initial_text, Some("lua".to_string()), None);
 
         let load_result = server.language.ensure_language_loaded("lua");
-        if !load_result.success {
-            eprintln!("Skipping: lua language parser not available for semantic tokens test");
+        if !load_result.success || server.language.get_highlight_query("lua").is_none() {
+            eprintln!("Skipping: lua language parser or highlight query not available");
             return;
         }
 
@@ -852,8 +852,8 @@ mod tests {
         );
 
         let load_result = server.language.ensure_language_loaded("lua");
-        if !load_result.success {
-            eprintln!("Skipping: lua language parser not available");
+        if !load_result.success || server.language.get_highlight_query("lua").is_none() {
+            eprintln!("Skipping: lua language parser or highlight query not available");
             return;
         }
 
@@ -963,8 +963,8 @@ mod tests {
         );
 
         let load_result = server.language.ensure_language_loaded("lua");
-        if !load_result.success {
-            eprintln!("Skipping: lua language parser not available");
+        if !load_result.success || server.language.get_highlight_query("lua").is_none() {
+            eprintln!("Skipping: lua language parser or highlight query not available");
             return;
         }
 
