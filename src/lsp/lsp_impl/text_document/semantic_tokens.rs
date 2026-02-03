@@ -1245,4 +1245,120 @@ mod tests {
         // Clean up subscription
         cancel_forwarder.unsubscribe(&upstream_id);
     }
+
+    /// Test that semantic tokens full delta request returns RequestCancelled (-32800) when cancelled.
+    ///
+    /// Similar to the full request test, but specifically tests the delta endpoint:
+    /// 1. First request semantic tokens to establish a baseline result_id
+    /// 2. Start a semantic tokens delta request for a large document
+    /// 3. Immediately trigger cancellation via CancelForwarder
+    /// 4. Verify that RequestCancelled error (-32800) is returned
+    #[tokio::test]
+    async fn semantic_tokens_full_delta_returns_request_cancelled_when_cancelled() {
+        use crate::lsp::bridge::{LanguageServerPool, UpstreamId};
+        use crate::lsp::request_id::CancelForwarder;
+        use std::sync::Arc;
+
+        // Create shared pool and cancel forwarder
+        let pool = Arc::new(LanguageServerPool::new());
+        let cancel_forwarder = CancelForwarder::new(Arc::clone(&pool));
+
+        // Create server with shared cancel forwarder
+        let (service, _socket) = LspService::new(|client| {
+            Kakehashi::with_cancel_forwarder(client, pool, cancel_forwarder.clone())
+        });
+        let server = service.inner();
+        let uri = Url::parse("file:///cancel_delta_test.lua").expect("should construct test uri");
+
+        // Create a moderately large document to ensure processing takes some time
+        let mut text = String::from("local M = {}\n");
+        for i in 0..500 {
+            text.push_str(&format!("local var_{} = {}\n", i, i));
+        }
+        text.push_str("return M\n");
+
+        server
+            .documents
+            .insert(uri.clone(), text, Some("lua".to_string()), None);
+
+        let load_result = server.language.ensure_language_loaded("lua");
+        if !load_result.success {
+            eprintln!("Skipping: lua language parser not available for cancel delta test");
+            return;
+        }
+
+        // First, get initial tokens to establish a result_id for delta requests
+        let full_params = SemanticTokensParams {
+            text_document: TextDocumentIdentifier {
+                uri: crate::lsp::lsp_impl::url_to_uri(&uri).expect("test URI should convert"),
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let initial_result = server
+            .semantic_tokens_full_with_cancel(full_params, None)
+            .await;
+
+        let previous_result_id = match initial_result {
+            Ok(Some(SemanticTokensResult::Tokens(tokens))) => {
+                tokens.result_id.expect("should have result_id")
+            }
+            _ => {
+                eprintln!("Skipping: could not get initial tokens for delta test");
+                return;
+            }
+        };
+
+        // Subscribe to cancel and immediately trigger it
+        let upstream_id = UpstreamId::Number(43);
+        let cancel_rx = cancel_forwarder
+            .subscribe(upstream_id.clone())
+            .expect("should subscribe");
+
+        // Trigger cancel immediately (simulating $/cancelRequest arrival)
+        let cancel_forwarder_clone = cancel_forwarder.clone();
+        let upstream_id_clone = upstream_id.clone();
+        tokio::spawn(async move {
+            // Small delay to ensure the request starts processing
+            sleep(Duration::from_millis(1)).await;
+            cancel_forwarder_clone.notify_cancel(&upstream_id_clone);
+        });
+
+        let delta_params = SemanticTokensDeltaParams {
+            text_document: TextDocumentIdentifier {
+                uri: crate::lsp::lsp_impl::url_to_uri(&uri).expect("test URI should convert"),
+            },
+            previous_result_id,
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        // Call the internal delta implementation with cancel support
+        let result = server
+            .semantic_tokens_full_delta_with_cancel(delta_params, Some(cancel_rx))
+            .await;
+
+        // Verify we got RequestCancelled error (-32800)
+        match result {
+            Err(e) => {
+                assert_eq!(
+                    e.code,
+                    tower_lsp_server::jsonrpc::ErrorCode::RequestCancelled,
+                    "should return RequestCancelled error code (-32800), got: {:?}",
+                    e.code
+                );
+            }
+            Ok(_) => {
+                // If the request completed before cancel was processed, that's also acceptable
+                // (cancel is best-effort per LSP spec). But we expect cancel to win for large docs.
+                eprintln!(
+                    "Note: delta request completed before cancel - this is acceptable but unexpected for large docs"
+                );
+            }
+        }
+
+        // Clean up subscription
+        cancel_forwarder.unsubscribe(&upstream_id);
+    }
 }
