@@ -114,7 +114,7 @@ pub(crate) fn handle_semantic_tokens_full_with_multiline(
 /// # Returns
 /// Semantic tokens for the entire document including injected content
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn handle_semantic_tokens_full_parallel(
+fn handle_semantic_tokens_full_parallel(
     text: &str,
     tree: &Tree,
     query: &Query,
