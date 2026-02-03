@@ -41,89 +41,94 @@ pub fn parse_offset_directive_for_pattern(
     query: &Query,
     pattern_index: usize,
 ) -> Option<InjectionOffset> {
-    // Use unified accessor for predicates
     for predicate in get_all_predicates(query, pattern_index) {
-        // Check if this is an offset! directive
-        if predicate.operator() == "offset!"
-            && let UnifiedPredicate::General(pred) = predicate
-        {
-            // Check if it applies to @injection.content capture
-            if let Some(tree_sitter::QueryPredicateArg::Capture(capture_id)) = pred.args.first() {
-                // Find the capture name
-                if let Some(capture_name) = query.capture_names().get(*capture_id as usize)
-                    && *capture_name == "injection.content"
-                {
-                    // Parse the 4 numeric arguments after the capture
-                    // Format: (#offset! @injection.content start_row start_col end_row end_col)
-                    let arg_count = pred.args.len();
-
-                    // Validate argument count (should be 5: capture + 4 offsets)
-                    if arg_count < 5 {
-                        log::info!(
-                            target: "kakehashi::query",
-                            "Malformed #offset! directive for pattern {}: expected 4 offset values, got {}. \
-                            Using default offset (0, 0, 0, 0). \
-                            Correct format: (#offset! @injection.content start_row start_col end_row end_col)",
-                            pattern_index,
-                            arg_count - 1 // Subtract 1 for the capture argument
-                        );
-                        return Some(DEFAULT_OFFSET);
-                    }
-
-                    // Try to parse each argument as i32
-                    let parse_arg = |idx: usize| -> Result<i32, String> {
-                        if let Some(tree_sitter::QueryPredicateArg::String(s)) = pred.args.get(idx)
-                        {
-                            s.parse().map_err(|_| s.to_string())
-                        } else {
-                            Err(String::from("missing"))
-                        }
-                    };
-
-                    // Parse all 4 offset values
-                    let parse_results = vec![
-                        (1, "start_row", parse_arg(1)),
-                        (2, "start_col", parse_arg(2)),
-                        (3, "end_row", parse_arg(3)),
-                        (4, "end_col", parse_arg(4)),
-                    ];
-
-                    // Check if all values parsed successfully
-                    let all_valid = parse_results.iter().all(|(_, _, r)| r.is_ok());
-
-                    if all_valid {
-                        // Extract the successfully parsed values
-                        let values: Vec<i32> = parse_results
-                            .into_iter()
-                            .map(|(_, _, r)| r.unwrap())
-                            .collect();
-
-                        return Some(InjectionOffset::new(
-                            values[0], values[1], values[2], values[3],
-                        ));
-                    } else {
-                        // Log which values failed to parse
-                        let error_details: Vec<String> = parse_results
-                            .into_iter()
-                            .filter_map(|(_, name, result)| {
-                                result.err().map(|val| format!("{} = '{}'", name, val))
-                            })
-                            .collect();
-
-                        log::info!(
-                            target: "kakehashi::query",
-                            "Failed to parse #offset! directive for pattern {}: invalid values [{}]. \
-                            Using default offset (0, 0, 0, 0). \
-                            All offset values must be integers.",
-                            pattern_index,
-                            error_details.join(", ")
-                        );
-
-                        return Some(DEFAULT_OFFSET);
-                    }
-                }
-            }
+        // Skip non-offset! directives
+        if predicate.operator() != "offset!" {
+            continue;
         }
+
+        // Skip non-General predicates
+        let UnifiedPredicate::General(pred) = predicate else {
+            continue;
+        };
+
+        // Skip if first arg is not a capture
+        let Some(tree_sitter::QueryPredicateArg::Capture(capture_id)) = pred.args.first() else {
+            continue;
+        };
+
+        // Skip if capture name not found or not @injection.content
+        let Some(_) = query
+            .capture_names()
+            .get(*capture_id as usize)
+            .filter(|name| **name == "injection.content")
+        else {
+            continue;
+        };
+
+        // Parse the 4 numeric arguments after the capture
+        // Format: (#offset! @injection.content start_row start_col end_row end_col)
+        let arg_count = pred.args.len();
+
+        // Validate argument count (should be 5: capture + 4 offsets)
+        if arg_count < 5 {
+            log::info!(
+                target: "kakehashi::query",
+                "Malformed #offset! directive for pattern {}: expected 4 offset values, got {}. \
+                Using default offset (0, 0, 0, 0). \
+                Correct format: (#offset! @injection.content start_row start_col end_row end_col)",
+                pattern_index,
+                arg_count - 1 // Subtract 1 for the capture argument
+            );
+            return Some(DEFAULT_OFFSET);
+        }
+
+        // Try to parse each argument as i32
+        let parse_arg = |idx: usize| -> Result<i32, String> {
+            if let Some(tree_sitter::QueryPredicateArg::String(s)) = pred.args.get(idx) {
+                s.parse().map_err(|_| s.to_string())
+            } else {
+                Err(String::from("missing"))
+            }
+        };
+
+        // Parse all 4 offset values
+        let parse_results = [
+            ("start_row", parse_arg(1)),
+            ("start_col", parse_arg(2)),
+            ("end_row", parse_arg(3)),
+            ("end_col", parse_arg(4)),
+        ];
+
+        // Pattern match on all 4 results - more idiomatic than all(is_ok) + unwrap()
+        if let [
+            ("start_row", Ok(start_row)),
+            ("start_col", Ok(start_col)),
+            ("end_row", Ok(end_row)),
+            ("end_col", Ok(end_col)),
+        ] = parse_results.as_slice()
+        {
+            return Some(InjectionOffset::new(
+                *start_row, *start_col, *end_row, *end_col,
+            ));
+        }
+
+        // Log which values failed to parse
+        let error_details: Vec<String> = parse_results
+            .into_iter()
+            .filter_map(|(name, result)| result.err().map(|val| format!("{} = '{}'", name, val)))
+            .collect();
+
+        log::info!(
+            target: "kakehashi::query",
+            "Failed to parse #offset! directive for pattern {}: invalid values [{}]. \
+            Using default offset (0, 0, 0, 0). \
+            All offset values must be integers.",
+            pattern_index,
+            error_details.join(", ")
+        );
+
+        return Some(DEFAULT_OFFSET);
     }
     None
 }
