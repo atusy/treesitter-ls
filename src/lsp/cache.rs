@@ -44,7 +44,6 @@ use crate::analysis::{InjectionMap, InjectionTokenCache, SemanticTokenCache};
 use crate::language::LanguageCoordinator;
 use crate::language::RegionIdTracker;
 use crate::language::injection::{CacheableInjectionRegion, collect_all_injections};
-use crate::text::fnv1a_hash;
 
 use super::semantic_request_tracker::SemanticRequestTracker;
 
@@ -336,9 +335,8 @@ impl CacheCoordinator {
     }
 
     /// Store semantic tokens for a document.
-    pub(crate) fn store_tokens(&self, uri: Url, tokens: SemanticTokens, text: &str) {
-        let text_hash = calculate_text_hash(text);
-        self.semantic_cache.store(uri, tokens, text_hash);
+    pub(crate) fn store_tokens(&self, uri: Url, tokens: SemanticTokens) {
+        self.semantic_cache.store(uri, tokens);
     }
 
     // ========================================================================
@@ -372,10 +370,6 @@ impl CacheCoordinator {
     }
 }
 
-pub(crate) fn calculate_text_hash(text: &str) -> u64 {
-    fnv1a_hash(text)
-}
-
 impl Default for CacheCoordinator {
     fn default() -> Self {
         Self::new()
@@ -407,7 +401,7 @@ mod tests {
                 token_modifiers_bitset: 0,
             }],
         };
-        cache.store_tokens(uri.clone(), tokens, "fn main() {}");
+        cache.store_tokens(uri.clone(), tokens);
 
         // Start a request
         let _request_id = cache.start_request(&uri);
@@ -430,7 +424,7 @@ mod tests {
             result_id: Some("test-id".to_string()),
             data: vec![],
         };
-        cache.store_tokens(uri.clone(), tokens, "let x = 1");
+        cache.store_tokens(uri.clone(), tokens);
 
         // Verify stored
         assert!(cache.get_tokens_if_valid(&uri, "test-id").is_some());

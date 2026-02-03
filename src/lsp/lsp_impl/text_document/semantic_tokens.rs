@@ -374,8 +374,7 @@ impl Kakehashi {
         let stored_tokens = tokens_with_id.clone();
         let lsp_tokens = tokens_with_id;
         // Store in dedicated cache for delta requests with result_id validation
-        self.cache
-            .store_tokens(uri.clone(), stored_tokens, &text_used);
+        self.cache.store_tokens(uri.clone(), stored_tokens);
 
         // Finish tracking this request
         self.cache.finish_request(&uri, request_id);
@@ -579,8 +578,7 @@ impl Kakehashi {
         let final_result = match delta_result {
             SemanticTokensFullDeltaResult::Tokens(mut tokens) => {
                 tokens.result_id = Some(next_result_id());
-                self.cache
-                    .store_tokens(uri.clone(), tokens.clone(), &text_used);
+                self.cache.store_tokens(uri.clone(), tokens.clone());
                 SemanticTokensFullDeltaResult::Tokens(tokens)
             }
             SemanticTokensFullDeltaResult::TokensDelta(mut delta) => {
@@ -588,8 +586,7 @@ impl Kakehashi {
                 let mut stored_tokens = current_tokens;
                 stored_tokens.result_id = Some(next_result_id());
                 delta.result_id = stored_tokens.result_id.clone();
-                self.cache
-                    .store_tokens(uri.clone(), stored_tokens, &text_used);
+                self.cache.store_tokens(uri.clone(), stored_tokens);
                 SemanticTokensFullDeltaResult::TokensDelta(delta)
             }
             SemanticTokensFullDeltaResult::PartialTokensDelta { .. } => {
@@ -603,8 +600,7 @@ impl Kakehashi {
                 );
                 let mut tokens = current_tokens;
                 tokens.result_id = Some(next_result_id());
-                self.cache
-                    .store_tokens(uri.clone(), tokens.clone(), &text_used);
+                self.cache.store_tokens(uri.clone(), tokens.clone());
                 SemanticTokensFullDeltaResult::Tokens(tokens)
             }
         };
