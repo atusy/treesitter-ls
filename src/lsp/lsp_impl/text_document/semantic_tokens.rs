@@ -28,7 +28,7 @@ use tower_lsp_server::ls_types::{
 };
 
 use crate::analysis::{
-    calculate_delta_or_full, handle_semantic_tokens_full_parallel_async,
+    calculate_delta_or_full, handle_semantic_tokens_full,
     handle_semantic_tokens_range_parallel_async, next_result_id,
 };
 use crate::lsp::bridge::UpstreamId;
@@ -401,7 +401,7 @@ impl Kakehashi {
             let coordinator = std::sync::Arc::clone(&self.language);
 
             // Compute tokens, racing against cancel notification if provided
-            let compute_future = handle_semantic_tokens_full_parallel_async(
+            let compute_future = handle_semantic_tokens_full(
                 text.clone(),
                 tree.clone(),
                 query,
@@ -636,7 +636,7 @@ impl Kakehashi {
             let coordinator = std::sync::Arc::clone(&self.language);
 
             // Compute tokens, racing against cancel notification if provided
-            let compute_future = handle_semantic_tokens_full_parallel_async(
+            let compute_future = handle_semantic_tokens_full(
                 text.clone(),
                 tree.clone(),
                 query,

@@ -13,7 +13,7 @@
 use tower_lsp_server::ls_types::{Range, SemanticToken, SemanticTokens, SemanticTokensResult};
 use tree_sitter::{Query, Tree};
 
-use super::handle_semantic_tokens_full_parallel_async;
+use super::handle_semantic_tokens_full;
 
 /// Handle semantic tokens range request with Rayon parallel injection processing (async).
 ///
@@ -45,7 +45,7 @@ pub(crate) async fn handle_semantic_tokens_range_parallel_async(
     supports_multiline: bool,
 ) -> Option<SemanticTokensResult> {
     // Get all tokens using the parallel full handler
-    let full_result = handle_semantic_tokens_full_parallel_async(
+    let full_result = handle_semantic_tokens_full(
         text,
         tree,
         query,

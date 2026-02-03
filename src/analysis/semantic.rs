@@ -106,7 +106,7 @@ fn handle_semantic_tokens_full_parallel(
 /// Semantic tokens for the entire document including injected content,
 /// or None if the task was cancelled or failed.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn handle_semantic_tokens_full_parallel_async(
+pub(crate) async fn handle_semantic_tokens_full(
     text: String,
     tree: Tree,
     query: std::sync::Arc<Query>,
@@ -535,7 +535,7 @@ mod tests {
     /// This verifies the spawn_blocking bridge works correctly when calling
     /// the Rayon-based parallel injection processing from an async context.
     #[tokio::test]
-    async fn test_handle_semantic_tokens_full_parallel_async() {
+    async fn test_handle_semantic_tokens_full() {
         use crate::config::WorkspaceSettings;
         use crate::language::LanguageCoordinator;
         use std::sync::Arc;
@@ -584,7 +584,7 @@ local x = 42
         parser_pool.release("markdown".to_string(), parser);
 
         // Call the async handler
-        let result = handle_semantic_tokens_full_parallel_async(
+        let result = handle_semantic_tokens_full(
             text,
             tree,
             query,
@@ -614,7 +614,7 @@ local x = 42
 
     /// Test that async handler returns None for empty document (consistent with sync behavior).
     #[tokio::test]
-    async fn test_handle_semantic_tokens_full_parallel_async_with_empty_document() {
+    async fn test_handle_semantic_tokens_full_with_empty_document() {
         use crate::config::WorkspaceSettings;
         use crate::language::LanguageCoordinator;
         use std::sync::Arc;
@@ -651,7 +651,7 @@ local x = 42
         parser_pool.release("markdown".to_string(), parser);
 
         // Call the async handler with empty document
-        let result = handle_semantic_tokens_full_parallel_async(
+        let result = handle_semantic_tokens_full(
             text,
             tree,
             query,
