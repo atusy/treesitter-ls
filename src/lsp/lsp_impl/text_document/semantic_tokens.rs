@@ -796,6 +796,120 @@ mod tests {
         );
     }
 
+    /// Test that delta response has result_id and cache is updated correctly.
+    ///
+    /// This verifies that when returning TokensDelta:
+    /// 1. The delta response contains a non-None result_id
+    /// 2. The cache is updated with full tokens (not just delta)
+    /// 3. The cache entry has the same result_id as the delta response
+    /// 4. Subsequent delta requests can use this new result_id
+    #[tokio::test]
+    async fn semantic_tokens_delta_response_has_result_id_and_updates_cache() {
+        let (service, _socket) = LspService::new(Kakehashi::new);
+        let server = service.inner();
+        let uri = Url::parse("file:///delta_result_id.lua").expect("should construct test uri");
+
+        // Insert initial document
+        server.documents.insert(
+            uri.clone(),
+            "local x = 1".to_string(),
+            Some("lua".to_string()),
+            None,
+        );
+
+        let load_result = server.language.ensure_language_loaded("lua");
+        if !load_result.success {
+            eprintln!("Skipping: lua language parser not available");
+            return;
+        }
+
+        // First request: semanticTokens/full to get initial result_id
+        let full_params = SemanticTokensParams {
+            text_document: TextDocumentIdentifier {
+                uri: crate::lsp::lsp_impl::url_to_uri(&uri).expect("test URI should convert"),
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let full_result = server
+            .semantic_tokens_full_impl(full_params)
+            .await
+            .expect("full request should succeed")
+            .expect("should return tokens");
+
+        let initial_result_id = match full_result {
+            SemanticTokensResult::Tokens(t) => t.result_id.expect("should have result_id"),
+            _ => panic!("expected Tokens variant"),
+        };
+
+        // Update document to trigger delta calculation
+        server.documents.update_document(
+            uri.clone(),
+            "local y = 2".to_string(),
+            None, // tree will be None until next parse
+        );
+
+        // Second request: semanticTokens/full/delta with previous_result_id
+        let delta_params = SemanticTokensDeltaParams {
+            text_document: TextDocumentIdentifier {
+                uri: crate::lsp::lsp_impl::url_to_uri(&uri).expect("test URI should convert"),
+            },
+            previous_result_id: initial_result_id.clone(),
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let delta_result = server
+            .semantic_tokens_full_delta_impl(delta_params)
+            .await
+            .expect("delta request should succeed")
+            .expect("should return delta or tokens");
+
+        // ASSERTION 1: Response has non-None result_id
+        let delta_result_id = match &delta_result {
+            SemanticTokensFullDeltaResult::TokensDelta(d) => {
+                d.result_id.clone().expect("delta should have result_id")
+            }
+            SemanticTokensFullDeltaResult::Tokens(t) => {
+                t.result_id.clone().expect("tokens should have result_id")
+            }
+            _ => panic!("unexpected variant"),
+        };
+
+        // ASSERTION 2: result_id is different from initial
+        assert_ne!(
+            delta_result_id, initial_result_id,
+            "new result_id should be assigned"
+        );
+
+        // ASSERTION 3: Cache is updated with the new result_id
+        let cached = server.cache.get_tokens_if_valid(&uri, &delta_result_id);
+        assert!(
+            cached.is_some(),
+            "cache should contain tokens with new result_id '{}'",
+            delta_result_id
+        );
+
+        // ASSERTION 4: Subsequent delta request works with new result_id
+        let follow_up_params = SemanticTokensDeltaParams {
+            text_document: TextDocumentIdentifier {
+                uri: crate::lsp::lsp_impl::url_to_uri(&uri).expect("test URI should convert"),
+            },
+            previous_result_id: delta_result_id,
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let follow_up_result = server
+            .semantic_tokens_full_delta_impl(follow_up_params)
+            .await;
+        assert!(
+            follow_up_result.is_ok(),
+            "follow-up delta request should succeed"
+        );
+    }
+
     /// Test that semantic token cache is preserved for delta calculations.
     ///
     /// This verifies the fix for the issue where `invalidate_semantic()` was being
