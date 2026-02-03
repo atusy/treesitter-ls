@@ -138,23 +138,6 @@ fn apply_offset_to_position(
     }
 }
 
-/// Formats an offset as a string representation
-pub fn format_offset(offset: InjectionOffset) -> String {
-    format!(
-        "({}, {}, {}, {})",
-        offset.start_row, offset.start_column, offset.end_row, offset.end_column
-    )
-}
-
-/// Determines the offset label based on whether it came from a query
-pub fn get_offset_label(from_query: bool) -> &'static str {
-    if from_query {
-        "[from query]"
-    } else {
-        "[default]"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,18 +229,6 @@ mod tests {
 
         assert_eq!(effective.start, 10);
         assert_eq!(effective.end, 20);
-    }
-
-    #[test]
-    fn test_format_offset() {
-        let offset = InjectionOffset::new(1, 2, 3, 4);
-        assert_eq!(format_offset(offset), "(1, 2, 3, 4)");
-    }
-
-    #[test]
-    fn test_get_offset_label() {
-        assert_eq!(get_offset_label(true), "[from query]");
-        assert_eq!(get_offset_label(false), "[default]");
     }
 
     #[test]

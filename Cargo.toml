@@ -55,12 +55,8 @@ tree-sitter-rust = "0.24"
 tree-sitter-md = "0.5"
 tree-sitter-yaml = "0.7"
 streaming-iterator = "0.1"
-criterion = { version = "0.8", features = ["html_reports"] }
 filetime = "0.2"
 insta = { version = "1", features = ["json"] }
 serial_test = "3"
 rstest = "0.26"
 
-[[bench]]
-name = "injection_benchmark"
-harness = false

@@ -1,19 +1,13 @@
-pub mod context;
-pub mod hierarchy_chain;
-pub mod injection_aware;
-pub mod range_builder;
+mod context;
+mod hierarchy_chain;
+mod injection_aware;
+mod range_builder;
 
-pub use hierarchy_chain::{
-    chain_injected_to_host, is_range_strictly_larger, range_contains, ranges_equal,
-    skip_to_distinct_host,
-};
-pub use injection_aware::{
-    adjust_range_to_host, calculate_effective_lsp_range, is_cursor_within_effective_range,
-    is_node_in_selection_chain,
-};
-pub use range_builder::{
-    build, build_from_node, build_from_node_in_injection, find_distinct_parent, node_to_range,
-};
+// Internal re-exports for tests
+#[cfg(test)]
+use injection_aware::is_cursor_within_effective_range;
+#[cfg(test)]
+use range_builder::build_from_node;
 
 use crate::document::DocumentHandle;
 use crate::language::{DocumentParserPool, LanguageCoordinator};

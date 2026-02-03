@@ -14,35 +14,13 @@ use tower_lsp_server::ls_types::{Range, SemanticToken, SemanticTokens, SemanticT
 use tree_sitter::{Query, Tree};
 
 use super::handle_semantic_tokens_full_parallel_async;
+#[cfg(test)]
 use super::handle_semantic_tokens_full_with_multiline;
 
-/// Handle semantic tokens range request
-///
-/// Analyzes a specific range of the document including injected language regions
-/// and returns semantic tokens for both the host document and all injected content
-/// within that range.
-///
-/// This function wraps `handle_semantic_tokens_full` and filters
-/// the results to only include tokens within the requested range.
-///
-/// When coordinator or parser_pool is None, only host document tokens are returned
-/// (no injection processing).
-///
-/// # Arguments
-/// * `text` - The source text
-/// * `tree` - The parsed syntax tree
-/// * `query` - The tree-sitter query for semantic highlighting (host language)
-/// * `range` - The range to get tokens for (LSP positions)
-/// * `filetype` - The filetype of the document being processed
-/// * `capture_mappings` - The capture mappings to apply
-/// * `coordinator` - Language coordinator for loading injected language parsers (None = no injection)
-/// * `parser_pool` - Parser pool for efficient parser reuse (None = no injection)
-/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
-///
-/// # Returns
-/// Semantic tokens for the specified range including injected content (if coordinator/parser_pool provided)
+/// Handle semantic tokens range request (test-only sequential version)
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
-pub fn handle_semantic_tokens_range(
+pub(crate) fn handle_semantic_tokens_range(
     text: &str,
     tree: &Tree,
     query: &Query,

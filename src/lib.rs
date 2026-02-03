@@ -1,4 +1,4 @@
-pub mod analysis;
+pub(crate) mod analysis;
 pub mod config;
 pub mod document;
 pub mod error;
