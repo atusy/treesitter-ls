@@ -159,7 +159,7 @@ pub fn build(
     let injection_query = inj_ctx.get_injection_query(doc_ctx.base_language);
     let injection_query_ref = injection_query.as_ref().map(|q| q.as_ref());
 
-    let injection_info = injection::detect_injection_with_content(
+    let injection_info = injection::detect_injection(
         &node,
         &doc_ctx.root,
         doc_ctx.text,
@@ -232,7 +232,7 @@ pub fn build(
     let nested_injection_query = inj_ctx.get_injection_query(injected_lang);
 
     let injected_selection = if let Some(nested_inj_query) = nested_injection_query.as_ref() {
-        let nested_injection_info = injection::detect_injection_with_content(
+        let nested_injection_info = injection::detect_injection(
             &injected_node,
             &injected_root,
             content_text,
@@ -304,13 +304,8 @@ fn build_nested_injection(
         return build_from_node_in_injection(*node, parent_start_byte, doc_ctx.mapper);
     }
 
-    let injection_info = injection::detect_injection_with_content(
-        node,
-        root,
-        text,
-        Some(injection_query),
-        base_language,
-    );
+    let injection_info =
+        injection::detect_injection(node, root, text, Some(injection_query), base_language);
 
     let Some((hierarchy, content_node, pattern_index)) = injection_info else {
         return build_from_node_in_injection(*node, parent_start_byte, doc_ctx.mapper);

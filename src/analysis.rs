@@ -12,5 +12,5 @@ pub(crate) use semantic_cache::{InjectionMap, InjectionTokenCache, SemanticToken
 
 // Re-export crate-internal functions used by LSP layer
 pub(crate) use semantic::{
-    handle_semantic_tokens_full_parallel_async, handle_semantic_tokens_range_parallel_async,
+    handle_semantic_tokens_full, handle_semantic_tokens_range_parallel_async,
 };

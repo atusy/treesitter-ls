@@ -324,7 +324,7 @@ impl CacheableInjectionRegion {
 
 /// Collects all injection regions in the document
 ///
-/// Unlike `detect_injection_with_content` which requires a specific node,
+/// Unlike `detect_injection` which requires a specific node,
 /// this function finds ALL injection regions in the entire document.
 /// Used for semantic tokens to highlight all injected content.
 ///
@@ -375,7 +375,7 @@ pub fn collect_all_injections<'a>(
 
 /// Detects injection and returns both the language and the content node
 /// Also returns the pattern index of the innermost injection for offset lookups
-pub fn detect_injection_with_content<'a>(
+pub fn detect_injection<'a>(
     node: &Node<'a>,
     root: &Node<'a>,
     text: &str,
@@ -762,8 +762,7 @@ mod tests {
         let node_in_string = find_node_at_byte(&root, 20).expect("node at position");
 
         // Detect injection with content
-        let result =
-            detect_injection_with_content(&node_in_string, &root, text, Some(&query), "rust");
+        let result = detect_injection(&node_in_string, &root, text, Some(&query), "rust");
 
         assert!(result.is_some());
         let (hierarchy, _content_node, _pattern_index) = result.unwrap();
@@ -800,8 +799,7 @@ mod tests {
         let node = find_node_at_byte(&root, 35); // Position in regex string
         assert!(node.is_some());
 
-        let result =
-            detect_injection_with_content(&node.unwrap(), &root, text, Some(&query), "rust");
+        let result = detect_injection(&node.unwrap(), &root, text, Some(&query), "rust");
         assert_eq!(
             result.map(|(h, _, _)| h),
             Some(vec!["rust".to_string(), "regex".to_string()])
@@ -830,8 +828,7 @@ mod tests {
         let node = find_node_at_byte(&root, 20); // Position in string
         assert!(node.is_some());
 
-        let result =
-            detect_injection_with_content(&node.unwrap(), &root, text, Some(&query), "rust");
+        let result = detect_injection(&node.unwrap(), &root, text, Some(&query), "rust");
         assert_eq!(result.map(|(h, _, _)| h), None);
     }
 
@@ -843,7 +840,7 @@ mod tests {
         let root = tree.root_node();
 
         let node = root.child(0).unwrap();
-        let result = detect_injection_with_content(&node, &root, text, None, "rust");
+        let result = detect_injection(&node, &root, text, None, "rust");
         assert_eq!(result, None);
     }
 
@@ -882,7 +879,7 @@ mod tests {
         let query = Query::new(&language, query_str).expect("valid query");
 
         let node = find_node_at_byte(&root, 22).expect("node in string");
-        let result = detect_injection_with_content(&node, &root, text, Some(&query), "rust");
+        let result = detect_injection(&node, &root, text, Some(&query), "rust");
 
         assert!(result.is_some());
         let (hierarchy, _, _) = result.unwrap();
@@ -929,8 +926,7 @@ mod tests {
 
         // Now test our detection from inside the comment
         let node_in_comment = find_node_at_byte(&root, 14).expect("node in comment");
-        let result =
-            detect_injection_with_content(&node_in_comment, &root, text, Some(&query), "rust");
+        let result = detect_injection(&node_in_comment, &root, text, Some(&query), "rust");
 
         // Should detect only one injection (first pattern takes precedence)
         assert!(result.is_some(), "Should find injection");
