@@ -14,48 +14,6 @@ use tower_lsp_server::ls_types::{Range, SemanticToken, SemanticTokens, SemanticT
 use tree_sitter::{Query, Tree};
 
 use super::handle_semantic_tokens_full_parallel_async;
-#[cfg(test)]
-use super::handle_semantic_tokens_full_with_multiline;
-
-/// Handle semantic tokens range request (test-only sequential version)
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn handle_semantic_tokens_range(
-    text: &str,
-    tree: &Tree,
-    query: &Query,
-    range: &Range,
-    filetype: Option<&str>,
-    capture_mappings: Option<&crate::config::CaptureMappings>,
-    coordinator: Option<&crate::language::LanguageCoordinator>,
-    parser_pool: Option<&mut crate::language::DocumentParserPool>,
-    supports_multiline: bool,
-) -> Option<SemanticTokensResult> {
-    // Get all tokens using the full handler with multiline support
-    let full_result = handle_semantic_tokens_full_with_multiline(
-        text,
-        tree,
-        query,
-        filetype,
-        capture_mappings,
-        coordinator,
-        parser_pool,
-        supports_multiline,
-    )?;
-
-    // Extract tokens from result
-    let SemanticTokensResult::Tokens(full_tokens) = full_result else {
-        return Some(full_result);
-    };
-
-    // Filter tokens by range and re-encode as deltas
-    let filtered_data = filter_tokens_by_range(&full_tokens.data, range);
-
-    Some(SemanticTokensResult::Tokens(SemanticTokens {
-        result_id: None,
-        data: filtered_data,
-    }))
-}
 
 /// Handle semantic tokens range request with Rayon parallel injection processing (async).
 ///

@@ -505,7 +505,6 @@ impl Kakehashi {
     }
 
     /// Semantic tokens full delta implementation with optional cancel support.
-    #[cfg_attr(test, allow(dead_code))]
     pub(crate) async fn semantic_tokens_full_delta_with_cancel(
         &self,
         params: SemanticTokensDeltaParams,
