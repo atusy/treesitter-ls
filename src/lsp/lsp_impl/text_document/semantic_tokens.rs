@@ -5,7 +5,8 @@
 //! This module supports immediate cancellation of semantic token requests:
 //! - When `$/cancelRequest` is received, the handler aborts and returns `RequestCancelled` (-32800)
 //! - Uses `tokio::select!` to race between cancel notification and token computation
-//! - The Rayon computation continues in the background but its result is discarded
+//! - The Rayon computation cannot be cancelled mid-execution and will continue to
+//!   completion in the thread pool, consuming CPU resources, but its result is discarded
 //!
 //! This is achieved by subscribing to cancel notifications via `CancelForwarder::subscribe()`
 //! and using biased `tokio::select!` to prioritize cancel handling.
@@ -89,7 +90,7 @@ impl Kakehashi {
                 log::error!(
                     target: "kakehashi::semantic",
                     "Failed to subscribe to cancel notifications for {}: already subscribed. \
-                     Proceeding without cancel support.",
+                     This is a bug - proceeding without cancel support.",
                     e.0
                 );
                 (None, None)
@@ -270,8 +271,10 @@ impl Kakehashi {
     /// 1. Cancel notification (returns `RequestCancelled` error immediately)
     /// 2. Token computation (returns normal result)
     ///
-    /// The Rayon computation continues in the background if cancelled, but its result
-    /// is discarded. This achieves immediate response to `$/cancelRequest` per LSP spec.
+    /// If cancellation wins the race, the Rayon computation cannot be stopped and will
+    /// continue running to completion, consuming CPU resources, but its result is
+    /// discarded by this handler. This achieves immediate response to `$/cancelRequest`
+    /// per LSP spec while still allowing the background work to finish.
     ///
     /// # Arguments
     /// * `params` - The semantic tokens request parameters
@@ -1241,9 +1244,6 @@ mod tests {
                 );
             }
         }
-
-        // Clean up subscription
-        cancel_forwarder.unsubscribe(&upstream_id);
     }
 
     /// Test that semantic tokens full delta request returns RequestCancelled (-32800) when cancelled.
@@ -1357,8 +1357,5 @@ mod tests {
                 );
             }
         }
-
-        // Clean up subscription
-        cancel_forwarder.unsubscribe(&upstream_id);
     }
 }
