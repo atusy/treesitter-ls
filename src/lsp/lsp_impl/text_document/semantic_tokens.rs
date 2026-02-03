@@ -572,7 +572,21 @@ impl Kakehashi {
                     .store_tokens(uri.clone(), stored_tokens, &text_used);
                 SemanticTokensFullDeltaResult::TokensDelta(delta)
             }
-            other => other,
+            SemanticTokensFullDeltaResult::PartialTokensDelta { .. } => {
+                // PartialTokensDelta is not produced by our delta calculation logic,
+                // but we handle it explicitly to maintain exhaustive matching.
+                // Fall back to full tokens response with proper result_id and cache update.
+                log::warn!(
+                    target: "kakehashi::semantic",
+                    "[SEMANTIC_TOKENS_DELTA] Unexpected PartialTokensDelta variant for uri={}",
+                    uri
+                );
+                let mut tokens = current_tokens;
+                tokens.result_id = Some(next_result_id());
+                self.cache
+                    .store_tokens(uri.clone(), tokens.clone(), &text_used);
+                SemanticTokensFullDeltaResult::Tokens(tokens)
+            }
         };
 
         // Finish tracking this request
