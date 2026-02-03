@@ -260,31 +260,6 @@ impl Kakehashi {
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
         let (cancel_rx, _subscription_guard) = self.subscribe_to_cancel();
-
-        self.semantic_tokens_full_with_cancel(params, cancel_rx)
-            .await
-    }
-
-    /// Semantic tokens full implementation with optional cancel support.
-    ///
-    /// When `cancel_rx` is provided, this method uses `tokio::select!` to race between:
-    /// 1. Cancel notification (returns `RequestCancelled` error immediately)
-    /// 2. Token computation (returns normal result)
-    ///
-    /// If cancellation wins the race, the Rayon computation cannot be stopped and will
-    /// continue running to completion, consuming CPU resources, but its result is
-    /// discarded by this handler. This achieves immediate response to `$/cancelRequest`
-    /// per LSP spec while still allowing the background work to finish.
-    ///
-    /// # Arguments
-    /// * `params` - The semantic tokens request parameters
-    /// * `cancel_rx` - Optional cancel receiver from `CancelForwarder::subscribe()`
-    #[cfg_attr(test, allow(dead_code))]
-    pub(crate) async fn semantic_tokens_full_with_cancel(
-        &self,
-        params: SemanticTokensParams,
-        cancel_rx: Option<CancelReceiver>,
-    ) -> Result<Option<SemanticTokensResult>> {
         let lsp_uri = params.text_document.uri;
 
         // Convert ls_types::Uri to url::Url for internal use
@@ -499,17 +474,6 @@ impl Kakehashi {
         params: SemanticTokensDeltaParams,
     ) -> Result<Option<SemanticTokensFullDeltaResult>> {
         let (cancel_rx, _subscription_guard) = self.subscribe_to_cancel();
-
-        self.semantic_tokens_full_delta_with_cancel(params, cancel_rx)
-            .await
-    }
-
-    /// Semantic tokens full delta implementation with optional cancel support.
-    pub(crate) async fn semantic_tokens_full_delta_with_cancel(
-        &self,
-        params: SemanticTokensDeltaParams,
-        cancel_rx: Option<CancelReceiver>,
-    ) -> Result<Option<SemanticTokensFullDeltaResult>> {
         let lsp_uri = params.text_document.uri;
         let previous_result_id = params.previous_result_id;
 
@@ -1196,20 +1160,15 @@ mod tests {
             return;
         }
 
-        // Subscribe to cancel and immediately trigger it
-        let upstream_id = UpstreamId::Number(42);
-        let cancel_rx = cancel_forwarder
-            .subscribe(upstream_id.clone())
-            .expect("should subscribe");
-
         // Trigger cancel immediately (simulating $/cancelRequest arrival)
-        // This happens in a separate task to simulate async cancel arrival
+        // This happens in a separate task to simulate async cancel arrival.
+        // Since there's no task-local request ID in test context, subscribe_to_cancel()
+        // will use UpstreamId::Null - we notify on that ID.
         let cancel_forwarder_clone = cancel_forwarder.clone();
-        let upstream_id_clone = upstream_id.clone();
         tokio::spawn(async move {
-            // Small delay to ensure the request starts processing
+            // Small delay to ensure the request starts processing and subscribes
             sleep(Duration::from_millis(1)).await;
-            cancel_forwarder_clone.notify_cancel(&upstream_id_clone);
+            cancel_forwarder_clone.notify_cancel(&UpstreamId::Null);
         });
 
         let params = SemanticTokensParams {
@@ -1220,10 +1179,8 @@ mod tests {
             partial_result_params: PartialResultParams::default(),
         };
 
-        // Call the internal implementation with cancel support
-        let result = server
-            .semantic_tokens_full_with_cancel(params, Some(cancel_rx))
-            .await;
+        // Call the public implementation - it will internally subscribe to cancel
+        let result = server.semantic_tokens_full_impl(params).await;
 
         // Verify we got RequestCancelled error (-32800)
         match result {
@@ -1295,9 +1252,7 @@ mod tests {
             partial_result_params: PartialResultParams::default(),
         };
 
-        let initial_result = server
-            .semantic_tokens_full_with_cancel(full_params, None)
-            .await;
+        let initial_result = server.semantic_tokens_full_impl(full_params).await;
 
         let previous_result_id = match initial_result {
             Ok(Some(SemanticTokensResult::Tokens(tokens))) => {
@@ -1309,19 +1264,14 @@ mod tests {
             }
         };
 
-        // Subscribe to cancel and immediately trigger it
-        let upstream_id = UpstreamId::Number(43);
-        let cancel_rx = cancel_forwarder
-            .subscribe(upstream_id.clone())
-            .expect("should subscribe");
-
         // Trigger cancel immediately (simulating $/cancelRequest arrival)
+        // Since there's no task-local request ID in test context, subscribe_to_cancel()
+        // will use UpstreamId::Null - we notify on that ID.
         let cancel_forwarder_clone = cancel_forwarder.clone();
-        let upstream_id_clone = upstream_id.clone();
         tokio::spawn(async move {
-            // Small delay to ensure the request starts processing
+            // Small delay to ensure the request starts processing and subscribes
             sleep(Duration::from_millis(1)).await;
-            cancel_forwarder_clone.notify_cancel(&upstream_id_clone);
+            cancel_forwarder_clone.notify_cancel(&UpstreamId::Null);
         });
 
         let delta_params = SemanticTokensDeltaParams {
@@ -1333,10 +1283,8 @@ mod tests {
             partial_result_params: PartialResultParams::default(),
         };
 
-        // Call the internal delta implementation with cancel support
-        let result = server
-            .semantic_tokens_full_delta_with_cancel(delta_params, Some(cancel_rx))
-            .await;
+        // Call the public delta implementation - it will internally subscribe to cancel
+        let result = server.semantic_tokens_full_delta_impl(delta_params).await;
 
         // Verify we got RequestCancelled error (-32800)
         match result {
