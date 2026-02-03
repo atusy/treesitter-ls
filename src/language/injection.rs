@@ -93,29 +93,30 @@ pub fn parse_offset_directive_for_pattern(
         };
 
         // Parse all 4 offset values
-        let parse_results = vec![
-            (1, "start_row", parse_arg(1)),
-            (2, "start_col", parse_arg(2)),
-            (3, "end_row", parse_arg(3)),
-            (4, "end_col", parse_arg(4)),
+        let parse_results = [
+            ("start_row", parse_arg(1)),
+            ("start_col", parse_arg(2)),
+            ("end_row", parse_arg(3)),
+            ("end_col", parse_arg(4)),
         ];
 
-        // Check if all values parsed successfully
-        if parse_results.iter().all(|(_, _, r)| r.is_ok()) {
-            let values: Vec<i32> = parse_results
-                .into_iter()
-                .map(|(_, _, r)| r.unwrap())
-                .collect();
-
+        // Pattern match on all 4 results - more idiomatic than all(is_ok) + unwrap()
+        if let [
+            ("start_row", Ok(start_row)),
+            ("start_col", Ok(start_col)),
+            ("end_row", Ok(end_row)),
+            ("end_col", Ok(end_col)),
+        ] = parse_results.as_slice()
+        {
             return Some(InjectionOffset::new(
-                values[0], values[1], values[2], values[3],
+                *start_row, *start_col, *end_row, *end_col,
             ));
         }
 
         // Log which values failed to parse
         let error_details: Vec<String> = parse_results
             .into_iter()
-            .filter_map(|(_, name, result)| result.err().map(|val| format!("{} = '{}'", name, val)))
+            .filter_map(|(name, result)| result.err().map(|val| format!("{} = '{}'", name, val)))
             .collect();
 
         log::info!(

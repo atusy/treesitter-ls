@@ -102,8 +102,7 @@ fn check_eq(
         return true; // No arg, pass through
     };
 
-    get_predicate_arg_text(value_arg, match_, text)
-        .map_or(true, |other_text| node_text == other_text)
+    get_predicate_arg_text(value_arg, match_, text).is_none_or(|other_text| node_text == other_text)
 }
 
 /// Check not-eq? predicate - returns true if values are not equal
@@ -117,8 +116,7 @@ fn check_not_eq(
         return true; // No arg, pass through
     };
 
-    get_predicate_arg_text(value_arg, match_, text)
-        .map_or(true, |other_text| node_text != other_text)
+    get_predicate_arg_text(value_arg, match_, text) != Some(node_text)
 }
 
 fn get_predicate_arg_text<'a>(
