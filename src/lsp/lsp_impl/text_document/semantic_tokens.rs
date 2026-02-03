@@ -56,6 +56,47 @@ impl Kakehashi {
         }
     }
 
+    /// Subscribe to cancel notifications for the current request.
+    ///
+    /// Returns a tuple of (cancel_receiver, subscription_guard). Both are `None` if subscription
+    /// fails (e.g., already subscribed for this request ID).
+    ///
+    /// The guard ensures `unsubscribe` is called on all return paths via RAII.
+    fn subscribe_to_cancel(&self) -> (Option<CancelReceiver>, Option<CancelSubscriptionGuard<'_>>) {
+        // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
+        let upstream_request_id = match get_current_request_id() {
+            Some(tower_lsp_server::jsonrpc::Id::Number(n)) => UpstreamId::Number(n),
+            Some(tower_lsp_server::jsonrpc::Id::String(s)) => UpstreamId::String(s),
+            None | Some(tower_lsp_server::jsonrpc::Id::Null) => UpstreamId::Null,
+        };
+
+        // Subscribe to cancel notifications for this request
+        // The receiver completes when $/cancelRequest arrives for this ID
+        // The guard ensures unsubscribe is called on all return paths
+        match self
+            .bridge
+            .cancel_forwarder()
+            .subscribe(upstream_request_id.clone())
+        {
+            Ok(rx) => {
+                let guard = CancelSubscriptionGuard::new(
+                    self.bridge.cancel_forwarder(),
+                    upstream_request_id,
+                );
+                (Some(rx), Some(guard))
+            }
+            Err(e) => {
+                log::error!(
+                    target: "kakehashi::semantic",
+                    "Failed to subscribe to cancel notifications for {}: already subscribed. \
+                     Proceeding without cancel support.",
+                    e.0
+                );
+                (None, None)
+            }
+        }
+    }
+
     /// Get the syntax tree for a document, waiting for parse completion or parsing on-demand.
     ///
     /// This handles the race condition where semantic tokens are requested before
@@ -217,38 +258,7 @@ impl Kakehashi {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
-        let upstream_request_id = match get_current_request_id() {
-            Some(tower_lsp_server::jsonrpc::Id::Number(n)) => UpstreamId::Number(n),
-            Some(tower_lsp_server::jsonrpc::Id::String(s)) => UpstreamId::String(s),
-            None | Some(tower_lsp_server::jsonrpc::Id::Null) => UpstreamId::Null,
-        };
-
-        // Subscribe to cancel notifications for this request
-        // The receiver completes when $/cancelRequest arrives for this ID
-        // The guard ensures unsubscribe is called on all return paths
-        let (cancel_rx, _subscription_guard) = match self
-            .bridge
-            .cancel_forwarder()
-            .subscribe(upstream_request_id.clone())
-        {
-            Ok(rx) => {
-                let guard = CancelSubscriptionGuard::new(
-                    self.bridge.cancel_forwarder(),
-                    upstream_request_id,
-                );
-                (Some(rx), Some(guard))
-            }
-            Err(e) => {
-                log::error!(
-                    target: "kakehashi::semantic",
-                    "Failed to subscribe to cancel notifications for {}: already subscribed. \
-                     Proceeding without cancel support.",
-                    e.0
-                );
-                (None, None)
-            }
-        };
+        let (cancel_rx, _subscription_guard) = self.subscribe_to_cancel();
 
         self.semantic_tokens_full_with_cancel(params, cancel_rx)
             .await
@@ -485,36 +495,7 @@ impl Kakehashi {
         &self,
         params: SemanticTokensDeltaParams,
     ) -> Result<Option<SemanticTokensFullDeltaResult>> {
-        // Get upstream request ID from task-local storage (set by RequestIdCapture middleware)
-        let upstream_request_id = match get_current_request_id() {
-            Some(tower_lsp_server::jsonrpc::Id::Number(n)) => UpstreamId::Number(n),
-            Some(tower_lsp_server::jsonrpc::Id::String(s)) => UpstreamId::String(s),
-            None | Some(tower_lsp_server::jsonrpc::Id::Null) => UpstreamId::Null,
-        };
-
-        // Subscribe to cancel notifications for this request
-        let (cancel_rx, _subscription_guard) = match self
-            .bridge
-            .cancel_forwarder()
-            .subscribe(upstream_request_id.clone())
-        {
-            Ok(rx) => {
-                let guard = CancelSubscriptionGuard::new(
-                    self.bridge.cancel_forwarder(),
-                    upstream_request_id,
-                );
-                (Some(rx), Some(guard))
-            }
-            Err(e) => {
-                log::error!(
-                    target: "kakehashi::semantic",
-                    "Failed to subscribe to cancel notifications for {}: already subscribed. \
-                     Proceeding without cancel support.",
-                    e.0
-                );
-                (None, None)
-            }
-        };
+        let (cancel_rx, _subscription_guard) = self.subscribe_to_cancel();
 
         self.semantic_tokens_full_delta_with_cancel(params, cancel_rx)
             .await
