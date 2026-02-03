@@ -343,6 +343,16 @@ impl Kakehashi {
             return Ok(None);
         }
 
+        // Early exit check before storing - prevents superseded request from overwriting cache
+        if !self.cache.is_request_active(&uri, request_id) {
+            log::debug!(
+                target: "kakehashi::semantic",
+                "[SEMANTIC_TOKENS] CANCELLED uri={} req={} (before store)",
+                uri, request_id
+            );
+            return Ok(None);
+        }
+
         let mut tokens_with_id = match result.unwrap_or_else(|| {
             tower_lsp_server::ls_types::SemanticTokensResult::Tokens(
                 tower_lsp_server::ls_types::SemanticTokens {
@@ -545,6 +555,16 @@ impl Kakehashi {
                 data: Vec::new(),
             },
         };
+
+        // Early exit check before storing - prevents superseded request from overwriting cache
+        if !self.cache.is_request_active(&uri, request_id) {
+            log::debug!(
+                target: "kakehashi::semantic",
+                "[SEMANTIC_TOKENS_DELTA] CANCELLED uri={} req={} (before store)",
+                uri, request_id
+            );
+            return Ok(None);
+        }
 
         // Get previous tokens from cache for delta calculation
         let previous_tokens = self.cache.get_tokens_if_valid(&uri, &previous_result_id);
