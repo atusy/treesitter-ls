@@ -20,7 +20,7 @@ use parallel::collect_injection_tokens_parallel;
 
 // Internal re-exports for production code
 use finalize::finalize_tokens;
-use token_collector::RawToken;
+use token_collector::{RawToken, collect_host_tokens};
 
 // Test-only imports
 #[cfg(test)]
@@ -60,7 +60,7 @@ pub(crate) async fn handle_semantic_tokens_full(
         let lines: Vec<&str> = text.lines().collect();
 
         // Collect host document tokens first (not parallelized - typically fast)
-        injection::collect_host_document_tokens(
+        collect_host_tokens(
             &text,
             &tree,
             &query,
