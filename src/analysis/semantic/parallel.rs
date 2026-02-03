@@ -67,9 +67,9 @@ impl LruParserCache {
     fn insert(&mut self, language_id: String, parser: Parser) {
         if self.parsers.len() >= MAX_CACHED_PARSERS {
             // Evict least recently used (front of order vec)
-            if let Some(lru_key) = self.order.first().cloned() {
+            if !self.order.is_empty() {
+                let lru_key = self.order.remove(0);
                 self.parsers.remove(&lru_key);
-                self.order.remove(0);
             }
         }
         self.parsers.insert(language_id.clone(), parser);
