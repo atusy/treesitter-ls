@@ -57,14 +57,12 @@ fn handle_semantic_tokens_full_parallel(
     let lines: Vec<&str> = text.lines().collect();
 
     // Collect host document tokens first (not parallelized - typically fast)
-    injection::collect_injection_tokens_recursive(
+    injection::collect_host_document_tokens(
         text,
         tree,
         query,
         filetype,
         capture_mappings,
-        None, // No coordinator for host tokens - handled separately
-        None, // No parser provider - host only
         text,
         &lines,
         0,
