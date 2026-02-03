@@ -28,70 +28,10 @@ use {delta::calculate_semantic_tokens_delta, tower_lsp_server::ls_types::Semanti
 
 /// Handle semantic tokens full request with Rayon parallel injection processing.
 ///
-/// This variant uses Rayon's work-stealing parallelism for processing multiple
-/// injections concurrently. Thread-local parser caching eliminates the need
-/// for cross-thread synchronization during parsing.
-///
-/// # Arguments
-/// * `text` - The source text
-/// * `tree` - The parsed syntax tree
-/// * `query` - The tree-sitter query for semantic highlighting (host language)
-/// * `filetype` - The filetype of the document being processed
-/// * `capture_mappings` - The capture mappings to apply
-/// * `coordinator` - Language coordinator for injection queries and language loading
-/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
-///
-/// # Returns
-/// Semantic tokens for the entire document including injected content
-#[allow(clippy::too_many_arguments)]
-fn handle_semantic_tokens_full_parallel(
-    text: &str,
-    tree: &Tree,
-    query: &Query,
-    filetype: Option<&str>,
-    capture_mappings: Option<&CaptureMappings>,
-    coordinator: &crate::language::LanguageCoordinator,
-    supports_multiline: bool,
-) -> Option<SemanticTokensResult> {
-    let mut all_tokens: Vec<RawToken> = Vec::with_capacity(1000);
-    let lines: Vec<&str> = text.lines().collect();
-
-    // Collect host document tokens first (not parallelized - typically fast)
-    injection::collect_host_document_tokens(
-        text,
-        tree,
-        query,
-        filetype,
-        capture_mappings,
-        text,
-        &lines,
-        0,
-        0,
-        supports_multiline,
-        &mut all_tokens,
-    );
-
-    // Collect injection tokens in parallel using Rayon
-    let injection_tokens = collect_injection_tokens_parallel(
-        text,
-        tree,
-        filetype,
-        coordinator,
-        capture_mappings,
-        supports_multiline,
-    );
-
-    // Merge injection tokens with host tokens
-    all_tokens.extend(injection_tokens);
-
-    finalize_tokens(all_tokens)
-}
-
-/// Handle semantic tokens full request with Rayon parallel injection processing (async).
-///
-/// This is an async wrapper around `handle_semantic_tokens_full_parallel` that uses
-/// `tokio::task::spawn_blocking` to run the CPU-bound Rayon work on a dedicated
-/// thread pool, avoiding blocking the tokio runtime.
+/// Uses Rayon's work-stealing parallelism for processing multiple injections
+/// concurrently. Thread-local parser caching eliminates the need for cross-thread
+/// synchronization during parsing. Runs CPU-bound work on tokio's blocking thread
+/// pool to avoid blocking the async runtime.
 ///
 /// # Arguments
 /// * `text` - The source text (owned for moving into spawn_blocking)
@@ -116,15 +56,38 @@ pub(crate) async fn handle_semantic_tokens_full(
     supports_multiline: bool,
 ) -> Option<SemanticTokensResult> {
     tokio::task::spawn_blocking(move || {
-        handle_semantic_tokens_full_parallel(
+        let mut all_tokens: Vec<RawToken> = Vec::with_capacity(1000);
+        let lines: Vec<&str> = text.lines().collect();
+
+        // Collect host document tokens first (not parallelized - typically fast)
+        injection::collect_host_document_tokens(
             &text,
             &tree,
             &query,
             filetype.as_deref(),
             capture_mappings.as_ref(),
-            &coordinator,
+            &text,
+            &lines,
+            0,
+            0,
             supports_multiline,
-        )
+            &mut all_tokens,
+        );
+
+        // Collect injection tokens in parallel using Rayon
+        let injection_tokens = collect_injection_tokens_parallel(
+            &text,
+            &tree,
+            filetype.as_deref(),
+            &coordinator,
+            capture_mappings.as_ref(),
+            supports_multiline,
+        );
+
+        // Merge injection tokens with host tokens
+        all_tokens.extend(injection_tokens);
+
+        finalize_tokens(all_tokens)
     })
     .await
     .ok()
