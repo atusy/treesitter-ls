@@ -2,6 +2,7 @@ mod delta;
 mod finalize;
 mod injection;
 mod legend;
+mod parallel;
 mod range;
 mod token_collector;
 
@@ -15,9 +16,10 @@ use tree_sitter::{Query, Tree};
 pub use delta::calculate_delta_or_full;
 pub use legend::{LEGEND_MODIFIERS, LEGEND_TYPES};
 pub use range::handle_semantic_tokens_range;
+pub(crate) use range::handle_semantic_tokens_range_parallel_async;
 
-// Re-export for crate-internal use
-pub(crate) use injection::collect_injection_languages;
+// Re-export for parallel processing
+use parallel::collect_injection_tokens_parallel;
 
 // Internal re-exports for use within this module
 use delta::calculate_semantic_tokens_delta;
@@ -105,7 +107,7 @@ pub fn handle_semantic_tokens_full_with_multiline(
     let lines: Vec<&str> = text.lines().collect();
 
     // Wrap parser_pool in ParserProvider for unified interface
-    let mut provider = parser_pool.map(ParserProvider::Pool);
+    let mut provider = parser_pool.map(ParserProvider::new);
 
     // Recursively collect tokens from the document and all injections
     collect_injection_tokens_recursive(
@@ -127,11 +129,11 @@ pub fn handle_semantic_tokens_full_with_multiline(
     finalize_tokens(all_tokens)
 }
 
-/// Handle semantic tokens full request with pre-acquired local parsers.
+/// Handle semantic tokens full request with Rayon parallel injection processing.
 ///
-/// This variant accepts a HashMap of pre-acquired parsers instead of a parser pool,
-/// enabling the caller to narrow the lock scope: acquire parsers, release lock,
-/// then call this function without holding the pool mutex.
+/// This variant uses Rayon's work-stealing parallelism for processing multiple
+/// injections concurrently. Thread-local parser caching eliminates the need
+/// for cross-thread synchronization during parsing.
 ///
 /// # Arguments
 /// * `text` - The source text
@@ -139,38 +141,33 @@ pub fn handle_semantic_tokens_full_with_multiline(
 /// * `query` - The tree-sitter query for semantic highlighting (host language)
 /// * `filetype` - The filetype of the document being processed
 /// * `capture_mappings` - The capture mappings to apply
-/// * `coordinator` - Language coordinator for injection queries (required for injection support)
-/// * `local_parsers` - Pre-acquired parsers keyed by language ID
+/// * `coordinator` - Language coordinator for injection queries and language loading
 /// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
 ///
 /// # Returns
 /// Semantic tokens for the entire document including injected content
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn handle_semantic_tokens_full_with_local_parsers(
+pub fn handle_semantic_tokens_full_parallel(
     text: &str,
     tree: &Tree,
     query: &Query,
     filetype: Option<&str>,
-    capture_mappings: Option<&crate::config::CaptureMappings>,
-    coordinator: Option<&crate::language::LanguageCoordinator>,
-    local_parsers: &mut std::collections::HashMap<String, tree_sitter::Parser>,
+    capture_mappings: Option<&CaptureMappings>,
+    coordinator: &crate::language::LanguageCoordinator,
     supports_multiline: bool,
 ) -> Option<SemanticTokensResult> {
     let mut all_tokens: Vec<RawToken> = Vec::with_capacity(1000);
     let lines: Vec<&str> = text.lines().collect();
 
-    // Wrap local_parsers in ParserProvider for unified interface
-    let mut provider = ParserProvider::Local(local_parsers);
-
-    // Recursively collect tokens using unified function
-    collect_injection_tokens_recursive(
+    // Collect host document tokens first (not parallelized - typically fast)
+    injection::collect_injection_tokens_recursive(
         text,
         tree,
         query,
         filetype,
         capture_mappings,
-        coordinator,
-        Some(&mut provider),
+        None, // No coordinator for host tokens - handled separately
+        None, // No parser provider - host only
         text,
         &lines,
         0,
@@ -179,7 +176,124 @@ pub(crate) fn handle_semantic_tokens_full_with_local_parsers(
         &mut all_tokens,
     );
 
+    // Collect injection tokens in parallel using Rayon
+    let injection_tokens = collect_injection_tokens_parallel(
+        text,
+        tree,
+        filetype,
+        coordinator,
+        capture_mappings,
+        supports_multiline,
+    );
+
+    // Merge injection tokens with host tokens
+    all_tokens.extend(injection_tokens);
+
     finalize_tokens(all_tokens)
+}
+
+/// Handle semantic tokens full request with Rayon parallel injection processing (async).
+///
+/// This is an async wrapper around `handle_semantic_tokens_full_parallel` that uses
+/// `tokio::task::spawn_blocking` to run the CPU-bound Rayon work on a dedicated
+/// thread pool, avoiding blocking the tokio runtime.
+///
+/// # Arguments
+/// * `text` - The source text (owned for moving into spawn_blocking)
+/// * `tree` - The parsed syntax tree (owned for moving into spawn_blocking)
+/// * `query` - The tree-sitter query for semantic highlighting (host language)
+/// * `filetype` - The filetype of the document being processed
+/// * `capture_mappings` - The capture mappings to apply
+/// * `coordinator` - Language coordinator for injection queries and language loading
+/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
+///
+/// # Returns
+/// Semantic tokens for the entire document including injected content,
+/// or None if the task was cancelled or failed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn handle_semantic_tokens_full_parallel_async(
+    text: String,
+    tree: Tree,
+    query: std::sync::Arc<Query>,
+    filetype: Option<String>,
+    capture_mappings: Option<CaptureMappings>,
+    coordinator: std::sync::Arc<crate::language::LanguageCoordinator>,
+    supports_multiline: bool,
+) -> Option<SemanticTokensResult> {
+    tokio::task::spawn_blocking(move || {
+        handle_semantic_tokens_full_parallel(
+            &text,
+            &tree,
+            &query,
+            filetype.as_deref(),
+            capture_mappings.as_ref(),
+            &coordinator,
+            supports_multiline,
+        )
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Handle semantic tokens full delta request with Rayon parallel injection processing (async).
+///
+/// This is an async version of `handle_semantic_tokens_full_delta` that uses
+/// `tokio::task::spawn_blocking` to run the CPU-bound Rayon work.
+///
+/// # Arguments
+/// * `text` - The source text (owned for moving into spawn_blocking)
+/// * `tree` - The parsed syntax tree (owned for moving into spawn_blocking)
+/// * `query` - The tree-sitter query for semantic highlighting (host language)
+/// * `previous_result_id` - The result ID from the previous semantic tokens response
+/// * `previous_tokens` - The previous semantic tokens to calculate delta from
+/// * `filetype` - The filetype of the document being processed
+/// * `capture_mappings` - The capture mappings to apply
+/// * `coordinator` - Language coordinator for injection queries and language loading
+/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
+///
+/// # Returns
+/// Either a delta or full semantic tokens for the document,
+/// or None if the task was cancelled or failed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn handle_semantic_tokens_full_delta_parallel_async(
+    text: String,
+    tree: Tree,
+    query: std::sync::Arc<Query>,
+    previous_result_id: String,
+    previous_tokens: Option<SemanticTokens>,
+    filetype: Option<String>,
+    capture_mappings: Option<CaptureMappings>,
+    coordinator: std::sync::Arc<crate::language::LanguageCoordinator>,
+    supports_multiline: bool,
+) -> Option<SemanticTokensFullDeltaResult> {
+    // Get current tokens using parallel processing
+    let current_result = handle_semantic_tokens_full_parallel_async(
+        text,
+        tree,
+        query,
+        filetype,
+        capture_mappings,
+        coordinator,
+        supports_multiline,
+    )
+    .await?;
+
+    let current_tokens = match current_result {
+        SemanticTokensResult::Tokens(tokens) => tokens,
+        SemanticTokensResult::Partial(_) => return None,
+    };
+
+    // Check if we can calculate a delta
+    if let Some(prev) = previous_tokens.as_ref()
+        && prev.result_id.as_deref() == Some(&previous_result_id)
+        && let Some(delta) = calculate_semantic_tokens_delta(prev, &current_tokens)
+    {
+        return Some(SemanticTokensFullDeltaResult::TokensDelta(delta));
+    }
+
+    // Fall back to full tokens
+    Some(SemanticTokensFullDeltaResult::Tokens(current_tokens))
 }
 
 /// Handle semantic tokens full delta request
@@ -1200,271 +1314,6 @@ let z = 42"#;
     }
 
     #[test]
-    fn test_collect_injection_languages_returns_unique_languages() {
-        // Test that collect_injection_languages() returns all unique injection languages
-        // This is needed for narrowing lock scope: we need to know which parsers to acquire
-        // BEFORE starting the semantic token processing.
-        //
-        // example.md has a lua fenced code block, so "lua" should be in the result.
-
-        use crate::config::WorkspaceSettings;
-        use crate::language::LanguageCoordinator;
-
-        // Read the test fixture
-        let text = include_str!("../../tests/assets/example.md");
-
-        // Set up coordinator with search paths
-        let coordinator = LanguageCoordinator::new();
-        let settings = WorkspaceSettings {
-            search_paths: vec![test_search_path()],
-            ..Default::default()
-        };
-        let _summary = coordinator.load_settings(settings);
-
-        // Load markdown language (host)
-        let load_result = coordinator.ensure_language_loaded("markdown");
-        assert!(load_result.success, "Should load markdown language");
-
-        // Parse the markdown document
-        let mut parser_pool = coordinator.create_document_parser_pool();
-        let tree = {
-            let mut parser = parser_pool
-                .acquire("markdown")
-                .expect("Should get markdown parser");
-            let result = parser.parse(text, None).expect("Should parse markdown");
-            parser_pool.release("markdown".to_string(), parser);
-            result
-        };
-
-        // Collect injection languages from the markdown document
-        let languages =
-            collect_injection_languages(&tree, text, "markdown", &coordinator, &mut parser_pool);
-
-        // Should find "lua" as an injection language
-        assert!(
-            languages.contains(&"lua".to_string()),
-            "Should find 'lua' as injection language in example.md. Found: {:?}",
-            languages
-        );
-    }
-
-    #[test]
-    fn test_semantic_tokens_with_local_parsers_produces_same_result() {
-        // Test that handle_semantic_tokens_full_with_local_parsers() produces
-        // the same tokens as the original function. This validates that we can
-        // pre-acquire parsers and release the pool lock before processing.
-        //
-        // This is the core test for Task 1.1: Narrow Lock Scope for Parser Pool
-
-        use crate::config::WorkspaceSettings;
-        use crate::language::LanguageCoordinator;
-        use std::collections::HashMap;
-        use tree_sitter::Parser;
-
-        // Read the test fixture (markdown with lua injection)
-        let text = include_str!("../../tests/assets/example.md");
-
-        // Set up coordinator with search paths
-        let coordinator = LanguageCoordinator::new();
-        let settings = WorkspaceSettings {
-            search_paths: vec![test_search_path()],
-            ..Default::default()
-        };
-        let _summary = coordinator.load_settings(settings);
-
-        // Load required languages
-        coordinator.ensure_language_loaded("markdown");
-        coordinator.ensure_language_loaded("lua");
-
-        let mut parser_pool = coordinator.create_document_parser_pool();
-
-        // Parse the markdown document
-        let tree = {
-            let mut parser = parser_pool
-                .acquire("markdown")
-                .expect("Should get markdown parser");
-            let result = parser.parse(text, None).expect("Should parse markdown");
-            parser_pool.release("markdown".to_string(), parser);
-            result
-        };
-
-        let md_highlight_query = coordinator
-            .get_highlight_query("markdown")
-            .expect("Should have markdown highlight query");
-
-        // Step 1: Get result with original function (for comparison)
-        let original_result = handle_semantic_tokens_full(
-            text,
-            &tree,
-            &md_highlight_query,
-            Some("markdown"),
-            None,
-            Some(&coordinator),
-            Some(&mut parser_pool),
-        );
-
-        // Step 2: Pre-acquire parsers into local HashMap
-        let injection_languages =
-            collect_injection_languages(&tree, text, "markdown", &coordinator, &mut parser_pool);
-        let mut local_parsers: HashMap<String, Parser> = HashMap::new();
-        for lang_id in &injection_languages {
-            if let Some(parser) = parser_pool.acquire(lang_id) {
-                local_parsers.insert(lang_id.clone(), parser);
-            }
-        }
-
-        // Step 2: Call new function with local parsers (pool lock NOT needed during this call)
-        let new_result = handle_semantic_tokens_full_with_local_parsers(
-            text,
-            &tree,
-            &md_highlight_query,
-            Some("markdown"),
-            None,
-            Some(&coordinator),
-            &mut local_parsers,
-            false, // supports_multiline = false for backward compatibility in tests
-        );
-
-        // Step 3: Return parsers to pool
-        for (lang_id, parser) in local_parsers {
-            parser_pool.release(lang_id, parser);
-        }
-
-        // Verify results match
-        let original_tokens = original_result.expect("Original should return tokens");
-        let new_tokens = new_result.expect("New function should return tokens");
-
-        let SemanticTokensResult::Tokens(orig) = original_tokens else {
-            panic!("Expected full tokens from original");
-        };
-        let SemanticTokensResult::Tokens(new) = new_tokens else {
-            panic!("Expected full tokens from new function");
-        };
-
-        assert_eq!(
-            orig.data.len(),
-            new.data.len(),
-            "Token count should match between original and local-parsers version"
-        );
-    }
-
-    #[test]
-    fn test_nested_only_language_with_local_parsers() {
-        // This test verifies that nested injection languages are discovered.
-        //
-        // Test document structure:
-        // `````markdown
-        // ```rust
-        // fn main() {}
-        // ```
-        // `````
-        //
-        // "rust" is ONLY inside the nested markdown, not at top level.
-        // collect_injection_languages() must recursively discover it:
-        // - Depth 0: finds "markdown"
-        // - Depth 1: parses nested markdown, finds "rust"
-        // Result: ["markdown", "rust"]
-        //
-        // The `fn` keyword should produce a semantic token.
-
-        use crate::config::WorkspaceSettings;
-        use crate::language::LanguageCoordinator;
-        use std::collections::HashMap;
-        use tree_sitter::Parser;
-
-        // Document with rust ONLY inside nested markdown (not at top level)
-        let text = r#"`````markdown
-```rust
-fn main() {}
-```
-`````"#;
-
-        let coordinator = LanguageCoordinator::new();
-        let settings = WorkspaceSettings {
-            search_paths: vec![test_search_path()],
-            ..Default::default()
-        };
-        let _summary = coordinator.load_settings(settings);
-
-        coordinator.ensure_language_loaded("markdown");
-        coordinator.ensure_language_loaded("rust");
-
-        let mut parser_pool = coordinator.create_document_parser_pool();
-
-        let tree = {
-            let mut parser = parser_pool
-                .acquire("markdown")
-                .expect("Should get markdown parser");
-            let result = parser.parse(text, None).expect("Should parse markdown");
-            parser_pool.release("markdown".to_string(), parser);
-            result
-        };
-
-        let md_highlight_query = coordinator
-            .get_highlight_query("markdown")
-            .expect("Should have markdown highlight query");
-
-        // Pre-acquire parsers using collect_injection_languages (now recursive!)
-        let injection_languages =
-            collect_injection_languages(&tree, text, "markdown", &coordinator, &mut parser_pool);
-
-        let mut local_parsers: HashMap<String, Parser> = HashMap::new();
-        for lang_id in &injection_languages {
-            if let Some(parser) = parser_pool.acquire(lang_id) {
-                local_parsers.insert(lang_id.clone(), parser);
-            }
-        }
-
-        // Call new function with local parsers
-        let result = handle_semantic_tokens_full_with_local_parsers(
-            text,
-            &tree,
-            &md_highlight_query,
-            Some("markdown"),
-            None,
-            Some(&coordinator),
-            &mut local_parsers,
-            false, // supports_multiline = false for backward compatibility in tests
-        );
-
-        // Return parsers to pool
-        for (lang_id, parser) in local_parsers {
-            parser_pool.release(lang_id, parser);
-        }
-
-        let tokens = result.expect("Should return tokens");
-        let SemanticTokensResult::Tokens(tokens) = tokens else {
-            panic!("Expected full tokens result");
-        };
-
-        // Find the `fn` keyword token at line 2 (0-indexed), col 0
-        let mut abs_line = 0u32;
-        let mut abs_col = 0u32;
-        let mut found_fn_keyword = false;
-
-        for token in &tokens.data {
-            abs_line += token.delta_line;
-            if token.delta_line > 0 {
-                abs_col = token.delta_start;
-            } else {
-                abs_col += token.delta_start;
-            }
-
-            // Line 2 (0-indexed), col 0, keyword type (1), length 2 ("fn")
-            if abs_line == 2 && abs_col == 0 && token.token_type == 1 && token.length == 2 {
-                found_fn_keyword = true;
-                break;
-            }
-        }
-
-        assert!(
-            found_fn_keyword,
-            "Should find `fn` keyword at line 2 from nested Rust injection (Markdown -> Markdown -> Rust). \
-             collect_injection_languages() must recursively discover nested languages."
-        );
-    }
-
-    #[test]
     fn test_rust_doc_comment_full_token() {
         // Rust doc comments (/// ...) include trailing newline in the tree-sitter node,
         // which causes end_pos.row > start_pos.row. This test verifies that we still
@@ -1654,6 +1503,145 @@ fn main() {}
             first_token.length > 7,
             "Multiline token length ({}) should be greater than single line (7)",
             first_token.length
+        );
+    }
+
+    /// Test async wrapper for parallel injection processing.
+    ///
+    /// This verifies the spawn_blocking bridge works correctly when calling
+    /// the Rayon-based parallel injection processing from an async context.
+    #[tokio::test]
+    async fn test_handle_semantic_tokens_full_parallel_async() {
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+        use std::sync::Arc;
+
+        // Set up coordinator with search paths
+        let coordinator = Arc::new(LanguageCoordinator::new());
+
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        // Load markdown and lua languages
+        let md_result = coordinator.ensure_language_loaded("markdown");
+        let lua_result = coordinator.ensure_language_loaded("lua");
+        if !md_result.success || !lua_result.success {
+            eprintln!("Skipping: markdown or lua language parser not available");
+            return;
+        }
+
+        let Some(query) = coordinator.get_highlight_query("markdown") else {
+            eprintln!("Skipping: markdown highlight query not available");
+            return;
+        };
+
+        // Markdown with a Lua code block
+        let text = r#"# Hello
+
+```lua
+local x = 42
+```
+"#
+        .to_string();
+
+        // Parse the markdown document
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let Some(mut parser) = parser_pool.acquire("markdown") else {
+            eprintln!("Skipping: could not acquire markdown parser");
+            return;
+        };
+        let Some(tree) = parser.parse(&text, None) else {
+            eprintln!("Skipping: could not parse markdown");
+            return;
+        };
+        parser_pool.release("markdown".to_string(), parser);
+
+        // Call the async handler
+        let result = handle_semantic_tokens_full_parallel_async(
+            text,
+            tree,
+            query,
+            Some("markdown".to_string()),
+            None,
+            coordinator,
+            false,
+        )
+        .await;
+
+        // Should return tokens including injection tokens
+        assert!(result.is_some(), "Should return semantic tokens");
+
+        let SemanticTokensResult::Tokens(tokens) = result.unwrap() else {
+            panic!("Expected full tokens result");
+        };
+
+        // Should have tokens from the Lua injection
+        // Look for a keyword token (the 'local' keyword in Lua)
+        let has_keyword_token = tokens.data.iter().any(|t| t.token_type == 1); // keyword = 1
+        assert!(
+            has_keyword_token,
+            "Should have keyword tokens from Lua injection. Got {} tokens",
+            tokens.data.len()
+        );
+    }
+
+    /// Test that async handler returns None for empty document (consistent with sync behavior).
+    #[tokio::test]
+    async fn test_handle_semantic_tokens_full_parallel_async_with_empty_document() {
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+        use std::sync::Arc;
+
+        let coordinator = Arc::new(LanguageCoordinator::new());
+
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        let md_result = coordinator.ensure_language_loaded("markdown");
+        if !md_result.success {
+            eprintln!("Skipping: markdown language parser not available");
+            return;
+        }
+
+        let Some(query) = coordinator.get_highlight_query("markdown") else {
+            eprintln!("Skipping: markdown highlight query not available");
+            return;
+        };
+
+        // Empty document
+        let text = "".to_string();
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let Some(mut parser) = parser_pool.acquire("markdown") else {
+            return;
+        };
+        let Some(tree) = parser.parse(&text, None) else {
+            return;
+        };
+        parser_pool.release("markdown".to_string(), parser);
+
+        // Call the async handler with empty document
+        let result = handle_semantic_tokens_full_parallel_async(
+            text,
+            tree,
+            query,
+            Some("markdown".to_string()),
+            None,
+            coordinator,
+            false,
+        )
+        .await;
+
+        // Empty document returns None (consistent with finalize_tokens behavior)
+        assert!(
+            result.is_none(),
+            "Empty document should return None (no tokens to return)"
         );
     }
 }

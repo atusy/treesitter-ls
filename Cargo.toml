@@ -38,6 +38,7 @@ tree-sitter-tsquery = "0.8"
 ulid = "1"
 url = "2"
 percent-encoding = "2"
+rayon = "1"
 
 # Unix-only dependencies (signal handling)
 [target.'cfg(unix)'.dependencies]
@@ -59,3 +60,7 @@ filetime = "0.2"
 insta = { version = "1", features = ["json"] }
 serial_test = "3"
 rstest = "0.26"
+
+[[bench]]
+name = "injection_benchmark"
+harness = false

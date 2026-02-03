@@ -3,7 +3,6 @@
 //! This module handles the discovery and recursive processing of language
 //! injections (e.g., Lua code blocks inside Markdown).
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use tree_sitter::{Query, Tree};
@@ -54,12 +53,17 @@ fn validate_injection_bounds(
 /// Data for processing a single injection (parser-agnostic).
 ///
 /// This struct captures all the information needed to process an injection
-/// before the actual parsing step.
-struct InjectionContext<'a> {
-    resolved_lang: String,
-    highlight_query: Arc<Query>,
-    content_text: &'a str,
-    host_start_byte: usize,
+/// before the actual parsing step. Used by both sequential (recursive) and
+/// parallel injection processing.
+pub(super) struct InjectionContext<'a> {
+    /// The resolved language name (e.g., "lua", "python")
+    pub resolved_lang: String,
+    /// The highlight query for this language
+    pub highlight_query: Arc<Query>,
+    /// The text content of the injection
+    pub content_text: &'a str,
+    /// Byte offset in the host document where this injection starts
+    pub host_start_byte: usize,
 }
 
 /// Collect all injection contexts from a document tree.
@@ -141,176 +145,28 @@ fn collect_injection_contexts<'a>(
     contexts
 }
 
-/// Collect all unique injection language identifiers from a document tree recursively.
+/// Wrapper for parser pool access during sequential injection processing.
 ///
-/// This function discovers all injection regions in the document (including nested
-/// injections) and returns the unique set of language identifiers needed to process
-/// them. This is essential for the narrow lock scope pattern: acquire all parsers
-/// upfront, release the lock, then process without holding the mutex.
-///
-/// # Arguments
-/// * `tree` - The parsed syntax tree of the host document
-/// * `text` - The source text of the host document
-/// * `host_language` - The language identifier of the host document (e.g., "markdown")
-/// * `coordinator` - Language coordinator for injection query lookup
-/// * `parser_pool` - Parser pool for parsing nested injection content
-///
-/// # Returns
-/// A vector of unique resolved language identifiers for all injections found,
-/// including those nested inside other injections (up to MAX_INJECTION_DEPTH).
-pub(crate) fn collect_injection_languages(
-    tree: &Tree,
-    text: &str,
-    host_language: &str,
-    coordinator: &crate::language::LanguageCoordinator,
-    parser_pool: &mut crate::language::DocumentParserPool,
-) -> Vec<String> {
-    use std::collections::HashSet;
+/// This struct provides a unified interface for acquiring and releasing parsers
+/// from a `DocumentParserPool` during recursive injection token collection.
+pub(super) struct ParserProvider<'a>(&'a mut crate::language::DocumentParserPool);
 
-    let mut languages = HashSet::new();
-    collect_injection_languages_recursive(
-        tree,
-        text,
-        host_language,
-        coordinator,
-        parser_pool,
-        &mut languages,
-        0,
-    );
-    languages.into_iter().collect()
-}
-
-/// Recursive helper for collecting injection languages at all depths.
-fn collect_injection_languages_recursive(
-    tree: &Tree,
-    text: &str,
-    language: &str,
-    coordinator: &crate::language::LanguageCoordinator,
-    parser_pool: &mut crate::language::DocumentParserPool,
-    languages: &mut std::collections::HashSet<String>,
-    depth: usize,
-) {
-    use crate::language::{collect_all_injections, injection::parse_offset_directive_for_pattern};
-
-    if depth >= MAX_INJECTION_DEPTH {
-        return;
+impl<'a> ParserProvider<'a> {
+    /// Create a new parser provider wrapping a document parser pool.
+    pub fn new(pool: &'a mut crate::language::DocumentParserPool) -> Self {
+        Self(pool)
     }
 
-    // Get injection query for this language
-    let Some(injection_query) = coordinator.get_injection_query(language) else {
-        return;
-    };
-
-    // Find all injection regions
-    let Some(injections) = collect_all_injections(&tree.root_node(), text, Some(&injection_query))
-    else {
-        return;
-    };
-
-    for injection in injections {
-        let Some((inj_start, inj_end)) =
-            validate_injection_bounds(&injection.content_node, text.len())
-        else {
-            continue;
-        };
-
-        // Extract injection content for first-line detection (shebang, mode line)
-        let injection_content = &text[inj_start..inj_end];
-
-        // Resolve the injection language
-        let Some((resolved_lang, _)) =
-            coordinator.resolve_injection_language(&injection.language, injection_content)
-        else {
-            continue;
-        };
-
-        // Add to set (whether already present or not)
-        languages.insert(resolved_lang.clone());
-
-        // Get offset directive if any
-        let offset = parse_offset_directive_for_pattern(&injection_query, injection.pattern_index);
-
-        // Calculate effective content range
-        let content_node = injection.content_node;
-        let (inj_start_byte, inj_end_byte) = if let Some(off) = offset {
-            use crate::analysis::offset_calculator::{ByteRange, calculate_effective_range};
-            let byte_range = ByteRange::new(content_node.start_byte(), content_node.end_byte());
-            let effective = calculate_effective_range(text, byte_range, off);
-            (effective.start, effective.end)
-        } else {
-            (content_node.start_byte(), content_node.end_byte())
-        };
-
-        // Validate effective range after offset adjustment
-        if !is_valid_byte_range(inj_start_byte, inj_end_byte, text.len()) {
-            continue;
-        }
-        let inj_content_text = &text[inj_start_byte..inj_end_byte];
-
-        // Parse the injected content to discover nested injections
-        let Some(mut parser) = parser_pool.acquire(&resolved_lang) else {
-            continue;
-        };
-        let Some(injected_tree) = parser.parse(inj_content_text, None) else {
-            parser_pool.release(resolved_lang.clone(), parser);
-            continue;
-        };
-
-        // Recursively collect languages from nested injections
-        collect_injection_languages_recursive(
-            &injected_tree,
-            inj_content_text,
-            &resolved_lang,
-            coordinator,
-            parser_pool,
-            languages,
-            depth + 1,
-        );
-
-        parser_pool.release(resolved_lang, parser);
-    }
-}
-
-/// Abstraction over different parser acquisition strategies.
-///
-/// This enum unifies the two patterns for acquiring parsers during injection processing:
-/// - `Pool`: Acquires parsers from a shared `DocumentParserPool` (dynamic borrowing)
-/// - `Local`: Uses pre-acquired parsers from a local `HashMap` (upfront acquisition)
-///
-/// Both variants support the same `acquire`/`release` interface, enabling a single
-/// unified recursive token collection function.
-pub(super) enum ParserProvider<'a> {
-    /// Parser pool variant - acquires/releases parsers dynamically per injection
-    Pool(&'a mut crate::language::DocumentParserPool),
-    /// Local HashMap variant - uses pre-acquired parsers
-    Local(&'a mut HashMap<String, tree_sitter::Parser>),
-}
-
-impl ParserProvider<'_> {
     /// Acquire a parser for the given language.
-    ///
-    /// - For `Pool`: delegates to `DocumentParserPool::acquire`
-    /// - For `Local`: removes the parser from the HashMap (takes ownership)
     ///
     /// Returns `None` if no parser is available for the language.
     pub fn acquire(&mut self, lang: &str) -> Option<tree_sitter::Parser> {
-        match self {
-            Self::Pool(pool) => pool.acquire(lang),
-            Self::Local(map) => map.remove(lang),
-        }
+        self.0.acquire(lang)
     }
 
-    /// Release a parser back to its source.
-    ///
-    /// - For `Pool`: delegates to `DocumentParserPool::release`
-    /// - For `Local`: inserts the parser back into the HashMap
+    /// Release a parser back to the pool.
     pub fn release(&mut self, lang: String, parser: tree_sitter::Parser) {
-        match self {
-            Self::Pool(pool) => pool.release(lang, parser),
-            Self::Local(map) => {
-                map.insert(lang, parser);
-            }
-        }
+        self.0.release(lang, parser)
     }
 }
 
@@ -322,14 +178,6 @@ impl ParserProvider<'_> {
 ///
 /// When coordinator or parser_provider is None, only host document tokens are collected
 /// (no injection processing).
-///
-/// # Parser Provider
-///
-/// The `parser_provider` parameter abstracts over two parser acquisition strategies:
-/// - `ParserProvider::Pool`: Dynamic acquisition from a shared parser pool
-/// - `ParserProvider::Local`: Pre-acquired parsers in a local HashMap
-///
-/// Both variants use the same acquire/release semantics, enabling unified handling.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn collect_injection_tokens_recursive(
     text: &str,
@@ -405,82 +253,6 @@ pub(super) fn collect_injection_tokens_recursive(
             depth + 1,
             supports_multiline,
             all_tokens,
-        );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parser_provider_enum_variants_exist() {
-        // This test verifies that ParserProvider enum has both variants
-        // and can be pattern-matched. The actual acquire/release logic
-        // is tested in task 3.2.
-
-        // We can't easily construct real DocumentParserPool or Parser in unit tests,
-        // so we just verify the enum type exists and has the expected structure
-        // by checking that the type is well-formed via a type annotation.
-        fn _assert_pool_variant(_: ParserProvider<'_>) {}
-        fn _assert_local_variant(_: ParserProvider<'_>) {}
-
-        // Verify pattern matching compiles (won't run, just type-check)
-        fn _match_provider(p: ParserProvider<'_>) {
-            match p {
-                ParserProvider::Pool(_) => {}
-                ParserProvider::Local(_) => {}
-            }
-        }
-    }
-
-    #[test]
-    fn test_parser_provider_local_acquire_release() {
-        // Test that Local variant correctly takes and returns parsers
-        let mut parsers: HashMap<String, tree_sitter::Parser> = HashMap::new();
-        parsers.insert("lua".to_string(), tree_sitter::Parser::new());
-
-        let mut provider = ParserProvider::Local(&mut parsers);
-
-        // Acquire should remove from map
-        let parser = provider.acquire("lua");
-        assert!(
-            parser.is_some(),
-            "acquire should return Some for existing lang"
-        );
-
-        // Map should now be empty
-        if let ParserProvider::Local(map) = &provider {
-            assert!(
-                map.get("lua").is_none(),
-                "parser should be removed from map"
-            );
-        }
-
-        // Acquire again should return None (parser was taken)
-        let parser2 = provider.acquire("lua");
-        assert!(parser2.is_none(), "second acquire should return None");
-
-        // Release should put it back
-        provider.release("lua".to_string(), parser.unwrap());
-
-        // Now acquire should work again
-        let parser3 = provider.acquire("lua");
-        assert!(
-            parser3.is_some(),
-            "acquire after release should return Some"
-        );
-    }
-
-    #[test]
-    fn test_parser_provider_local_acquire_nonexistent() {
-        let mut parsers: HashMap<String, tree_sitter::Parser> = HashMap::new();
-        let mut provider = ParserProvider::Local(&mut parsers);
-
-        let parser = provider.acquire("nonexistent");
-        assert!(
-            parser.is_none(),
-            "acquire for nonexistent lang should return None"
         );
     }
 }
