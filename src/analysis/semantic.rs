@@ -236,66 +236,6 @@ pub(crate) async fn handle_semantic_tokens_full_parallel_async(
     .flatten()
 }
 
-/// Handle semantic tokens full delta request with Rayon parallel injection processing (async).
-///
-/// This is an async version of `handle_semantic_tokens_full_delta` that uses
-/// `tokio::task::spawn_blocking` to run the CPU-bound Rayon work.
-///
-/// # Arguments
-/// * `text` - The source text (owned for moving into spawn_blocking)
-/// * `tree` - The parsed syntax tree (owned for moving into spawn_blocking)
-/// * `query` - The tree-sitter query for semantic highlighting (host language)
-/// * `previous_result_id` - The result ID from the previous semantic tokens response
-/// * `previous_tokens` - The previous semantic tokens to calculate delta from
-/// * `filetype` - The filetype of the document being processed
-/// * `capture_mappings` - The capture mappings to apply
-/// * `coordinator` - Language coordinator for injection queries and language loading
-/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
-///
-/// # Returns
-/// Either a delta or full semantic tokens for the document,
-/// or None if the task was cancelled or failed.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn handle_semantic_tokens_full_delta_parallel_async(
-    text: String,
-    tree: Tree,
-    query: std::sync::Arc<Query>,
-    previous_result_id: String,
-    previous_tokens: Option<SemanticTokens>,
-    filetype: Option<String>,
-    capture_mappings: Option<CaptureMappings>,
-    coordinator: std::sync::Arc<crate::language::LanguageCoordinator>,
-    supports_multiline: bool,
-) -> Option<SemanticTokensFullDeltaResult> {
-    // Get current tokens using parallel processing
-    let current_result = handle_semantic_tokens_full_parallel_async(
-        text,
-        tree,
-        query,
-        filetype,
-        capture_mappings,
-        coordinator,
-        supports_multiline,
-    )
-    .await?;
-
-    let current_tokens = match current_result {
-        SemanticTokensResult::Tokens(tokens) => tokens,
-        SemanticTokensResult::Partial(_) => return None,
-    };
-
-    // Check if we can calculate a delta
-    if let Some(prev) = previous_tokens.as_ref()
-        && prev.result_id.as_deref() == Some(&previous_result_id)
-        && let Some(delta) = calculate_semantic_tokens_delta(prev, &current_tokens)
-    {
-        return Some(SemanticTokensFullDeltaResult::TokensDelta(delta));
-    }
-
-    // Fall back to full tokens
-    Some(SemanticTokensFullDeltaResult::Tokens(current_tokens))
-}
-
 /// Handle semantic tokens full delta request
 ///
 /// Analyzes the document and returns either a delta from the previous version

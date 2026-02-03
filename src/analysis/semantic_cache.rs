@@ -42,11 +42,10 @@ use rust_lapper::{Interval, Lapper};
 use tower_lsp_server::ls_types::SemanticTokens;
 use url::Url;
 
-/// Cached semantic tokens with the source text hash.
+/// Cached semantic tokens for delta calculations.
 #[derive(Clone)]
 pub struct CachedSemanticTokens {
     pub tokens: SemanticTokens,
-    pub text_hash: u64,
 }
 
 /// Thread-safe semantic token cache.
@@ -63,9 +62,8 @@ impl SemanticTokenCache {
     }
 
     /// Store semantic tokens for a document.
-    pub fn store(&self, uri: Url, tokens: SemanticTokens, text_hash: u64) {
-        self.cache
-            .insert(uri, CachedSemanticTokens { tokens, text_hash });
+    pub fn store(&self, uri: Url, tokens: SemanticTokens) {
+        self.cache.insert(uri, CachedSemanticTokens { tokens });
     }
 
     /// Retrieve semantic tokens for a document.
@@ -291,7 +289,7 @@ mod tests {
         };
 
         // Store tokens
-        cache.store(uri.clone(), tokens.clone(), 42);
+        cache.store(uri.clone(), tokens.clone());
 
         // Retrieve tokens
         let retrieved = cache.get(&uri);
@@ -307,7 +305,6 @@ mod tests {
             retrieved.tokens.data[0].length, 5,
             "Token length should match"
         );
-        assert_eq!(retrieved.text_hash, 42, "text hash should match");
 
         // Non-existent URI returns None
         let other_uri = Url::parse("file:///other.rs").unwrap();
@@ -332,7 +329,7 @@ mod tests {
             }],
         };
 
-        cache.store(uri.clone(), tokens, 99);
+        cache.store(uri.clone(), tokens);
 
         // Matching result_id returns tokens
         let valid = cache.get_if_valid(&uri, "42");
@@ -373,7 +370,7 @@ mod tests {
         };
 
         // Store tokens
-        cache.store(uri.clone(), tokens, 7);
+        cache.store(uri.clone(), tokens);
         assert!(cache.get(&uri).is_some(), "Should have cached tokens");
 
         // Remove on close
