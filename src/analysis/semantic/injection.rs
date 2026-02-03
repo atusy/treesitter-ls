@@ -152,7 +152,8 @@ fn collect_injection_contexts<'a>(
 pub(super) struct ParserProvider<'a>(&'a mut crate::language::DocumentParserPool);
 
 impl<'a> ParserProvider<'a> {
-    /// Create a new parser provider wrapping a document parser pool.
+    /// Create a new parser provider wrapping a document parser pool (test-only)
+    #[cfg(test)]
     pub fn new(pool: &'a mut crate::language::DocumentParserPool) -> Self {
         Self(pool)
     }

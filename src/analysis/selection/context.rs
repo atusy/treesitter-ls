@@ -103,37 +103,11 @@ impl<'a> InjectionContext<'a> {
         }
     }
 
-    /// Get the current recursion depth.
-    ///
-    /// Returns 0 for the host document level, 1+ for nested injections.
-    pub fn depth(&self) -> usize {
-        self.depth
-    }
-
     /// Check if we can descend into another injection level.
     ///
     /// Returns `true` if the current depth is less than `MAX_INJECTION_DEPTH`.
     pub fn can_descend(&self) -> bool {
         self.depth < MAX_INJECTION_DEPTH
-    }
-
-    /// Create a new context for the next injection level.
-    ///
-    /// Returns `None` if we've reached `MAX_INJECTION_DEPTH`.
-    ///
-    /// # Note
-    ///
-    /// This consumes the current context because we need mutable access
-    /// to the parser pool, which cannot be shared between contexts.
-    pub fn descend(self) -> Option<Self> {
-        if self.depth >= MAX_INJECTION_DEPTH {
-            return None;
-        }
-        Some(Self {
-            coordinator: self.coordinator,
-            parser_pool: self.parser_pool,
-            depth: self.depth + 1,
-        })
     }
 
     /// Increment depth and return the new depth, or None if at max.
@@ -178,31 +152,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_injection_context_depth_starts_at_zero() {
-        let coordinator = LanguageCoordinator::new();
-        let mut parser_pool = coordinator.create_document_parser_pool();
-        let ctx = InjectionContext::new(&coordinator, &mut parser_pool);
-
-        assert_eq!(ctx.depth(), 0);
-    }
-
-    #[test]
     fn test_injection_context_can_descend_initially() {
         let coordinator = LanguageCoordinator::new();
         let mut parser_pool = coordinator.create_document_parser_pool();
         let ctx = InjectionContext::new(&coordinator, &mut parser_pool);
 
         assert!(ctx.can_descend());
-    }
-
-    #[test]
-    fn test_injection_context_descend_increments_depth() {
-        let coordinator = LanguageCoordinator::new();
-        let mut parser_pool = coordinator.create_document_parser_pool();
-        let ctx = InjectionContext::new(&coordinator, &mut parser_pool);
-
-        let descended = ctx.descend().expect("should be able to descend");
-        assert_eq!(descended.depth(), 1);
     }
 
     #[test]
@@ -213,11 +168,9 @@ mod tests {
 
         let new_depth = ctx.increment_depth();
         assert_eq!(new_depth, Some(1));
-        assert_eq!(ctx.depth(), 1);
 
         let new_depth = ctx.increment_depth();
         assert_eq!(new_depth, Some(2));
-        assert_eq!(ctx.depth(), 2);
     }
 
     #[test]
@@ -234,6 +187,5 @@ mod tests {
         // Should not be able to increment further
         assert!(ctx.increment_depth().is_none());
         assert!(!ctx.can_descend());
-        assert_eq!(ctx.depth(), MAX_INJECTION_DEPTH);
     }
 }

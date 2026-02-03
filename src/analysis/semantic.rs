@@ -7,52 +7,34 @@ mod range;
 mod token_collector;
 
 use crate::config::CaptureMappings;
-use tower_lsp_server::ls_types::{
-    SemanticTokens, SemanticTokensFullDeltaResult, SemanticTokensResult,
-};
+use tower_lsp_server::ls_types::SemanticTokensResult;
 use tree_sitter::{Query, Tree};
 
-// Re-export public API from submodules
-pub use delta::calculate_delta_or_full;
-pub use legend::{LEGEND_MODIFIERS, LEGEND_TYPES};
-pub use range::handle_semantic_tokens_range;
+// Re-export crate-internal API from submodules
+pub(crate) use delta::calculate_delta_or_full;
+pub(crate) use legend::{LEGEND_MODIFIERS, LEGEND_TYPES};
 pub(crate) use range::handle_semantic_tokens_range_parallel_async;
 
 // Re-export for parallel processing
 use parallel::collect_injection_tokens_parallel;
 
-// Internal re-exports for use within this module
-use delta::calculate_semantic_tokens_delta;
+// Internal re-exports for production code
 use finalize::finalize_tokens;
-use injection::{ParserProvider, collect_injection_tokens_recursive};
 use token_collector::RawToken;
 
-/// Handle semantic tokens full request
-///
-/// Analyzes the entire document including injected language regions and returns
-/// semantic tokens for both the host document and all injected content.
-/// Supports recursive/nested injections (e.g., Lua inside Markdown inside Markdown).
-///
-/// When coordinator or parser_pool is None, only host document tokens are returned
-/// (no injection processing).
-///
-/// # Arguments
-/// * `text` - The source text
-/// * `tree` - The parsed syntax tree
-/// * `query` - The tree-sitter query for semantic highlighting (host language)
-/// * `filetype` - The filetype of the document being processed
-/// * `capture_mappings` - The capture mappings to apply
-/// * `coordinator` - Language coordinator for loading injected language parsers (None = no injection)
-/// * `parser_pool` - Parser pool for efficient parser reuse (None = no injection)
-///
-/// # Returns
-/// Semantic tokens for the entire document including injected content (if coordinator/parser_pool provided)
-///
-/// # Note
-/// This function defaults `supports_multiline` to `false` for backward compatibility.
-/// Use `handle_semantic_tokens_full_with_multiline` for explicit control.
+// Test-only imports
+#[cfg(test)]
+use {
+    delta::calculate_semantic_tokens_delta,
+    injection::{ParserProvider, collect_injection_tokens_recursive},
+    range::handle_semantic_tokens_range,
+    tower_lsp_server::ls_types::{SemanticTokens, SemanticTokensFullDeltaResult},
+};
+
+/// Handle semantic tokens full request (test-only sequential version)
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
-pub fn handle_semantic_tokens_full(
+pub(crate) fn handle_semantic_tokens_full(
     text: &str,
     tree: &Tree,
     query: &Query,
@@ -73,25 +55,10 @@ pub fn handle_semantic_tokens_full(
     )
 }
 
-/// Handle semantic tokens full request with explicit multiline token support.
-///
-/// This variant allows explicit control over multiline token handling based on
-/// client capabilities.
-///
-/// # Arguments
-/// * `text` - The source text
-/// * `tree` - The parsed syntax tree
-/// * `query` - The tree-sitter query for semantic highlighting (host language)
-/// * `filetype` - The filetype of the document being processed
-/// * `capture_mappings` - The capture mappings to apply
-/// * `coordinator` - Language coordinator for loading injected language parsers (None = no injection)
-/// * `parser_pool` - Parser pool for efficient parser reuse (None = no injection)
-/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
-///
-/// # Returns
-/// Semantic tokens for the entire document including injected content
+/// Handle semantic tokens full request with multiline support (test-only sequential version)
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
-pub fn handle_semantic_tokens_full_with_multiline(
+pub(crate) fn handle_semantic_tokens_full_with_multiline(
     text: &str,
     tree: &Tree,
     query: &Query,
@@ -147,7 +114,7 @@ pub fn handle_semantic_tokens_full_with_multiline(
 /// # Returns
 /// Semantic tokens for the entire document including injected content
 #[allow(clippy::too_many_arguments)]
-pub fn handle_semantic_tokens_full_parallel(
+pub(crate) fn handle_semantic_tokens_full_parallel(
     text: &str,
     tree: &Tree,
     query: &Query,
@@ -236,30 +203,10 @@ pub(crate) async fn handle_semantic_tokens_full_parallel_async(
     .flatten()
 }
 
-/// Handle semantic tokens full delta request
-///
-/// Analyzes the document and returns either a delta from the previous version
-/// or the full set of semantic tokens if delta cannot be calculated.
-///
-/// When coordinator and parser_pool are provided, tokens from injected language
-/// regions are included in the result.
-///
-/// # Arguments
-/// * `text` - The current source text
-/// * `tree` - The parsed syntax tree for the current text
-/// * `query` - The tree-sitter query for semantic highlighting
-/// * `previous_result_id` - The result ID from the previous semantic tokens response
-/// * `previous_tokens` - The previous semantic tokens to calculate delta from
-/// * `filetype` - The filetype of the document being processed
-/// * `capture_mappings` - The capture mappings to apply
-/// * `coordinator` - Language coordinator for loading injected language parsers (None = no injection)
-/// * `parser_pool` - Parser pool for efficient parser reuse (None = no injection)
-/// * `supports_multiline` - Whether client supports multiline tokens (per LSP 3.16.0+)
-///
-/// # Returns
-/// Either a delta or full semantic tokens for the document
+/// Handle semantic tokens full delta request (test-only sequential version)
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
-pub fn handle_semantic_tokens_full_delta(
+pub(crate) fn handle_semantic_tokens_full_delta(
     text: &str,
     tree: &Tree,
     query: &Query,

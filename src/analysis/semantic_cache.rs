@@ -155,10 +155,8 @@ impl InjectionMap {
         self.lappers.remove(uri);
     }
 
-    /// Find the injection region containing the given byte position.
-    ///
-    /// Returns `Some(region)` if the position falls within an injection's byte range,
-    /// or `None` if the position is outside all injection regions or the URI is unknown.
+    /// Find the injection region containing the given byte position (test-only).
+    #[cfg(test)]
     pub fn find_at_position(
         &self,
         uri: &Url,
@@ -216,16 +214,15 @@ impl InjectionTokenCache {
         }
     }
 
-    /// Store semantic tokens for a specific injection region.
+    /// Store semantic tokens for a specific injection region (test-only).
+    #[cfg(test)]
     pub fn store(&self, uri: &Url, region_id: &str, tokens: SemanticTokens) {
         self.cache
             .insert((uri.clone(), region_id.to_string()), tokens);
     }
 
-    /// Retrieve semantic tokens for a specific injection region.
-    ///
-    /// Returns `Some(tokens)` on cache hit, `None` on cache miss.
-    /// Cache hits are logged at debug level to help verify stable region ID optimization.
+    /// Retrieve semantic tokens for a specific injection region (test-only).
+    #[cfg(test)]
     pub fn get(&self, uri: &Url, region_id: &str) -> Option<SemanticTokens> {
         let result = self
             .cache
