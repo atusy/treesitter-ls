@@ -158,19 +158,6 @@ impl FailedParserRegistry {
         Ok(())
     }
 
-    /// Record that parsing completed successfully.
-    ///
-    /// This clears in-memory state only (no disk I/O).
-    ///
-    /// Note: This is kept for backward compatibility but cannot properly track
-    /// concurrent parses. Use `end_parsing_language()` instead.
-    #[deprecated(note = "Use end_parsing_language() for proper concurrent tracking")]
-    pub fn end_parsing(&self) -> io::Result<()> {
-        // Clear all parsing state - this is imprecise but maintains backward compatibility
-        self.parsing_counts.clear();
-        Ok(())
-    }
-
     /// Persist current parsing state to disk.
     ///
     /// This should be called on graceful shutdown to enable crash detection
