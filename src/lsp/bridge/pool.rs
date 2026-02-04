@@ -229,6 +229,12 @@ pub struct LanguageServerPool {
     ///
     /// This prevents infinite retry loops when a server's handshake consistently panics.
     consecutive_panic_counts: std::sync::Mutex<HashMap<String, u32>>,
+    /// Workspace root URI forwarded from upstream client.
+    ///
+    /// Set via `set_root_uri()` after receiving the upstream initialize request.
+    /// Passed to downstream servers during LSP handshake so they can provide
+    /// workspace-aware features (diagnostics, go-to-definition, etc.).
+    root_uri: std::sync::Mutex<Option<String>>,
 }
 
 impl Default for LanguageServerPool {
@@ -259,7 +265,22 @@ impl LanguageServerPool {
             upstream_request_registry: std::sync::Mutex::new(HashMap::new()),
             cancel_metrics: CancelForwardingMetrics::default(),
             consecutive_panic_counts: std::sync::Mutex::new(HashMap::new()),
+            root_uri: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Set the workspace root URI.
+    ///
+    /// Called during upstream initialize to forward the root URI to downstream servers.
+    pub(crate) fn set_root_uri(&self, uri: Option<String>) {
+        let mut root_uri = self.root_uri.lock().unwrap_or_else(|e| e.into_inner());
+        *root_uri = uri;
+    }
+
+    /// Get the workspace root URI.
+    fn root_uri(&self) -> Option<String> {
+        let root_uri = self.root_uri.lock().unwrap_or_else(|e| e.into_inner());
+        root_uri.clone()
     }
 
     /// Get access to cancel forwarding metrics (for testing).
@@ -708,6 +729,7 @@ impl LanguageServerPool {
         // - If this function's caller is cancelled, only the JoinHandle await is dropped
         // - The spawned handshake task continues to completion
         let init_options = server_config.initialization_options.clone();
+        let root_uri = self.root_uri();
         let handle_for_handshake = Arc::clone(&handle);
         let server_name_for_log = server_name.to_string();
         let handshake_task = tokio::spawn(async move {
@@ -718,6 +740,7 @@ impl LanguageServerPool {
                     init_request_id,
                     init_response_rx,
                     init_options,
+                    root_uri,
                 ),
             )
             .await;

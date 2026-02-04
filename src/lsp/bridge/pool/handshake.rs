@@ -34,6 +34,7 @@ use crate::lsp::bridge::protocol::{
 /// * `init_request_id` - Pre-registered request ID (always 1)
 /// * `init_response_rx` - Pre-registered receiver for initialize response
 /// * `init_options` - Server-specific initialization options
+/// * `root_uri` - The workspace root URI (forwarded from upstream client)
 ///
 /// # Returns
 /// * `Ok(())` - Handshake completed successfully
@@ -43,9 +44,10 @@ pub(super) async fn perform_lsp_handshake(
     init_request_id: RequestId,
     init_response_rx: tokio::sync::oneshot::Receiver<serde_json::Value>,
     init_options: Option<serde_json::Value>,
+    root_uri: Option<String>,
 ) -> io::Result<()> {
     // 1. Build and send initialize request via the single-writer loop
-    let init_request = build_initialize_request(init_request_id, init_options);
+    let init_request = build_initialize_request(init_request_id, init_options, root_uri);
     handle
         .send_request(init_request, init_request_id)
         .map_err(|e| -> io::Error { e.into() })?;

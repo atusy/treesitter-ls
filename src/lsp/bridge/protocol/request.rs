@@ -681,8 +681,10 @@ mod tests {
     /// Assert that a request uses a virtual URI with the expected extension.
     fn assert_uses_virtual_uri(request: &serde_json::Value, extension: &str) {
         let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
+        // Extract filename and check for kakehashi-virtual-uri-{id}.{ext} pattern
+        let filename = uri_str.rsplit('/').next().unwrap_or("");
         assert!(
-            uri_str.starts_with("file:///.kakehashi/")
+            filename.starts_with("kakehashi-virtual-uri-")
                 && uri_str.ends_with(&format!(".{}", extension)),
             "Request should use virtual URI with .{} extension: {}",
             extension,

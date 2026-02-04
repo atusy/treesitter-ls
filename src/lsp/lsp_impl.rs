@@ -843,6 +843,17 @@ impl LanguageServer for Kakehashi {
             .log_info("Received initialization request")
             .await;
 
+        // Get root URI from workspace folders or root_uri (for downstream servers)
+        #[allow(deprecated)]
+        let root_uri_for_bridge: Option<String> = if let Some(folders) = &params.workspace_folders {
+            folders.first().map(|folder| folder.uri.to_string())
+        } else {
+            params.root_uri.as_ref().map(|uri| uri.to_string())
+        };
+
+        // Forward root_uri to bridge pool for downstream server initialization
+        self.bridge.pool().set_root_uri(root_uri_for_bridge);
+
         // Get root path from workspace folders, root_uri, or current directory
         #[allow(deprecated)]
         let root_path = if let Some(folders) = &params.workspace_folders {

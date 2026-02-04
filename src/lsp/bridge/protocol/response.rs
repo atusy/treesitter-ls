@@ -1302,7 +1302,7 @@ mod tests {
 
     #[test]
     fn definition_response_transforms_location_array_ranges() {
-        let virtual_uri = "file:///.kakehashi/abc123/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -1338,7 +1338,7 @@ mod tests {
 
     #[test]
     fn definition_response_transforms_single_location() {
-        let virtual_uri = "file:///.kakehashi/abc123/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -1361,7 +1361,7 @@ mod tests {
 
     #[test]
     fn definition_response_transforms_location_link_array() {
-        let virtual_uri = "file:///.kakehashi/abc123/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -1400,7 +1400,7 @@ mod tests {
     fn definition_response_with_null_result_passes_through() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
         let context = test_context(
-            "file:///.kakehashi/abc123/region-0.lua",
+            "file:///project/kakehashi-virtual-uri-region-0.lua",
             "file:///project/doc.md",
             3,
         );
@@ -1411,7 +1411,7 @@ mod tests {
 
     #[test]
     fn definition_response_transforms_location_uri_to_host_uri() {
-        let virtual_uri = "file:///.kakehashi/abc123/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -1434,7 +1434,7 @@ mod tests {
 
     #[test]
     fn definition_response_transforms_location_link_target_uri_to_host_uri() {
-        let virtual_uri = "file:///.kakehashi/abc123/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -1470,7 +1470,7 @@ mod tests {
 
     #[test]
     fn definition_response_preserves_real_file_uri() {
-        let virtual_uri = "file:///.kakehashi/abc123/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let real_file_uri = "file:///real/path/utils.lua";
         let response = json!({
             "jsonrpc": "2.0",
@@ -1491,8 +1491,8 @@ mod tests {
 
     #[test]
     fn definition_response_filters_out_different_region_virtual_uri() {
-        let request_virtual_uri = "file:///.kakehashi/abc/region-0.lua";
-        let different_virtual_uri = "file:///.kakehashi/abc/region-1.lua";
+        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
+        let different_virtual_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -1516,8 +1516,8 @@ mod tests {
 
     #[test]
     fn definition_response_mixed_array_filters_only_cross_region() {
-        let request_virtual_uri = "file:///.kakehashi/abc/region-0.lua";
-        let cross_region_uri = "file:///.kakehashi/abc/region-1.lua";
+        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
+        let cross_region_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
         let real_file_uri = "file:///real/utils.lua";
 
         let response = json!({
@@ -1558,8 +1558,8 @@ mod tests {
 
     #[test]
     fn definition_response_single_location_filtered_becomes_null() {
-        let request_virtual_uri = "file:///.kakehashi/abc/region-0.lua";
-        let cross_region_uri = "file:///.kakehashi/abc/region-1.lua";
+        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
+        let cross_region_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
 
         let response = json!({
             "jsonrpc": "2.0",
@@ -1580,8 +1580,8 @@ mod tests {
 
     #[test]
     fn definition_response_single_location_link_filtered_becomes_null() {
-        let request_virtual_uri = "file:///.kakehashi/abc/region-0.lua";
-        let cross_region_uri = "file:///.kakehashi/abc/region-1.lua";
+        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
+        let cross_region_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
 
         let response = json!({
             "jsonrpc": "2.0",
@@ -1613,7 +1613,7 @@ mod tests {
 
     #[test]
     fn definition_response_single_location_link_same_region_transforms() {
-        let virtual_uri = "file:///.kakehashi/abc/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
 
         let response = json!({
             "jsonrpc": "2.0",
@@ -1650,8 +1650,8 @@ mod tests {
 
     #[test]
     fn definition_response_location_link_array_filters_cross_region() {
-        let request_virtual_uri = "file:///.kakehashi/abc/region-0.lua";
-        let cross_region_uri = "file:///.kakehashi/abc/region-1.lua";
+        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
+        let cross_region_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
 
         let response = json!({
             "jsonrpc": "2.0",
@@ -1857,7 +1857,11 @@ mod tests {
     #[test]
     fn workspace_edit_with_null_result_passes_through() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
-        let context = test_context("file:///.kakehashi/abc/region-0.lua", "file:///doc.md", 5);
+        let context = test_context(
+            "file:///project/kakehashi-virtual-uri-region-0.lua",
+            "file:///doc.md",
+            5,
+        );
 
         let transformed = transform_workspace_edit_to_host(response.clone(), &context);
         assert_eq!(transformed, response);
@@ -1865,7 +1869,7 @@ mod tests {
 
     #[test]
     fn workspace_edit_transforms_textedit_ranges_in_changes_map() {
-        let virtual_uri = "file:///.kakehashi/abc/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let host_uri = "file:///doc.md";
         let response = json!({
             "jsonrpc": "2.0",
@@ -1905,7 +1909,7 @@ mod tests {
 
     #[test]
     fn workspace_edit_replaces_virtual_uri_key_with_host_uri_in_changes() {
-        let virtual_uri = "file:///.kakehashi/abc/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let host_uri = "file:///doc.md";
         let response = json!({
             "jsonrpc": "2.0",
@@ -1930,7 +1934,7 @@ mod tests {
 
     #[test]
     fn workspace_edit_preserves_real_file_uris_in_changes() {
-        let virtual_uri = "file:///.kakehashi/abc/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let real_file_uri = "file:///other/file.lua";
         let response = json!({
             "jsonrpc": "2.0",
@@ -1955,8 +1959,8 @@ mod tests {
 
     #[test]
     fn workspace_edit_filters_out_cross_region_virtual_uris_in_changes() {
-        let request_virtual_uri = "file:///.kakehashi/abc/region-0.lua";
-        let cross_region_uri = "file:///.kakehashi/abc/region-1.lua";
+        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
+        let cross_region_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -1979,7 +1983,7 @@ mod tests {
 
     #[test]
     fn workspace_edit_transforms_textedit_ranges_in_document_changes() {
-        let virtual_uri = "file:///.kakehashi/abc/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let host_uri = "file:///doc.md";
         let response = json!({
             "jsonrpc": "2.0",
@@ -2014,7 +2018,7 @@ mod tests {
 
     #[test]
     fn workspace_edit_replaces_virtual_uri_with_host_uri_in_document_changes() {
-        let virtual_uri = "file:///.kakehashi/abc/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let host_uri = "file:///doc.md";
         let response = json!({
             "jsonrpc": "2.0",
@@ -2039,7 +2043,7 @@ mod tests {
 
     #[test]
     fn workspace_edit_preserves_real_file_uris_in_document_changes() {
-        let virtual_uri = "file:///.kakehashi/abc/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let real_file_uri = "file:///other/file.lua";
         let response = json!({
             "jsonrpc": "2.0",
@@ -2068,8 +2072,8 @@ mod tests {
 
     #[test]
     fn workspace_edit_filters_out_cross_region_virtual_uris_in_document_changes() {
-        let request_virtual_uri = "file:///.kakehashi/abc/region-0.lua";
-        let cross_region_uri = "file:///.kakehashi/abc/region-1.lua";
+        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
+        let cross_region_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -2239,7 +2243,11 @@ mod tests {
             ]
         });
         // Real file URIs are preserved, but ranges still need transformation
-        let context = test_context("file:///.kakehashi/abc/region-0.lua", "file:///doc.md", 7);
+        let context = test_context(
+            "file:///project/kakehashi-virtual-uri-region-0.lua",
+            "file:///doc.md",
+            7,
+        );
 
         let transformed = transform_document_symbol_response_to_host(response, &context);
 
@@ -2281,7 +2289,7 @@ mod tests {
     #[test]
     fn document_symbol_response_transforms_symbol_information_location_uri_to_host_uri() {
         // SymbolInformation format with virtual URI - should transform to host URI
-        let virtual_uri = "file:///.kakehashi/abc123/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let host_uri = "file:///project/doc.md";
         let response = json!({
             "jsonrpc": "2.0",
@@ -2316,8 +2324,8 @@ mod tests {
     #[test]
     fn document_symbol_response_filters_out_cross_region_symbol_information() {
         // SymbolInformation with cross-region virtual URI should be filtered out
-        let request_virtual_uri = "file:///.kakehashi/abc/region-0.lua";
-        let cross_region_uri = "file:///.kakehashi/abc/region-1.lua";
+        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
+        let cross_region_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -2349,7 +2357,7 @@ mod tests {
     #[test]
     fn document_symbol_response_preserves_real_file_uri_in_symbol_information() {
         // SymbolInformation with real file URI should be preserved
-        let virtual_uri = "file:///.kakehashi/abc/region-0.lua";
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let real_file_uri = "file:///real/path/module.lua";
         let response = json!({
             "jsonrpc": "2.0",
@@ -2384,8 +2392,8 @@ mod tests {
     #[test]
     fn document_symbol_response_mixed_symbol_information_filters_only_cross_region() {
         // Mixed array: same virtual, cross-region virtual, real file
-        let request_virtual_uri = "file:///.kakehashi/abc/region-0.lua";
-        let cross_region_uri = "file:///.kakehashi/abc/region-1.lua";
+        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
+        let cross_region_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
         let real_file_uri = "file:///real/module.lua";
         let host_uri = "file:///doc.md";
 
@@ -2638,8 +2646,8 @@ mod tests {
         // InlayHint with label as array of InlayHintLabelPart with location field
         // Per LSP 3.17: label can be string | InlayHintLabelPart[]
         // InlayHintLabelPart.location is { uri, range }
-        // Use proper virtual URI format (file:///.kakehashi/...) so is_virtual_uri recognizes it
-        let virtual_uri = "file:///.kakehashi/abc123/region-0.lua";
+        // Use proper virtual URI format (kakehashi-virtual-uri-{id}.{ext}) so is_virtual_uri recognizes it
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let host_uri = "file:///test.md";
         let response = json!({
             "jsonrpc": "2.0",
@@ -2681,8 +2689,8 @@ mod tests {
     #[test]
     fn inlay_hint_label_part_location_uri_transforms_to_host_uri() {
         // When location.uri matches the request's virtual URI, it should be replaced with host URI
-        // Use proper virtual URI format (file:///.kakehashi/...) so is_virtual_uri recognizes it
-        let virtual_uri = "file:///.kakehashi/abc123/region-0.lua";
+        // Use proper virtual URI format (kakehashi-virtual-uri-{id}.{ext}) so is_virtual_uri recognizes it
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let host_uri = "file:///test.md";
         let response = json!({
             "jsonrpc": "2.0",
@@ -2722,8 +2730,8 @@ mod tests {
     #[test]
     fn inlay_hint_label_part_cross_region_location_is_filtered_out() {
         // When location.uri is a DIFFERENT virtual URI (cross-region), the part should be removed
-        let request_virtual_uri = "file:///.kakehashi/abc123/region-0.lua";
-        let different_virtual_uri = "file:///.kakehashi/abc123/region-1.lua"; // Different region
+        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
+        let different_virtual_uri = "file:///project/kakehashi-virtual-uri-region-1.lua"; // Different region
         let host_uri = "file:///test.md";
         let response = json!({
             "jsonrpc": "2.0",
@@ -2775,7 +2783,7 @@ mod tests {
     fn inlay_hint_label_part_real_file_uri_preserved_unchanged() {
         // When location.uri is a real file (not virtual), it should be preserved as-is
         // Note: Real file URIs don't have ranges transformed (they reference real file positions)
-        let request_virtual_uri = "file:///.kakehashi/abc123/region-0.lua";
+        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let real_file_uri = "file:///usr/local/lib/lua/5.4/types.lua"; // External library file
         let host_uri = "file:///test.md";
         let response = json!({
@@ -2815,7 +2823,7 @@ mod tests {
     #[test]
     fn inlay_hint_label_part_without_location_preserved_unchanged() {
         // Label parts with only value/tooltip/command (no location) should be preserved
-        let request_virtual_uri = "file:///.kakehashi/abc123/region-0.lua";
+        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let host_uri = "file:///test.md";
         let response = json!({
             "jsonrpc": "2.0",
@@ -3388,7 +3396,7 @@ mod tests {
                         "relatedInformation": [
                             {
                                 "location": {
-                                    "uri": "file:///.kakehashi/lua/region-0/test.lua",
+                                    "uri": "file:///lua/kakehashi-virtual-uri-region-0.lua",
                                     "range": {
                                         "start": { "line": 5, "character": 0 },
                                         "end": { "line": 5, "character": 5 }
@@ -3443,7 +3451,7 @@ mod tests {
                         "relatedInformation": [
                             {
                                 "location": {
-                                    "uri": "file:///.kakehashi/lua/region-0/test.lua",
+                                    "uri": "file:///lua/kakehashi-virtual-uri-region-0.lua",
                                     "range": {
                                         "start": { "line": 5, "character": 0 },
                                         "end": { "line": 5, "character": 5 }
@@ -3453,7 +3461,7 @@ mod tests {
                             },
                             {
                                 "location": {
-                                    "uri": "file:///.kakehashi/python/region-1/main.py",
+                                    "uri": "file:///python/kakehashi-virtual-uri-region-1.py",
                                     "range": {
                                         "start": { "line": 10, "character": 0 },
                                         "end": { "line": 10, "character": 5 }
