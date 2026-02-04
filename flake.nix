@@ -10,8 +10,15 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+      rust-overlay,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
@@ -19,7 +26,11 @@
         };
         # Rust 2024 edition requires nightly or recent stable
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-          extensions = [ "rust-src" "rust-analyzer" "clippy" ];
+          extensions = [
+            "rust-src"
+            "rust-analyzer"
+            "clippy"
+          ];
         };
 
         # Tree-sitter grammars for testing (each includes parser + queries)
@@ -41,18 +52,18 @@
 
         # Combined tree-sitter directory with all grammars
         # Structure: parser/<lang>.so, queries/<lang>/*.scm
-        treeSitterCombined = pkgs.runCommand "tree-sitter-grammars-combined" {} ''
+        treeSitterCombined = pkgs.runCommand "tree-sitter-grammars-combined" { } ''
           mkdir -p $out/parser $out/queries
-          ${pkgs.lib.concatMapStringsSep "\n" (grammar:
+          ${pkgs.lib.concatMapStringsSep "\n" (
+            grammar:
             let
               # Extract language name from package name (e.g., tree-sitter-lua-0.0.19... -> lua)
               name = grammar.pname or (builtins.baseNameOf grammar);
-              lang = builtins.replaceStrings ["tree-sitter-"] [""] (
-                pkgs.lib.removeSuffix "-grammar" name
-              );
+              lang = builtins.replaceStrings [ "tree-sitter-" ] [ "" ] (pkgs.lib.removeSuffix "-grammar" name);
               # Normalize: markdown-inline -> markdown_inline (underscores for file names)
-              normalizedLang = builtins.replaceStrings ["-"] ["_"] lang;
-            in ''
+              normalizedLang = builtins.replaceStrings [ "-" ] [ "_" ] lang;
+            in
+            ''
               # ${lang}
               if [ -f "${grammar}/parser" ]; then
                 ln -sf "${grammar}/parser" "$out/parser/${normalizedLang}.so"
@@ -69,31 +80,33 @@
       in
       {
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            # Rust toolchain
-            rustToolchain
+          buildInputs =
+            with pkgs;
+            [
+              # Rust toolchain
+              rustToolchain
 
-            # Build dependencies
-            pkg-config
-            openssl
+              # Build dependencies
+              pkg-config
+              openssl
 
-            # Tree-sitter CLI (for parser compilation)
-            tree-sitter
+              # Tree-sitter CLI (for parser compilation)
+              tree-sitter
 
-            # Development tools
-            cargo-watch
-            cargo-edit
+              # Development tools
+              cargo-watch
+              cargo-edit
 
-            # For Neovim integration testing
-            neovim
-            vimPlugins.mini-nvim  # Test framework
-            git
-          ]
+              # For Neovim integration testing
+              neovim
+              vimPlugins.mini-nvim # Test framework
+              git
+            ]
             ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            # macOS-specific dependencies
-            pkgs.apple-sdk_15
-            pkgs.libiconv
-          ];
+              # macOS-specific dependencies
+              pkgs.apple-sdk_15
+              pkgs.libiconv
+            ];
 
           shellHook = ''
             echo "kakehashi development environment"
@@ -132,12 +145,15 @@
             pkg-config
           ];
 
-          buildInputs = with pkgs; [
-            openssl
-          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.apple-sdk_15
-            pkgs.libiconv
-          ];
+          buildInputs =
+            with pkgs;
+            [
+              openssl
+            ]
+            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+              pkgs.apple-sdk_15
+              pkgs.libiconv
+            ];
 
           meta = with pkgs.lib; {
             description = "kakehashi - A Tree-sitter Language Server";
