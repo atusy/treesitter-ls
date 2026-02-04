@@ -689,8 +689,8 @@ mod tests {
             "file:///project/kakehashi.config.lua"
         ));
 
-        // File with only one dot after .kakehashi (not enough for valid format)
-        // Valid format needs: kakehashi-virtual-uri-{region_id}.{ext} = at least 2 dots after .kakehashi
+        // Filename without extension after the prefix is rejected
+        // Valid format: kakehashi-virtual-uri-{region_id}.{ext} requires a dot after the prefix
         assert!(!VirtualDocumentUri::is_virtual_uri(
             "file:///project/kakehashi-virtual-uri-lua"
         ));
