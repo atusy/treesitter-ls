@@ -89,24 +89,6 @@ impl VirtualDocumentUri {
             && filename[VIRTUAL_URI_PREFIX.len()..].contains('.')
     }
 
-    /// Extract the parent directory path from a file URI.
-    ///
-    /// Given a URI like `file:///project/docs/README.md`, returns `/project/docs`.
-    /// For root-level files like `file:///README.md`, returns empty string (caller adds `/`).
-    ///
-    /// Preserves percent-encoding in the path (e.g., `%20` for spaces).
-    fn extract_parent_directory(uri_str: &str) -> &str {
-        // Strip "file://" prefix to get the path
-        let path = uri_str.strip_prefix("file://").unwrap_or(uri_str);
-
-        // Find the last '/' to get the parent directory
-        match path.rfind('/') {
-            Some(0) => "", // Root directory (e.g., "/README.md" -> "" so file:// + "" + / works)
-            Some(pos) => &path[..pos],
-            None => "", // Fallback to root if no slash found
-        }
-    }
-
     /// Convert to a URI string.
     ///
     /// Format: `file:///{host_dir}/kakehashi-virtual-uri-{region_id}.{ext}`
@@ -122,48 +104,29 @@ impl VirtualDocumentUri {
     /// The file extension is derived from the language to help downstream language servers
     /// recognize the file type (e.g., lua-language-server needs `.lua` extension).
     ///
-    /// The region_id is percent-encoded to ensure URI-safe characters. While ULIDs
-    /// only contain alphanumeric characters, this provides defense-in-depth.
+    /// The region_id is percent-encoded by the url crate to ensure URI-safe characters.
+    /// While ULIDs only contain alphanumeric characters, this provides defense-in-depth.
     pub(crate) fn to_uri_string(&self) -> String {
+        // Parse the host URI using the url crate for proper handling
+        let Ok(mut url) = url::Url::parse(self.host_uri.as_str()) else {
+            // Fallback for unparseable URIs (shouldn't happen with valid file:// URIs)
+            return self.host_uri.to_string();
+        };
+
         // Get file extension for the language
         let extension = Self::language_to_extension(&self.language);
 
-        // Percent-encode region_id to ensure URI-safe characters
-        // RFC 3986 unreserved characters: A-Z a-z 0-9 - . _ ~
-        let encoded_region_id = Self::percent_encode_path_segment(&self.region_id);
+        // Build the virtual filename (url crate handles percent-encoding)
+        let virtual_filename = format!("{VIRTUAL_URI_PREFIX}{}.{extension}", self.region_id);
 
-        // Extract parent directory from host URI
-        let parent_path = Self::extract_parent_directory(self.host_uri.as_str());
-
-        // Create a file:// URI with virtual file in host's directory
-        // Format: file:///{parent_path}/{VIRTUAL_URI_PREFIX}{region_id}.{ext}
-        format!("file://{parent_path}/{VIRTUAL_URI_PREFIX}{encoded_region_id}.{extension}")
-    }
-
-    /// Percent-encode a string for use in a URI path segment.
-    ///
-    /// Encodes all characters except RFC 3986 unreserved characters:
-    /// `A-Z a-z 0-9 - . _ ~`
-    ///
-    /// Multi-byte UTF-8 characters are encoded byte-by-byte, producing valid
-    /// percent-encoded sequences (e.g., "日" → "%E6%97%A5").
-    ///
-    /// # Note
-    /// This function is primarily used for defense-in-depth since region_id values
-    /// are ULIDs (alphanumeric only), but it ensures URI safety if the format changes.
-    pub(super) fn percent_encode_path_segment(s: &str) -> String {
-        let mut encoded = String::with_capacity(s.len());
-        for byte in s.bytes() {
-            match byte {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                    encoded.push(byte as char);
-                }
-                _ => {
-                    encoded.push_str(&format!("%{:02X}", byte));
-                }
-            }
+        // Use url crate's path_segments_mut to properly handle the path
+        // This correctly handles edge cases like root paths and percent-encoding
+        if let Ok(mut segments) = url.path_segments_mut() {
+            segments.pop(); // Remove the host filename
+            segments.push(&virtual_filename); // Add the virtual filename
         }
-        encoded
+
+        url.to_string()
     }
 
     /// Map language name to file extension.
@@ -222,43 +185,6 @@ mod tests {
     // Helper function to convert url::Url to tower_lsp_server::ls_types::Uri for tests
     fn url_to_uri(url: &Url) -> Uri {
         crate::lsp::lsp_impl::url_to_uri(url).expect("test URL should convert to URI")
-    }
-
-    // ==========================================================================
-    // extract_parent_directory tests
-    // ==========================================================================
-
-    #[test]
-    fn extract_parent_directory_from_file_uri() {
-        assert_eq!(
-            VirtualDocumentUri::extract_parent_directory("file:///project/docs/README.md"),
-            "/project/docs"
-        );
-    }
-
-    #[test]
-    fn extract_parent_directory_from_root_file() {
-        // Root returns empty string so file:// + "" + / = file:///
-        assert_eq!(
-            VirtualDocumentUri::extract_parent_directory("file:///README.md"),
-            ""
-        );
-    }
-
-    #[test]
-    fn extract_parent_directory_preserves_percent_encoding() {
-        assert_eq!(
-            VirtualDocumentUri::extract_parent_directory("file:///my%20project/docs/file.md"),
-            "/my%20project/docs"
-        );
-    }
-
-    #[test]
-    fn extract_parent_directory_windows_path() {
-        assert_eq!(
-            VirtualDocumentUri::extract_parent_directory("file:///C:/Users/dev/project/file.md"),
-            "/C:/Users/dev/project"
-        );
     }
 
     // ==========================================================================
@@ -527,71 +453,6 @@ mod tests {
     fn panics_on_empty_region_id_in_debug() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
         let _ = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "");
-    }
-
-    #[test]
-    fn percent_encode_preserves_unreserved_characters() {
-        // RFC 3986 unreserved: ALPHA / DIGIT / "-" / "." / "_" / "~"
-        let input = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
-        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
-        assert_eq!(
-            encoded, input,
-            "Unreserved characters should not be encoded"
-        );
-    }
-
-    #[test]
-    fn percent_encode_encodes_reserved_characters() {
-        // Some reserved characters that need encoding in path segments
-        let input = "test/path?query#fragment";
-        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
-        assert_eq!(
-            encoded, "test%2Fpath%3Fquery%23fragment",
-            "Reserved characters should be percent-encoded"
-        );
-    }
-
-    #[test]
-    fn percent_encode_encodes_space() {
-        let input = "hello world";
-        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
-        assert_eq!(encoded, "hello%20world", "Space should be encoded as %20");
-    }
-
-    #[test]
-    fn percent_encode_handles_multibyte_utf8() {
-        // UTF-8 multi-byte characters should have each byte percent-encoded
-        // "日" (U+65E5) = E6 97 A5 in UTF-8
-        let input = "日";
-        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
-        assert_eq!(
-            encoded, "%E6%97%A5",
-            "Multi-byte UTF-8 should encode each byte"
-        );
-    }
-
-    #[test]
-    fn percent_encode_handles_mixed_ascii_and_utf8() {
-        // Mix of ASCII alphanumerics (preserved) and UTF-8 (encoded)
-        let input = "region-日本語-test";
-        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
-        // "日" = E6 97 A5, "本" = E6 9C AC, "語" = E8 AA 9E
-        assert_eq!(
-            encoded, "region-%E6%97%A5%E6%9C%AC%E8%AA%9E-test",
-            "Mixed content should preserve ASCII and encode UTF-8"
-        );
-    }
-
-    #[test]
-    fn percent_encode_handles_emoji() {
-        // Emoji are 4-byte UTF-8 sequences
-        // "🦀" (U+1F980) = F0 9F A6 80 in UTF-8
-        let input = "rust🦀";
-        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
-        assert_eq!(
-            encoded, "rust%F0%9F%A6%80",
-            "4-byte UTF-8 (emoji) should encode all bytes"
-        );
     }
 
     #[test]
