@@ -117,6 +117,8 @@
           MINI_NVIM = "${pkgs.vimPlugins.mini-nvim}";
         };
 
+        formatter = pkgs.nixfmt-tree;
+
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "kakehashi";
           version = (pkgs.lib.importTOML ./Cargo.toml).package.version;
