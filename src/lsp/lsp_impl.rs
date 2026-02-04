@@ -843,29 +843,39 @@ impl LanguageServer for Kakehashi {
             .log_info("Received initialization request")
             .await;
 
-        // Get root URI from workspace folders (for downstream servers)
-        let root_uri_for_bridge: Option<String> = params
-            .workspace_folders
-            .as_ref()
-            .and_then(|folders| folders.first())
-            .map(|folder| folder.uri.to_string());
+        // Extract first workspace folder for reuse
+        let first_folder = params.workspace_folders.as_ref().and_then(|f| f.first());
+
+        // Get root URI from workspace folders or deprecated root_uri (for downstream servers)
+        #[allow(deprecated)]
+        let root_uri_for_bridge: Option<String> = first_folder
+            .map(|f| f.uri.to_string())
+            .or_else(|| params.root_uri.as_ref().map(|uri| uri.to_string()));
 
         // Forward root_uri to bridge pool for downstream server initialization
         self.bridge.pool().set_root_uri(root_uri_for_bridge);
 
-        // Get root path from workspace folders or current directory
-        let root_path = params
-            .workspace_folders
-            .as_ref()
-            .and_then(|folders| folders.first())
-            .and_then(|folder| uri_to_url(&folder.uri).ok())
+        // Get root path from workspace folders, deprecated root_uri, or current directory
+        #[allow(deprecated)]
+        let root_path = first_folder
+            .and_then(|f| uri_to_url(&f.uri).ok())
             .and_then(|url| url.to_file_path().ok())
+            .or_else(|| {
+                params
+                    .root_uri
+                    .as_ref()
+                    .and_then(|uri| uri_to_url(uri).ok())
+                    .and_then(|url| url.to_file_path().ok())
+            })
             .or_else(|| std::env::current_dir().ok());
 
         // Store root path for later use and log the source
+        #[allow(deprecated)]
         if let Some(ref path) = root_path {
             let source = if params.workspace_folders.is_some() {
                 "workspace folders"
+            } else if params.root_uri.is_some() {
+                "root_uri (deprecated)"
             } else {
                 "current working directory (fallback)"
             };
