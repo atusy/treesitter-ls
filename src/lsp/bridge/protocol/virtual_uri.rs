@@ -726,4 +726,46 @@ mod tests {
             "file:///project/kakehashi-virtual-uri-lua"
         ));
     }
+
+    #[test]
+    fn is_virtual_uri_handles_query_strings_and_fragments() {
+        // URIs with query strings - filename extraction should ignore query
+        assert!(VirtualDocumentUri::is_virtual_uri(
+            "file:///project/kakehashi-virtual-uri-REGION.lua?query=value"
+        ));
+
+        // URIs with fragments - filename extraction should ignore fragment
+        assert!(VirtualDocumentUri::is_virtual_uri(
+            "file:///project/kakehashi-virtual-uri-REGION.lua#section"
+        ));
+
+        // URIs with both query and fragment
+        assert!(VirtualDocumentUri::is_virtual_uri(
+            "file:///project/kakehashi-virtual-uri-REGION.lua?query=value#section"
+        ));
+
+        // Edge case: query string contains a slash - should NOT confuse filename extraction
+        // The rsplit('/') approach would incorrectly extract "bar" as the filename
+        assert!(VirtualDocumentUri::is_virtual_uri(
+            "file:///project/kakehashi-virtual-uri-REGION.lua?path=/foo/bar"
+        ));
+    }
+
+    #[test]
+    fn is_virtual_uri_handles_percent_encoded_slashes_in_filename() {
+        // A filename with a percent-encoded slash (%2F) should NOT be split on that "slash"
+        // This tests that we use proper URL parsing, not naive string splitting
+        // kakehashi-virtual-uri-region%2Fsubregion.lua is ONE filename, not a path
+        assert!(VirtualDocumentUri::is_virtual_uri(
+            "file:///project/kakehashi-virtual-uri-region%2Fsubregion.lua"
+        ));
+    }
+
+    #[test]
+    fn is_virtual_uri_handles_malformed_uris_gracefully() {
+        // Non-URL strings should not panic, just return false
+        assert!(!VirtualDocumentUri::is_virtual_uri("not a url"));
+        assert!(!VirtualDocumentUri::is_virtual_uri(""));
+        assert!(!VirtualDocumentUri::is_virtual_uri("://missing-scheme"));
+    }
 }
