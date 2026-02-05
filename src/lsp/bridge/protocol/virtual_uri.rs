@@ -167,36 +167,19 @@ impl VirtualDocumentUri {
     /// (e.g., "zig" → ".zig", "nix" → ".nix").
     fn language_to_extension(language: &str) -> &str {
         match language {
-            "lua" => "lua",
             "python" => "py",
             "rust" => "rs",
             "javascript" => "js",
             "typescript" => "ts",
-            "go" => "go",
-            "c" => "c",
-            "cpp" => "cpp",
-            "java" => "java",
             "ruby" => "rb",
-            "php" => "php",
-            "swift" => "swift",
             "kotlin" => "kt",
-            "scala" => "scala",
             "haskell" => "hs",
             "ocaml" => "ml",
             "elixir" => "ex",
             "erlang" => "erl",
             "clojure" => "clj",
-            "r" => "r",
             "julia" => "jl",
-            "sql" => "sql",
-            "html" => "html",
-            "css" => "css",
-            "json" => "json",
-            "yaml" => "yaml",
-            "toml" => "toml",
-            "xml" => "xml",
             "markdown" => "md",
-            "bash" | "sh" => "sh",
             "powershell" => "ps1",
             _ => language, // Use language name as extension
         }
@@ -450,7 +433,7 @@ mod tests {
             ("cpp", "cpp"),
             ("java", "java"),
             ("ruby", "rb"),
-            ("bash", "sh"),
+            ("bash", "bash"),
             ("sh", "sh"),
         ];
 
