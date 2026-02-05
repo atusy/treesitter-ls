@@ -92,7 +92,7 @@ impl LanguageServerPool {
                 Ok(result) => result,
                 Err(e) => {
                     // Clean up the pool registration on failure
-                    self.unregister_upstream_request(&upstream_request_id);
+                    self.unregister_upstream_request(&upstream_request_id, server_name);
                     return Err(e);
                 }
             };
@@ -110,7 +110,7 @@ impl LanguageServerPool {
         // Use a closure for cleanup on any failure path
         let cleanup = || {
             handle.router().remove(request_id);
-            self.unregister_upstream_request(&upstream_request_id);
+            self.unregister_upstream_request(&upstream_request_id, server_name);
         };
 
         // Send didOpen notification only if document hasn't been opened yet
@@ -146,7 +146,7 @@ impl LanguageServerPool {
         let response = handle.wait_for_response(request_id, response_rx).await;
 
         // Unregister from the upstream request registry regardless of result
-        self.unregister_upstream_request(&upstream_request_id);
+        self.unregister_upstream_request(&upstream_request_id, server_name);
 
         // Transform response to host coordinates
         Ok(transform_diagnostic_response_to_host(response?, &context))

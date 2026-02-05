@@ -333,16 +333,7 @@ impl Kakehashi {
         // 2. RequestIdCapture middleware notifies our cancel_rx via CancelForwarder
         // 3. tokio::select! triggers cancel branch, drops JoinSet (aborts all tasks)
         // 4. Handler returns RequestCancelled error to client
-        // 5. Middleware forwards cancel to downstream servers (best-effort, fire-and-forget)
-        //
-        // LIMITATION (downstream cancel propagation):
-        // The current upstream_request_registry maps each upstream ID to a single server_name.
-        // When multiple regions use different downstream servers, only the last registered
-        // server receives the cancel notification. This is acceptable because:
-        // - Upstream cancel (this handler aborting) works correctly for ALL servers
-        // - Downstream cancel forwarding is best-effort per LSP spec
-        // - The JoinSet drop aborts tasks regardless of downstream cancel delivery
-        // TODO: For full multi-server downstream cancel, refactor registry to HashMap<Id, Vec<String>>
+        // 5. Middleware forwards cancel to ALL downstream servers via HashSet registry
         let upstream_request_id = match get_current_request_id() {
             Some(tower_lsp_server::jsonrpc::Id::Number(n)) => UpstreamId::Number(n),
             Some(tower_lsp_server::jsonrpc::Id::String(s)) => UpstreamId::String(s),

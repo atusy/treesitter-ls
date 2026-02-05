@@ -530,3 +530,156 @@ print(x, y, z)
     // Clean shutdown
     shutdown_client(&mut client);
 }
+
+/// E2E test: diagnostic cancel with multiple injection regions.
+///
+/// This test verifies that when a diagnostic request involves multiple
+/// injection regions (all using the same language server), cancel forwarding
+/// still works correctly with the HashSet-based registry.
+///
+/// Note: Full multi-server testing (e.g., Lua + Python in the same document)
+/// requires both lua-language-server and pyright to be installed. The unit
+/// tests in pool.rs comprehensively test the multi-server HashSet behavior.
+///
+/// Setup:
+/// - Markdown document with multiple Lua code blocks
+/// - lua-language-server configured
+///
+/// Test:
+/// 1. Open document with multiple injection regions
+/// 2. Send diagnostic request
+/// 3. Immediately send $/cancelRequest
+/// 4. Verify either RequestCancelled or normal response
+/// 5. Verify server is still operational
+#[test]
+fn e2e_diagnostic_cancel_multi_region_same_server() {
+    if skip_if_lua_ls_unavailable() {
+        return;
+    }
+
+    let mut client = LspClient::new();
+
+    // Initialize with lua-language-server configuration
+    let _init_response = client.send_request(
+        "initialize",
+        json!({
+            "processId": std::process::id(),
+            "rootUri": null,
+            "capabilities": {},
+            "initializationOptions": {
+                "languageServers": {
+                    "lua-language-server": {
+                        "cmd": ["lua-language-server"],
+                        "languages": ["lua"]
+                    }
+                }
+            }
+        }),
+    );
+    client.send_notification("initialized", json!({}));
+
+    // Open markdown with multiple Lua code blocks
+    // This creates multiple injection regions, each registering with the HashSet
+    let markdown_content = r#"# Multi-Region Document
+
+```lua
+-- Region 1
+local function func1()
+    return 1
+end
+```
+
+Some text between regions.
+
+```lua
+-- Region 2
+local function func2()
+    return 2
+end
+```
+
+More text.
+
+```lua
+-- Region 3
+local function func3()
+    return 3
+end
+```
+"#;
+
+    let markdown_uri = "file:///test_multi_region_cancel.md";
+
+    client.send_notification(
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": markdown_uri,
+                "languageId": "markdown",
+                "version": 1,
+                "text": markdown_content
+            }
+        }),
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Send diagnostic request
+    let request_id = client.send_request_async(
+        "textDocument/diagnostic",
+        json!({
+            "textDocument": { "uri": markdown_uri }
+        }),
+    );
+
+    println!("Sent diagnostic request with id: {}", request_id);
+
+    // Immediately send cancel
+    client.send_notification("$/cancelRequest", json!({ "id": request_id }));
+
+    println!("Sent $/cancelRequest for id: {}", request_id);
+
+    // Wait for response
+    let response = client.receive_response_for_id_public(request_id);
+
+    println!("Received response: {:?}", response);
+
+    // Verify valid response (either cancelled or completed)
+    assert_eq!(
+        response.get("id").and_then(|id| id.as_i64()),
+        Some(request_id),
+        "Response should have matching id"
+    );
+
+    if let Some(error) = response.get("error") {
+        let error_code = error.get("code").and_then(|c| c.as_i64());
+        assert_eq!(
+            error_code,
+            Some(-32800),
+            "If error, should be RequestCancelled (-32800)"
+        );
+        println!("✓ E2E: Multi-region diagnostic was cancelled (got RequestCancelled)");
+    } else {
+        println!(
+            "✓ E2E: Multi-region diagnostic completed before cancel: {:?}",
+            response.get("result")
+        );
+    }
+
+    // Verify server still operational
+    let hover_response = client.send_request(
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": markdown_uri },
+            "position": { "line": 4, "character": 10 }
+        }),
+    );
+
+    assert!(
+        hover_response.get("id").is_some(),
+        "Server should still respond after multi-region cancel"
+    );
+    println!("✓ E2E: Server still operational after multi-region cancel");
+
+    shutdown_client(&mut client);
+}
