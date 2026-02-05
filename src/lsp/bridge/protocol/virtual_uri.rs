@@ -101,9 +101,12 @@ impl VirtualDocumentUri {
         };
 
         // Check for {VIRTUAL_URI_PREFIX}{region_id}.{ext} pattern
-        // Needs at least one dot after the prefix for the extension
+        // Requires non-empty extension after the last dot
         filename.starts_with(VIRTUAL_URI_PREFIX)
-            && filename[VIRTUAL_URI_PREFIX.len()..].contains('.')
+            && filename
+                .get(VIRTUAL_URI_PREFIX.len()..)
+                .and_then(|s| s.rsplit_once('.'))
+                .is_some_and(|(_name, ext)| !ext.is_empty())
     }
 
     /// Convert to a URI string.
