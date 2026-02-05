@@ -252,6 +252,76 @@ mod tests {
     }
 
     #[test]
+    fn to_uri_string_preserves_https_scheme() {
+        // https:// URIs should preserve scheme and path structure
+        let host_uri = Url::parse("https://example.com/path/to/file.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "REGION1");
+
+        let uri_string = virtual_uri.to_uri_string();
+
+        assert!(
+            uri_string.starts_with("https://example.com/path/to/kakehashi-virtual-uri-"),
+            "https:// URI should preserve scheme and host: {}",
+            uri_string
+        );
+        assert!(
+            uri_string.ends_with(".lua"),
+            "https:// URI should have language extension: {}",
+            uri_string
+        );
+    }
+
+    #[test]
+    fn to_uri_string_preserves_custom_scheme_with_authority() {
+        // Custom schemes with authority (special:///) should work like file://
+        let host_uri: Uri = "special:///path/to/file.md".parse().unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "python", "REGION2");
+
+        let uri_string = virtual_uri.to_uri_string();
+
+        assert!(
+            uri_string.starts_with("special:///path/to/kakehashi-virtual-uri-"),
+            "Custom scheme with authority should preserve scheme: {}",
+            uri_string
+        );
+        assert!(
+            uri_string.ends_with(".py"),
+            "Custom scheme URI should have language extension: {}",
+            uri_string
+        );
+    }
+
+    #[test]
+    fn to_uri_string_preserves_vscode_notebook_cell_scheme() {
+        // vscode-notebook-cell:// is used by VSCode for notebook cells
+        let host_uri: Uri = "vscode-notebook-cell://authority/path/to/notebook.ipynb#cell-id"
+            .parse()
+            .unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "python", "REGION3");
+
+        let uri_string = virtual_uri.to_uri_string();
+
+        assert!(
+            uri_string
+                .starts_with("vscode-notebook-cell://authority/path/to/kakehashi-virtual-uri-"),
+            "vscode-notebook-cell:// should preserve scheme and authority: {}",
+            uri_string
+        );
+        // Note: fragments are preserved by the url crate, so the URI ends with ".py#cell-id"
+        assert!(
+            uri_string.contains(".py"),
+            "vscode-notebook-cell:// URI should have language extension: {}",
+            uri_string
+        );
+        // Verify fragment is preserved (this is url crate behavior)
+        assert!(
+            uri_string.ends_with("#cell-id"),
+            "Fragment should be preserved: {}",
+            uri_string
+        );
+    }
+
+    #[test]
     fn to_uri_string_preserves_percent_encoding_in_path() {
         let host_uri = Url::parse("file:///my%20project/docs/file.md").unwrap();
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "REGION1");
