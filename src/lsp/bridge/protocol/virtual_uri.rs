@@ -124,35 +124,26 @@ impl VirtualDocumentUri {
     /// The region_id is percent-encoded by the url crate to ensure URI-safe characters.
     /// While ULIDs only contain alphanumeric characters, this provides defense-in-depth.
     pub(crate) fn to_uri_string(&self) -> String {
-        // Parse the host URI using the url crate for proper handling
-        let Ok(mut url) = url::Url::parse(self.host_uri.as_str()) else {
-            // Fallback for unparseable URIs (shouldn't happen with valid URIs)
-            return self.host_uri.to_string();
-        };
-
-        // Get file extension for the language
         let extension = Self::language_to_extension(&self.language);
-
-        // Build the virtual filename (url crate handles percent-encoding)
         let virtual_filename = format!("{VIRTUAL_URI_PREFIX}{}.{extension}", self.region_id);
 
-        // Try to modify path segments (works for file://, https://, etc.)
-        // Returns Err for cannot-be-a-base URIs (untitled:, mailto:, data:)
-        let can_modify = {
-            if let Ok(mut segments) = url.path_segments_mut() {
-                segments.pop(); // Remove the host filename
-                segments.push(&virtual_filename); // Add the virtual filename
-                true
-            } else {
-                false
-            }
-        };
+        // Try to parse and modify the host URI (works for file://, https://, etc.)
+        if let Ok(mut url) = url::Url::parse(self.host_uri.as_str()) {
+            // path_segments_mut() returns Err for cannot-be-a-base URIs (untitled:, mailto:, data:)
+            let modified = url
+                .path_segments_mut()
+                .map(|mut segments| {
+                    segments.pop(); // Remove the host filename
+                    segments.push(&virtual_filename); // Add the virtual filename
+                })
+                .is_ok();
 
-        if can_modify {
-            return url.to_string();
+            if modified {
+                return url.to_string();
+            }
         }
 
-        // Fallback for cannot-be-a-base URIs
+        // Fallback for cannot-be-a-base URIs or parse errors
         // Use kakehashi:// scheme with encoded host URI for traceability
         let encoded_host = percent_encoding::utf8_percent_encode(
             self.host_uri.as_str(),
