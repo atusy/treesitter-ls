@@ -692,6 +692,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn assert_uses_virtual_uri_handles_fragments() {
+        // URIs with fragments (e.g., vscode-notebook-cell://) preserve the fragment
+        // The helper should correctly detect the extension before the fragment
+        let request = serde_json::json!({
+            "params": {
+                "textDocument": {
+                    "uri": "vscode-notebook-cell://authority/path/kakehashi-virtual-uri-REGION.py#cell-id"
+                }
+            }
+        });
+
+        // This should pass - the extension is .py even though URI ends with #cell-id
+        assert_uses_virtual_uri(&request, "py");
+    }
+
     /// Assert that a position-based request has correct structure and translated coordinates.
     fn assert_position_request(
         request: &serde_json::Value,
