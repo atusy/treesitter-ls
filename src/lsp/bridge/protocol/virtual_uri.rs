@@ -529,6 +529,79 @@ mod tests {
         ));
     }
 
+    // ==========================================================================
+    // cannot-be-a-base URI fallback tests
+    // ==========================================================================
+
+    #[test]
+    fn to_uri_string_falls_back_to_kakehashi_scheme_for_cannot_be_a_base_uri() {
+        // "untitled:Untitled-1" is a cannot-be-a-base URI (no authority, opaque path)
+        // These are used by VSCode for unsaved files
+        let host_uri: Uri = "untitled:Untitled-1".parse().unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "REGION123");
+
+        let uri_string = virtual_uri.to_uri_string();
+
+        // Should use kakehashi:// scheme as fallback
+        assert!(
+            uri_string.starts_with("kakehashi:///virtual/"),
+            "Cannot-be-a-base URI should fall back to kakehashi:// scheme: {}",
+            uri_string
+        );
+        // Should contain encoded host URI for traceability
+        assert!(
+            uri_string.contains("untitled"),
+            "Fallback URI should contain encoded host URI: {}",
+            uri_string
+        );
+        // Should end with proper extension
+        assert!(
+            uri_string.ends_with(".lua"),
+            "Fallback URI should have language extension: {}",
+            uri_string
+        );
+        // Should contain the virtual filename with region_id
+        assert!(
+            uri_string.contains("kakehashi-virtual-uri-REGION123"),
+            "Fallback URI should contain virtual filename: {}",
+            uri_string
+        );
+    }
+
+    #[test]
+    fn to_uri_string_fallback_produces_valid_uri() {
+        let host_uri: Uri = "untitled:Untitled-1".parse().unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "python", "REGION456");
+
+        let uri_string = virtual_uri.to_uri_string();
+
+        // Verify the output is a valid URL that can be parsed
+        let parsed = Url::parse(&uri_string);
+        assert!(
+            parsed.is_ok(),
+            "Fallback URI should be a valid URL: {}",
+            uri_string
+        );
+
+        let parsed = parsed.unwrap();
+        assert_eq!(parsed.scheme(), "kakehashi");
+    }
+
+    #[test]
+    fn to_uri_string_fallback_is_detected_as_virtual_uri() {
+        let host_uri: Uri = "untitled:Untitled-1".parse().unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "REGION789");
+
+        let uri_string = virtual_uri.to_uri_string();
+
+        // The fallback URI should still be detected by is_virtual_uri
+        assert!(
+            VirtualDocumentUri::is_virtual_uri(&uri_string),
+            "Fallback URI should be detected as virtual: {}",
+            uri_string
+        );
+    }
+
     #[test]
     fn is_virtual_uri_rejects_real_uris() {
         // Normal files
