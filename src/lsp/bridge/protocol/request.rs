@@ -681,13 +681,35 @@ mod tests {
     /// Assert that a request uses a virtual URI with the expected extension.
     fn assert_uses_virtual_uri(request: &serde_json::Value, extension: &str) {
         let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
+        // Use url crate for robust parsing (handles query strings with slashes, fragments, etc.)
+        let url = url::Url::parse(uri_str).expect("URI should be parseable");
+        let filename = url
+            .path_segments()
+            .and_then(|mut s| s.next_back())
+            .unwrap_or("");
         assert!(
-            uri_str.starts_with("file:///.kakehashi/")
-                && uri_str.ends_with(&format!(".{}", extension)),
+            filename.starts_with("kakehashi-virtual-uri-")
+                && filename.ends_with(&format!(".{}", extension)),
             "Request should use virtual URI with .{} extension: {}",
             extension,
             uri_str
         );
+    }
+
+    #[test]
+    fn assert_uses_virtual_uri_handles_fragments() {
+        // URIs with fragments (e.g., vscode-notebook-cell://) preserve the fragment
+        // The helper should correctly detect the extension before the fragment
+        let request = serde_json::json!({
+            "params": {
+                "textDocument": {
+                    "uri": "vscode-notebook-cell://authority/path/kakehashi-virtual-uri-REGION.py#cell-id"
+                }
+            }
+        });
+
+        // This should pass - the extension is .py even though URI ends with #cell-id
+        assert_uses_virtual_uri(&request, "py");
     }
 
     /// Assert that a position-based request has correct structure and translated coordinates.

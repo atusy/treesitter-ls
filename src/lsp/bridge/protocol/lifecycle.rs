@@ -10,9 +10,11 @@ use super::request_id::RequestId;
 /// # Arguments
 /// * `request_id` - The JSON-RPC request ID
 /// * `initialization_options` - Server-specific initialization options
+/// * `root_uri` - The workspace root URI (forwarded from upstream client)
 pub(crate) fn build_initialize_request(
     request_id: RequestId,
     initialization_options: Option<serde_json::Value>,
+    root_uri: Option<String>,
 ) -> serde_json::Value {
     serde_json::json!({
         "jsonrpc": "2.0",
@@ -20,7 +22,7 @@ pub(crate) fn build_initialize_request(
         "method": "initialize",
         "params": {
             "processId": std::process::id(),
-            "rootUri": null,
+            "rootUri": root_uri,
             "capabilities": {},
             "initializationOptions": initialization_options
         }
@@ -122,7 +124,7 @@ mod tests {
 
     #[test]
     fn initialize_request_has_correct_structure() {
-        let request = build_initialize_request(RequestId::new(1), None);
+        let request = build_initialize_request(RequestId::new(1), None, None);
 
         assert_eq!(request["jsonrpc"], "2.0");
         assert_eq!(request["id"], 1);
@@ -142,10 +144,25 @@ mod tests {
                 }
             }
         });
-        let request = build_initialize_request(RequestId::new(42), Some(options.clone()));
+        let request = build_initialize_request(RequestId::new(42), Some(options.clone()), None);
 
         assert_eq!(request["id"], 42);
         assert_eq!(request["params"]["initializationOptions"], options);
+    }
+
+    #[test]
+    fn initialize_request_includes_root_uri_when_provided() {
+        let root_uri = "file:///home/user/project";
+        let request = build_initialize_request(RequestId::new(1), None, Some(root_uri.to_string()));
+
+        assert_eq!(request["params"]["rootUri"], root_uri);
+    }
+
+    #[test]
+    fn initialize_request_has_null_root_uri_when_not_provided() {
+        let request = build_initialize_request(RequestId::new(1), None, None);
+
+        assert!(request["params"]["rootUri"].is_null());
     }
 
     #[test]
@@ -193,7 +210,7 @@ mod tests {
 
     #[test]
     fn didclose_notification_with_virtual_uri() {
-        let uri = "file:///.kakehashi/lua/abc123.lua";
+        let uri = "file:///project/kakehashi-virtual-uri-abc123.lua";
         let notification = build_didclose_notification(uri);
 
         assert_eq!(notification["params"]["textDocument"]["uri"], uri);

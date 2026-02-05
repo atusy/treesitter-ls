@@ -1,20 +1,32 @@
 //! Virtual document URI for injection regions.
 //!
 //! This module provides the `VirtualDocumentUri` type for encoding host URI,
-//! injection language, and region ID into a file:// URI that downstream
-//! language servers can use to identify virtual documents.
+//! injection language, and region ID into a URI that downstream language
+//! servers can use to identify virtual documents.
+//!
+//! For most URIs (file://, https://, etc.), the virtual URI preserves the
+//! original scheme and directory. For "cannot-be-a-base" URIs (untitled:,
+//! mailto:, data:), a kakehashi:// scheme fallback is used.
+
+/// Prefix used for virtual document filenames.
+///
+/// This distinctive prefix identifies virtual URIs and prevents collisions with real files.
+const VIRTUAL_URI_PREFIX: &str = "kakehashi-virtual-uri-";
 
 /// Virtual document URI for injection regions.
 ///
-/// Encodes host URI + injection language + region ID into a file:// URI
-/// that downstream language servers can use to identify virtual documents.
+/// Encodes host URI + injection language + region ID into a URI that
+/// downstream language servers can use to identify virtual documents.
 ///
-/// Format: `file:///.kakehashi/{host_hash}/{region_id}.{ext}`
+/// ## URI Format
 ///
-/// Example: `file:///.kakehashi/a1b2c3d4e5f6/region-0.lua`
+/// For normal URIs (file://, https://, etc.):
+/// - Format: `{scheme}:///{host_dir}/kakehashi-virtual-uri-{region_id}.{ext}`
+/// - Example: `file:///project/docs/kakehashi-virtual-uri-01ARZ3NDEKTSV4.lua`
 ///
-/// The file:// scheme is used for compatibility with language servers that
-/// only support file:// URIs (e.g., lua-language-server).
+/// For cannot-be-a-base URIs (untitled:, mailto:, data:):
+/// - Format: `kakehashi:///virtual/{encoded_host}/kakehashi-virtual-uri-{region_id}.{ext}`
+/// - Example: `kakehashi:///virtual/untitled%3AUntitled-1/kakehashi-virtual-uri-REGION.lua`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VirtualDocumentUri {
     host_uri: tower_lsp_server::ls_types::Uri,
@@ -66,86 +78,81 @@ impl VirtualDocumentUri {
         &self.language
     }
 
-    /// The URI prefix used by all virtual documents.
-    ///
-    /// Virtual URIs use a root-relative path (`/.kakehashi/`) to avoid
-    /// collision with real file paths that might contain `.kakehashi`
-    /// in user directories (e.g., `~/.kakehashi/config.lua`).
-    const URI_PREFIX: &'static str = "file:///.kakehashi/";
-
     /// Check if a URI string represents a virtual document.
     ///
-    /// Virtual document URIs have the pattern `file:///.kakehashi/{hash}/{region_id}.{ext}`.
+    /// Virtual document URIs have the filename pattern `kakehashi-virtual-uri-{region_id}.{ext}`.
     /// This is used to distinguish virtual URIs from real file URIs in responses.
     ///
-    /// Uses a strict prefix check to avoid false positives for real files that happen
-    /// to be in a directory named `.kakehashi`.
+    /// Checks the filename (not path) for the `kakehashi-virtual-uri-` prefix with at least
+    /// one `.` for the extension. The prefix is distinctive enough to avoid false positives
+    /// with real files.
+    ///
+    /// Uses proper URL parsing to handle edge cases like query strings containing slashes
+    /// (e.g., `?path=/foo/bar`) which would confuse naive string splitting.
     pub(crate) fn is_virtual_uri(uri: &str) -> bool {
-        uri.starts_with(Self::URI_PREFIX)
+        // Parse URI using the url crate for proper RFC 3986 handling
+        let Ok(url) = url::Url::parse(uri) else {
+            return false;
+        };
+
+        // Extract the last path segment (filename)
+        let Some(filename) = url.path_segments().and_then(|mut s| s.next_back()) else {
+            return false;
+        };
+
+        // Check for {VIRTUAL_URI_PREFIX}{region_id}.{ext} pattern
+        // Requires non-empty extension after the last dot
+        filename.starts_with(VIRTUAL_URI_PREFIX)
+            && filename
+                .get(VIRTUAL_URI_PREFIX.len()..)
+                .and_then(|s| s.rsplit_once('.'))
+                .is_some_and(|(_name, ext)| !ext.is_empty())
     }
 
     /// Convert to a URI string.
     ///
-    /// Format: `file:///.kakehashi/{host_path_hash}/{region_id}.{ext}`
+    /// Format: `file:///{host_dir}/kakehashi-virtual-uri-{region_id}.{ext}`
     ///
-    /// Uses file:// scheme with a virtual path under .kakehashi directory.
-    /// This format is compatible with most language servers that expect file:// URIs.
+    /// Uses file:// scheme placing the virtual file in the same directory as the host
+    /// document. This enables downstream language servers to:
+    /// - Resolve relative imports (e.g., `from .utils import foo`)
+    /// - Find project configuration files (pyproject.toml, tsconfig.json, etc.)
+    ///
+    /// The `kakehashi-virtual-uri-` prefix is distinctive and unlikely to conflict with
+    /// real files. The region_id (ULID) provides global uniqueness.
+    ///
     /// The file extension is derived from the language to help downstream language servers
     /// recognize the file type (e.g., lua-language-server needs `.lua` extension).
     ///
-    /// The region_id is percent-encoded to ensure URI-safe characters. While ULIDs
-    /// only contain alphanumeric characters, this provides defense-in-depth.
+    /// The region_id is percent-encoded by the url crate to ensure URI-safe characters.
+    /// While ULIDs only contain alphanumeric characters, this provides defense-in-depth.
     pub(crate) fn to_uri_string(&self) -> String {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        // Hash the host URI to create a unique but deterministic directory name
-        let mut hasher = DefaultHasher::new();
-        self.host_uri.as_str().hash(&mut hasher);
-        let host_hash = hasher.finish();
-
-        // Get file extension for the language
         let extension = Self::language_to_extension(&self.language);
+        let virtual_filename = format!("{VIRTUAL_URI_PREFIX}{}.{extension}", self.region_id);
 
-        // Percent-encode region_id to ensure URI-safe characters
-        // RFC 3986 unreserved characters: A-Z a-z 0-9 - . _ ~
-        let encoded_region_id = Self::percent_encode_path_segment(&self.region_id);
+        // Try to parse and modify the host URI (works for file://, https://, etc.)
+        if let Ok(mut url) = url::Url::parse(self.host_uri.as_str()) {
+            // path_segments_mut() returns Err for cannot-be-a-base URIs (untitled:, mailto:, data:)
+            let modified = url
+                .path_segments_mut()
+                .map(|mut segments| {
+                    segments.pop(); // Remove the host filename
+                    segments.push(&virtual_filename); // Add the virtual filename
+                })
+                .is_ok();
 
-        // Create a file:// URI with a virtual path
-        // This allows downstream language servers to recognize the file type by extension
-        format!(
-            "{}{:x}/{}.{}",
-            Self::URI_PREFIX,
-            host_hash,
-            encoded_region_id,
-            extension
-        )
-    }
-
-    /// Percent-encode a string for use in a URI path segment.
-    ///
-    /// Encodes all characters except RFC 3986 unreserved characters:
-    /// `A-Z a-z 0-9 - . _ ~`
-    ///
-    /// Multi-byte UTF-8 characters are encoded byte-by-byte, producing valid
-    /// percent-encoded sequences (e.g., "日" → "%E6%97%A5").
-    ///
-    /// # Note
-    /// This function is primarily used for defense-in-depth since region_id values
-    /// are ULIDs (alphanumeric only), but it ensures URI safety if the format changes.
-    pub(super) fn percent_encode_path_segment(s: &str) -> String {
-        let mut encoded = String::with_capacity(s.len());
-        for byte in s.bytes() {
-            match byte {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                    encoded.push(byte as char);
-                }
-                _ => {
-                    encoded.push_str(&format!("%{:02X}", byte));
-                }
+            if modified {
+                return url.to_string();
             }
         }
-        encoded
+
+        // Fallback for cannot-be-a-base URIs or parse errors
+        // Use kakehashi:// scheme with encoded host URI for traceability
+        let encoded_host = percent_encoding::utf8_percent_encode(
+            self.host_uri.as_str(),
+            percent_encoding::NON_ALPHANUMERIC,
+        );
+        format!("kakehashi:///virtual/{encoded_host}/{virtual_filename}")
     }
 
     /// Map language name to file extension.
@@ -206,15 +213,128 @@ mod tests {
         crate::lsp::lsp_impl::url_to_uri(url).expect("test URL should convert to URI")
     }
 
+    // ==========================================================================
+    // to_uri_string tests
+    // ==========================================================================
+
     #[test]
-    fn uses_kakehashi_path_prefix() {
-        let host_uri = Url::parse("file:///project/doc.md").unwrap();
-        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "region-0");
+    fn to_uri_string_uses_host_directory() {
+        let host_uri = Url::parse("file:///project/docs/README.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "01ARZ3NDEKTSV4");
 
         let uri_string = virtual_uri.to_uri_string();
+
+        // Should be in same directory as host, with kakehashi-virtual-uri- prefix
         assert!(
-            uri_string.starts_with("file:///.kakehashi/"),
-            "URI should use file:///.kakehashi/ path: {}",
+            uri_string.starts_with("file:///project/docs/kakehashi-virtual-uri-"),
+            "URI should be in host directory with kakehashi-virtual-uri- prefix: {}",
+            uri_string
+        );
+        assert!(
+            uri_string.ends_with(".lua"),
+            "URI should have .lua extension: {}",
+            uri_string
+        );
+        // Verify full format
+        assert_eq!(
+            uri_string, "file:///project/docs/kakehashi-virtual-uri-01ARZ3NDEKTSV4.lua",
+            "URI should follow format: file:///<host_dir>/kakehashi-virtual-uri-<region_id>.<ext>"
+        );
+    }
+
+    #[test]
+    fn to_uri_string_root_level_host() {
+        let host_uri = Url::parse("file:///README.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "python", "REGION123");
+
+        let uri_string = virtual_uri.to_uri_string();
+
+        assert_eq!(
+            uri_string, "file:///kakehashi-virtual-uri-REGION123.py",
+            "Root-level host should produce root-level virtual URI"
+        );
+    }
+
+    #[test]
+    fn to_uri_string_preserves_https_scheme() {
+        // https:// URIs should preserve scheme and path structure
+        let host_uri = Url::parse("https://example.com/path/to/file.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "REGION1");
+
+        let uri_string = virtual_uri.to_uri_string();
+
+        assert!(
+            uri_string.starts_with("https://example.com/path/to/kakehashi-virtual-uri-"),
+            "https:// URI should preserve scheme and host: {}",
+            uri_string
+        );
+        assert!(
+            uri_string.ends_with(".lua"),
+            "https:// URI should have language extension: {}",
+            uri_string
+        );
+    }
+
+    #[test]
+    fn to_uri_string_preserves_custom_scheme_with_authority() {
+        // Custom schemes with authority (special:///) should work like file://
+        let host_uri: Uri = "special:///path/to/file.md".parse().unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "python", "REGION2");
+
+        let uri_string = virtual_uri.to_uri_string();
+
+        assert!(
+            uri_string.starts_with("special:///path/to/kakehashi-virtual-uri-"),
+            "Custom scheme with authority should preserve scheme: {}",
+            uri_string
+        );
+        assert!(
+            uri_string.ends_with(".py"),
+            "Custom scheme URI should have language extension: {}",
+            uri_string
+        );
+    }
+
+    #[test]
+    fn to_uri_string_preserves_vscode_notebook_cell_scheme() {
+        // vscode-notebook-cell:// is used by VSCode for notebook cells
+        let host_uri: Uri = "vscode-notebook-cell://authority/path/to/notebook.ipynb#cell-id"
+            .parse()
+            .unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "python", "REGION3");
+
+        let uri_string = virtual_uri.to_uri_string();
+
+        assert!(
+            uri_string
+                .starts_with("vscode-notebook-cell://authority/path/to/kakehashi-virtual-uri-"),
+            "vscode-notebook-cell:// should preserve scheme and authority: {}",
+            uri_string
+        );
+        // Note: fragments are preserved by the url crate, so the URI ends with ".py#cell-id"
+        assert!(
+            uri_string.contains(".py"),
+            "vscode-notebook-cell:// URI should have language extension: {}",
+            uri_string
+        );
+        // Verify fragment is preserved (this is url crate behavior)
+        assert!(
+            uri_string.ends_with("#cell-id"),
+            "Fragment should be preserved: {}",
+            uri_string
+        );
+    }
+
+    #[test]
+    fn to_uri_string_preserves_percent_encoding_in_path() {
+        let host_uri = Url::parse("file:///my%20project/docs/file.md").unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", "REGION1");
+
+        let uri_string = virtual_uri.to_uri_string();
+
+        assert!(
+            uri_string.starts_with("file:///my%20project/docs/kakehashi-virtual-uri-"),
+            "URI should preserve percent-encoding in path: {}",
             uri_string
         );
     }
@@ -368,16 +488,38 @@ mod tests {
     }
 
     #[test]
-    fn different_hosts_produce_different_hashes() {
+    fn same_region_id_in_same_directory_produces_identical_uri() {
+        // VirtualDocumentUri uses only the directory from host_uri, not the filename.
+        // This test verifies URI generation is deterministic: identical (directory,
+        // language, region_id) inputs produce identical output, regardless of which
+        // host document they came from.
+        //
+        // Note: In practice, region_ids are ULIDs unique per (host_uri, position_key),
+        // so two different hosts would never share a region_id. This tests the
+        // struct's deterministic behavior in isolation.
         let host1 = Url::parse("file:///project/doc1.md").unwrap();
         let host2 = Url::parse("file:///project/doc2.md").unwrap();
+        let uri1 = VirtualDocumentUri::new(&url_to_uri(&host1), "lua", "region-0");
+        let uri2 = VirtualDocumentUri::new(&url_to_uri(&host2), "lua", "region-0");
+
+        assert_eq!(
+            uri1.to_uri_string(),
+            uri2.to_uri_string(),
+            "Same (directory, language, region_id) should produce identical URI"
+        );
+    }
+
+    #[test]
+    fn different_directories_produce_different_virtual_uris() {
+        let host1 = Url::parse("file:///project/dir1/doc.md").unwrap();
+        let host2 = Url::parse("file:///project/dir2/doc.md").unwrap();
         let uri1 = VirtualDocumentUri::new(&url_to_uri(&host1), "lua", "region-0");
         let uri2 = VirtualDocumentUri::new(&url_to_uri(&host2), "lua", "region-0");
 
         assert_ne!(
             uri1.to_uri_string(),
             uri2.to_uri_string(),
-            "Different host URIs should produce different hashes"
+            "Different host directories should produce different virtual URIs"
         );
     }
 
@@ -415,74 +557,9 @@ mod tests {
     }
 
     #[test]
-    fn percent_encode_preserves_unreserved_characters() {
-        // RFC 3986 unreserved: ALPHA / DIGIT / "-" / "." / "_" / "~"
-        let input = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
-        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
-        assert_eq!(
-            encoded, input,
-            "Unreserved characters should not be encoded"
-        );
-    }
-
-    #[test]
-    fn percent_encode_encodes_reserved_characters() {
-        // Some reserved characters that need encoding in path segments
-        let input = "test/path?query#fragment";
-        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
-        assert_eq!(
-            encoded, "test%2Fpath%3Fquery%23fragment",
-            "Reserved characters should be percent-encoded"
-        );
-    }
-
-    #[test]
-    fn percent_encode_encodes_space() {
-        let input = "hello world";
-        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
-        assert_eq!(encoded, "hello%20world", "Space should be encoded as %20");
-    }
-
-    #[test]
-    fn percent_encode_handles_multibyte_utf8() {
-        // UTF-8 multi-byte characters should have each byte percent-encoded
-        // "日" (U+65E5) = E6 97 A5 in UTF-8
-        let input = "日";
-        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
-        assert_eq!(
-            encoded, "%E6%97%A5",
-            "Multi-byte UTF-8 should encode each byte"
-        );
-    }
-
-    #[test]
-    fn percent_encode_handles_mixed_ascii_and_utf8() {
-        // Mix of ASCII alphanumerics (preserved) and UTF-8 (encoded)
-        let input = "region-日本語-test";
-        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
-        // "日" = E6 97 A5, "本" = E6 9C AC, "語" = E8 AA 9E
-        assert_eq!(
-            encoded, "region-%E6%97%A5%E6%9C%AC%E8%AA%9E-test",
-            "Mixed content should preserve ASCII and encode UTF-8"
-        );
-    }
-
-    #[test]
-    fn percent_encode_handles_emoji() {
-        // Emoji are 4-byte UTF-8 sequences
-        // "🦀" (U+1F980) = F0 9F A6 80 in UTF-8
-        let input = "rust🦀";
-        let encoded = VirtualDocumentUri::percent_encode_path_segment(input);
-        assert_eq!(
-            encoded, "rust%F0%9F%A6%80",
-            "4-byte UTF-8 (emoji) should encode all bytes"
-        );
-    }
-
-    #[test]
     fn to_uri_string_contains_region_id_in_filename() {
-        // Verify that the region_id appears in the URI (partial round-trip)
-        // Note: Full round-trip isn't possible since host_uri is hashed
+        // Verify that the region_id appears in the URI
+        // Format: kakehashi-virtual-uri-{region_id}.{ext}
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
         let region_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
         let virtual_uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), "lua", region_id);
@@ -491,8 +568,13 @@ mod tests {
 
         // Extract filename from the URI path
         let filename = uri_string.rsplit('/').next().unwrap();
-        // Remove extension to get the region_id
-        let extracted_id = filename.rsplit_once('.').map(|(name, _)| name).unwrap();
+        // Filename format: kakehashi-virtual-uri-{region_id}.{ext}
+        // Remove kakehashi-virtual-uri- prefix and .ext suffix
+        let without_prefix = filename.strip_prefix("kakehashi-virtual-uri-").unwrap();
+        let extracted_id = without_prefix
+            .rsplit_once('.')
+            .map(|(name, _)| name)
+            .unwrap();
 
         assert_eq!(
             extracted_id, region_id,
@@ -517,7 +599,13 @@ mod tests {
 
         let parsed = parsed.unwrap();
         assert_eq!(parsed.scheme(), "file");
-        assert!(parsed.path().starts_with("/.kakehashi/"));
+        // Path should be in host directory with kakehashi-virtual-uri- prefix filename
+        let filename = parsed.path().rsplit('/').next().unwrap();
+        assert!(
+            filename.starts_with("kakehashi-virtual-uri-"),
+            "Filename should start with kakehashi-virtual-uri-: {}",
+            filename
+        );
     }
 
     // ==========================================================================
@@ -525,20 +613,99 @@ mod tests {
     // ==========================================================================
 
     #[test]
-    fn is_virtual_uri_detects_virtual_uris() {
+    fn is_virtual_uri_detects_new_format() {
+        // New format: kakehashi-virtual-uri-{region_id}.{ext}
         assert!(VirtualDocumentUri::is_virtual_uri(
-            "file:///.kakehashi/abc123/region-0.lua"
+            "file:///project/kakehashi-virtual-uri-01ARZ3NDEK.lua"
         ));
         assert!(VirtualDocumentUri::is_virtual_uri(
-            "file:///.kakehashi/def456/01JPMQ8ZYYQA.py"
+            "file:///project/docs/kakehashi-virtual-uri-REGION123.py"
         ));
         assert!(VirtualDocumentUri::is_virtual_uri(
-            "file:///.kakehashi/hash/test.txt"
+            "file:///kakehashi-virtual-uri-01JPMQ8ZYYQA.txt"
         ));
+        // With special characters in region_id (percent-encoded)
+        assert!(VirtualDocumentUri::is_virtual_uri(
+            "file:///project/kakehashi-virtual-uri-region%2F0.lua"
+        ));
+    }
+
+    // ==========================================================================
+    // cannot-be-a-base URI fallback tests
+    // ==========================================================================
+
+    #[test]
+    fn to_uri_string_falls_back_to_kakehashi_scheme_for_cannot_be_a_base_uri() {
+        // "untitled:Untitled-1" is a cannot-be-a-base URI (no authority, opaque path)
+        // These are used by VSCode for unsaved files
+        let host_uri: Uri = "untitled:Untitled-1".parse().unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "REGION123");
+
+        let uri_string = virtual_uri.to_uri_string();
+
+        // Should use kakehashi:// scheme as fallback
+        assert!(
+            uri_string.starts_with("kakehashi:///virtual/"),
+            "Cannot-be-a-base URI should fall back to kakehashi:// scheme: {}",
+            uri_string
+        );
+        // Should contain encoded host URI for traceability
+        assert!(
+            uri_string.contains("untitled"),
+            "Fallback URI should contain encoded host URI: {}",
+            uri_string
+        );
+        // Should end with proper extension
+        assert!(
+            uri_string.ends_with(".lua"),
+            "Fallback URI should have language extension: {}",
+            uri_string
+        );
+        // Should contain the virtual filename with region_id
+        assert!(
+            uri_string.contains("kakehashi-virtual-uri-REGION123"),
+            "Fallback URI should contain virtual filename: {}",
+            uri_string
+        );
+    }
+
+    #[test]
+    fn to_uri_string_fallback_produces_valid_uri() {
+        let host_uri: Uri = "untitled:Untitled-1".parse().unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "python", "REGION456");
+
+        let uri_string = virtual_uri.to_uri_string();
+
+        // Verify the output is a valid URL that can be parsed
+        let parsed = Url::parse(&uri_string);
+        assert!(
+            parsed.is_ok(),
+            "Fallback URI should be a valid URL: {}",
+            uri_string
+        );
+
+        let parsed = parsed.unwrap();
+        assert_eq!(parsed.scheme(), "kakehashi");
+    }
+
+    #[test]
+    fn to_uri_string_fallback_is_detected_as_virtual_uri() {
+        let host_uri: Uri = "untitled:Untitled-1".parse().unwrap();
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "REGION789");
+
+        let uri_string = virtual_uri.to_uri_string();
+
+        // The fallback URI should still be detected by is_virtual_uri
+        assert!(
+            VirtualDocumentUri::is_virtual_uri(&uri_string),
+            "Fallback URI should be detected as virtual: {}",
+            uri_string
+        );
     }
 
     #[test]
     fn is_virtual_uri_rejects_real_uris() {
+        // Normal files
         assert!(!VirtualDocumentUri::is_virtual_uri(
             "file:///home/user/project/main.lua"
         ));
@@ -546,13 +713,63 @@ mod tests {
             "file:///C:/Users/dev/code.py"
         ));
         assert!(!VirtualDocumentUri::is_virtual_uri("untitled:Untitled-1"));
-        // Real file in a directory that happens to contain "kakehashi" in path
+
+        // Real file with .kakehashi in DIRECTORY name (not filename)
         assert!(!VirtualDocumentUri::is_virtual_uri(
-            "file:///some/kakehashi/file.lua"
+            "file:///home/.kakehashi/config.lua"
         ));
-        // Real file in user's .kakehashi config directory (edge case the stricter check fixes)
+
+        // Real file that starts with "kakehashi" but not "kakehashi-virtual-uri-"
         assert!(!VirtualDocumentUri::is_virtual_uri(
-            "file:///home/user/.kakehashi/config.lua"
+            "file:///project/kakehashi.config.lua"
         ));
+
+        // Filename without extension after the prefix is rejected
+        // Valid format: kakehashi-virtual-uri-{region_id}.{ext} requires a dot after the prefix
+        assert!(!VirtualDocumentUri::is_virtual_uri(
+            "file:///project/kakehashi-virtual-uri-lua"
+        ));
+    }
+
+    #[test]
+    fn is_virtual_uri_handles_query_strings_and_fragments() {
+        // URIs with query strings - filename extraction should ignore query
+        assert!(VirtualDocumentUri::is_virtual_uri(
+            "file:///project/kakehashi-virtual-uri-REGION.lua?query=value"
+        ));
+
+        // URIs with fragments - filename extraction should ignore fragment
+        assert!(VirtualDocumentUri::is_virtual_uri(
+            "file:///project/kakehashi-virtual-uri-REGION.lua#section"
+        ));
+
+        // URIs with both query and fragment
+        assert!(VirtualDocumentUri::is_virtual_uri(
+            "file:///project/kakehashi-virtual-uri-REGION.lua?query=value#section"
+        ));
+
+        // Edge case: query string contains a slash - should NOT confuse filename extraction
+        // The rsplit('/') approach would incorrectly extract "bar" as the filename
+        assert!(VirtualDocumentUri::is_virtual_uri(
+            "file:///project/kakehashi-virtual-uri-REGION.lua?path=/foo/bar"
+        ));
+    }
+
+    #[test]
+    fn is_virtual_uri_handles_percent_encoded_slashes_in_filename() {
+        // A filename with a percent-encoded slash (%2F) should NOT be split on that "slash"
+        // This tests that we use proper URL parsing, not naive string splitting
+        // kakehashi-virtual-uri-region%2Fsubregion.lua is ONE filename, not a path
+        assert!(VirtualDocumentUri::is_virtual_uri(
+            "file:///project/kakehashi-virtual-uri-region%2Fsubregion.lua"
+        ));
+    }
+
+    #[test]
+    fn is_virtual_uri_handles_malformed_uris_gracefully() {
+        // Non-URL strings should not panic, just return false
+        assert!(!VirtualDocumentUri::is_virtual_uri("not a url"));
+        assert!(!VirtualDocumentUri::is_virtual_uri(""));
+        assert!(!VirtualDocumentUri::is_virtual_uri("://missing-scheme"));
     }
 }
