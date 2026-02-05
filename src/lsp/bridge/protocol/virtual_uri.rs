@@ -162,9 +162,10 @@ impl VirtualDocumentUri {
     ///
     /// # Returns
     /// The file extension (without leading dot) for the given language.
-    /// Returns "txt" for unknown languages as a safe fallback that won't
-    /// trigger any language-specific behavior in downstream servers.
-    fn language_to_extension(language: &str) -> &'static str {
+    /// For unknown languages, returns the language name itself as the extension,
+    /// which works for many languages where the name matches the extension
+    /// (e.g., "zig" → ".zig", "nix" → ".nix").
+    fn language_to_extension(language: &str) -> &str {
         match language {
             "lua" => "lua",
             "python" => "py",
@@ -197,7 +198,7 @@ impl VirtualDocumentUri {
             "markdown" => "md",
             "bash" | "sh" => "sh",
             "powershell" => "ps1",
-            _ => "txt", // Default fallback
+            _ => language, // Use language name as extension
         }
     }
 }
@@ -469,18 +470,18 @@ mod tests {
     }
 
     #[test]
-    fn language_to_extension_falls_back_to_txt_for_unknown() {
+    fn language_to_extension_uses_language_name_for_unknown() {
         let host_uri = Url::parse("file:///project/doc.md").unwrap();
 
-        // Unknown languages should default to .txt
-        let unknown_cases = ["unknown-lang", "foobar", "notareallan"];
+        // Unknown languages should use the language name as extension
+        let unknown_cases = ["zig", "nix", "foobar"];
 
         for language in unknown_cases {
             let uri = VirtualDocumentUri::new(&url_to_uri(&host_uri), language, "region-0");
             let uri_string = uri.to_uri_string();
             assert!(
-                uri_string.ends_with(".txt"),
-                "Unknown language '{}' should produce .txt extension, got: {}",
+                uri_string.ends_with(&format!(".{}", language)),
+                "Unknown language '{}' should use itself as extension, got: {}",
                 language,
                 uri_string
             );
