@@ -86,9 +86,19 @@ impl VirtualDocumentUri {
     /// Checks the filename (not path) for the `kakehashi-virtual-uri-` prefix with at least
     /// one `.` for the extension. The prefix is distinctive enough to avoid false positives
     /// with real files.
+    ///
+    /// Uses proper URL parsing to handle edge cases like query strings containing slashes
+    /// (e.g., `?path=/foo/bar`) which would confuse naive string splitting.
     pub(crate) fn is_virtual_uri(uri: &str) -> bool {
-        // Extract filename from URI
-        let filename = uri.rsplit('/').next().unwrap_or("");
+        // Parse URI using the url crate for proper RFC 3986 handling
+        let Ok(url) = url::Url::parse(uri) else {
+            return false;
+        };
+
+        // Extract the last path segment (filename)
+        let Some(filename) = url.path_segments().and_then(|mut s| s.next_back()) else {
+            return false;
+        };
 
         // Check for {VIRTUAL_URI_PREFIX}{region_id}.{ext} pattern
         // Needs at least one dot after the prefix for the extension
