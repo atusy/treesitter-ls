@@ -484,19 +484,24 @@ mod tests {
     }
 
     #[test]
-    fn different_hosts_in_same_directory_produce_same_virtual_directory() {
-        // With the new format, virtual URIs are in the same directory as the host
-        // Two hosts in the same directory will have virtual files in the same directory
+    fn same_region_id_in_same_directory_produces_identical_uri() {
+        // VirtualDocumentUri uses only the directory from host_uri, not the filename.
+        // This test verifies URI generation is deterministic: identical (directory,
+        // language, region_id) inputs produce identical output, regardless of which
+        // host document they came from.
+        //
+        // Note: In practice, region_ids are ULIDs unique per (host_uri, position_key),
+        // so two different hosts would never share a region_id. This tests the
+        // struct's deterministic behavior in isolation.
         let host1 = Url::parse("file:///project/doc1.md").unwrap();
         let host2 = Url::parse("file:///project/doc2.md").unwrap();
         let uri1 = VirtualDocumentUri::new(&url_to_uri(&host1), "lua", "region-0");
         let uri2 = VirtualDocumentUri::new(&url_to_uri(&host2), "lua", "region-0");
 
-        // They should still produce identical URIs since same region_id and language
         assert_eq!(
             uri1.to_uri_string(),
             uri2.to_uri_string(),
-            "Same region_id in same directory should produce identical URIs"
+            "Same (directory, language, region_id) should produce identical URI"
         );
     }
 
