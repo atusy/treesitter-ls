@@ -42,7 +42,7 @@ pub(crate) use document_tracker::OpenedVirtualDoc;
 pub(crate) use message_sender::ConnectionHandleSender;
 pub(crate) use shutdown_timeout::GlobalShutdownTimeout;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -199,17 +199,23 @@ pub struct LanguageServerPool {
     connections: Mutex<HashMap<String, Arc<ConnectionHandle>>>,
     /// Document tracking for virtual documents (versions, host mappings, opened state)
     document_tracker: DocumentTracker,
-    /// Maps upstream request ID -> server_name for cancel forwarding (ADR-0015).
+    /// Maps upstream request ID -> set of server names for cancel forwarding (ADR-0015).
     ///
-    /// When a request is sent to a downstream server, we record the mapping so that
+    /// When a request is sent to downstream server(s), we record the mapping so that
     /// when a $/cancelRequest notification arrives with the upstream ID, we can look up
-    /// which server to forward it to.
+    /// which server(s) to forward it to.
+    ///
+    /// For fan-out requests (e.g., textDocument/diagnostic with multiple injection regions
+    /// using different language servers), multiple servers may be registered for the same
+    /// upstream ID. Cancel notifications are forwarded to all registered servers.
     ///
     /// # Cleanup Behavior
     ///
-    /// Entries are cleaned up via `unregister_upstream_request()` when:
-    /// - A response is received (normal completion)
-    /// - A request fails before being sent
+    /// Entries are cleaned up via `unregister_upstream_request(id, server_name)` when:
+    /// - A response is received from a specific server (normal completion)
+    /// - A request fails before being sent to a specific server
+    ///
+    /// The entry is fully removed when all servers have been unregistered.
     ///
     /// Note: When a connection fails (via `ResponseRouter::fail_all()`), entries in
     /// this registry are NOT automatically cleaned up because the ResponseRouter
@@ -218,7 +224,7 @@ pub struct LanguageServerPool {
     ///   connection state and fails gracefully for stale entries)
     /// - Entries are cleaned up when new requests reuse the same upstream IDs
     /// - This keeps the architecture simpler by avoiding circular dependencies
-    upstream_request_registry: std::sync::Mutex<HashMap<UpstreamId, String>>,
+    upstream_request_registry: std::sync::Mutex<HashMap<UpstreamId, HashSet<String>>>,
     /// Metrics for cancel forwarding observability.
     cancel_metrics: CancelForwardingMetrics,
     /// Tracks consecutive handshake task panics per server.
@@ -960,8 +966,12 @@ impl LanguageServerPool {
 
     /// Forward a $/cancelRequest notification using only the upstream request ID.
     ///
-    /// This method looks up the server_name from the upstream request registry,
-    /// then delegates to `forward_cancel(server_name, upstream_id)`.
+    /// This method looks up ALL server names from the upstream request registry,
+    /// then delegates to `forward_cancel(server_name, upstream_id)` for each server.
+    ///
+    /// For fan-out requests (e.g., diagnostic with multiple injection languages),
+    /// the cancel notification is forwarded to all registered servers. Individual
+    /// server failures are ignored (best-effort semantics).
     ///
     /// Called by the RequestIdCapture middleware when it intercepts a $/cancelRequest
     /// notification from the client.
@@ -970,7 +980,7 @@ impl LanguageServerPool {
     /// * `upstream_id` - The request ID from the client's cancel notification
     ///
     /// # Returns
-    /// * `Ok(())` - Cancel was forwarded, or silently dropped if not forwardable
+    /// * `Ok(())` - Cancel was forwarded to all servers, or silently dropped if not forwardable
     ///
     /// # Silent Drop Cases (Best-Effort Semantics)
     ///
@@ -979,6 +989,7 @@ impl LanguageServerPool {
     /// - Upstream ID not in registry (request not yet registered or already completed)
     /// - Connection still initializing (can't forward cancels during handshake)
     /// - Downstream ID not found (request already completed)
+    /// - Individual server failures (continues to next server)
     ///
     /// This prevents race conditions where canceling an in-flight request could
     /// break server initialization.
@@ -986,49 +997,80 @@ impl LanguageServerPool {
         &self,
         upstream_id: UpstreamId,
     ) -> io::Result<()> {
-        // Look up the server_name from the registry
-        let server_name = {
+        // Look up all server names from the registry
+        let server_names: Vec<String> = {
             let registry = self
                 .upstream_request_registry
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            registry.get(&upstream_id).cloned()
+            match registry.get(&upstream_id) {
+                Some(servers) => servers.iter().cloned().collect(),
+                None => {
+                    // Request not registered yet (still initializing) or already completed.
+                    // This is expected - silently drop the cancel per best-effort semantics.
+                    self.cancel_metrics.record_not_in_registry();
+                    log::debug!(
+                        target: "kakehashi::bridge::cancel",
+                        "Cancel dropped: upstream ID {} not in registry (expected during init or after completion)",
+                        upstream_id
+                    );
+                    return Ok(());
+                }
+            }
         };
 
-        let Some(server_name) = server_name else {
-            // Request not registered yet (still initializing) or already completed.
-            // This is expected - silently drop the cancel per best-effort semantics.
-            self.cancel_metrics.record_not_in_registry();
-            log::debug!(
-                target: "kakehashi::bridge::cancel",
-                "Cancel dropped: upstream ID {} not in registry (expected during init or after completion)",
-                upstream_id
-            );
-            return Ok(());
-        };
+        // Forward cancel to all servers in parallel (best-effort, log I/O errors).
+        let cancel_futures = server_names
+            .iter()
+            .map(|server_name| self.forward_cancel(server_name, &upstream_id));
+        for result in futures::future::join_all(cancel_futures).await {
+            if let Err(e) = result {
+                // Log I/O errors (queue full, channel closed) for observability.
+                // These indicate connection issues worth investigating.
+                log::warn!(
+                    target: "kakehashi::bridge::cancel",
+                    "Error forwarding cancel for upstream_id {}: {}",
+                    upstream_id,
+                    e
+                );
+            }
+        }
 
-        self.forward_cancel(&server_name, &upstream_id).await
+        Ok(())
     }
 
     /// Register an upstream request ID -> server_name mapping for cancel forwarding.
     ///
     /// Called when a request is sent to a downstream server to enable $/cancelRequest
     /// forwarding. When a cancel notification arrives from the client with the upstream ID,
-    /// we use this mapping to route the cancel to the correct downstream language server.
+    /// we use this mapping to route the cancel to the correct downstream language server(s).
     ///
-    /// # Cancel Forwarding Flow
+    /// For fan-out requests (e.g., diagnostic with multiple injection languages), this
+    /// method may be called multiple times with the same upstream_id but different
+    /// server_names. The HashSet ensures cancel is forwarded to all registered servers.
+    ///
+    /// # Cancel Forwarding Flow (Single Server)
     ///
     /// 1. Client sends request with ID 42
     /// 2. Bridge creates downstream request with ID 7 and calls this method
     /// 3. Client sends `$/cancelRequest { id: 42 }`
-    /// 4. Bridge looks up 42 in registry → finds "tsgo"
-    /// 5. Bridge looks up 42 in ResponseRouter → finds downstream ID 7
+    /// 4. Bridge looks up 42 in registry -> finds {"tsgo"}
+    /// 5. Bridge looks up 42 in ResponseRouter -> finds downstream ID 7
     /// 6. Bridge sends `$/cancelRequest { id: 7 }` to tsgo server
+    ///
+    /// # Cancel Forwarding Flow (Multi-Server Fan-Out)
+    ///
+    /// 1. Client sends diagnostic request with ID 42
+    /// 2. Bridge sends to lua-ls and pyright, calling this method for each
+    /// 3. Registry now has: 42 -> {"lua-ls", "pyright"}
+    /// 4. Client sends `$/cancelRequest { id: 42 }`
+    /// 5. Bridge iterates over all servers and forwards cancel to each
     ///
     /// # Cleanup
     ///
-    /// Callers MUST call `unregister_upstream_request()` when the request completes
-    /// (whether success, error, or timeout). This is typically done:
+    /// Callers MUST call `unregister_upstream_request(id, server_name)` when the request
+    /// completes for a specific server (whether success, error, or timeout). This is
+    /// typically done:
     /// - After `wait_for_response()` returns
     /// - In error cleanup callbacks passed to `ensure_document_opened()`
     ///
@@ -1040,21 +1082,32 @@ impl LanguageServerPool {
             .upstream_request_registry
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        registry.insert(upstream_id, server_name.to_string());
+        registry
+            .entry(upstream_id)
+            .or_default()
+            .insert(server_name.to_string());
     }
 
-    /// Unregister an upstream request ID from the registry.
+    /// Unregister an upstream request ID from the registry for a specific server.
     ///
     /// Called when a response is received (or error occurs) to clean up the mapping.
+    /// Removes only the specified server from the set; the entry is fully removed when
+    /// all servers have been unregistered.
     ///
     /// # Arguments
     /// * `upstream_id` - The request ID to unregister
-    pub(crate) fn unregister_upstream_request(&self, upstream_id: &UpstreamId) {
+    /// * `server_name` - The server name to remove from the set
+    pub(crate) fn unregister_upstream_request(&self, upstream_id: &UpstreamId, server_name: &str) {
         let mut registry = self
             .upstream_request_registry
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        registry.remove(upstream_id);
+        if let Some(servers) = registry.get_mut(upstream_id) {
+            servers.remove(server_name);
+            if servers.is_empty() {
+                registry.remove(upstream_id);
+            }
+        }
     }
 }
 
@@ -2559,10 +2612,11 @@ mod tests {
         pool.register_upstream_request(UpstreamId::Number(42), "lua");
 
         let registry = pool.upstream_request_registry.lock().unwrap();
-        assert_eq!(
-            registry.get(&UpstreamId::Number(42)),
-            Some(&"lua".to_string())
-        );
+        let servers = registry
+            .get(&UpstreamId::Number(42))
+            .expect("should have entry");
+        assert!(servers.contains("lua"));
+        assert_eq!(servers.len(), 1);
     }
 
     /// Test that unregister_upstream_request removes the mapping.
@@ -2571,7 +2625,7 @@ mod tests {
         let pool = LanguageServerPool::new();
 
         pool.register_upstream_request(UpstreamId::Number(42), "lua");
-        pool.unregister_upstream_request(&UpstreamId::Number(42));
+        pool.unregister_upstream_request(&UpstreamId::Number(42), "lua");
 
         let registry = pool.upstream_request_registry.lock().unwrap();
         assert_eq!(registry.get(&UpstreamId::Number(42)), None);
@@ -3218,5 +3272,104 @@ mod tests {
             "Should return immediately for Ready connection"
         );
         assert_eq!(handle2.state(), ConnectionState::Ready);
+    }
+
+    // ============================================================
+    // Multi-Server Cancel Forwarding Tests
+    // ============================================================
+
+    /// Test that registering multiple servers for the same upstream ID creates a set.
+    #[test]
+    fn register_upstream_request_multiple_servers_creates_set() {
+        let pool = LanguageServerPool::new();
+        let upstream_id = UpstreamId::Number(42);
+
+        pool.register_upstream_request(upstream_id.clone(), "lua-ls");
+        pool.register_upstream_request(upstream_id.clone(), "pyright");
+
+        let registry = pool.upstream_request_registry.lock().unwrap();
+        let servers = registry.get(&upstream_id).expect("should have entry");
+
+        assert!(servers.contains("lua-ls"));
+        assert!(servers.contains("pyright"));
+        assert_eq!(servers.len(), 2);
+    }
+
+    /// Test that unregistering removes only the specified server from the set.
+    #[test]
+    fn unregister_upstream_request_removes_single_server() {
+        let pool = LanguageServerPool::new();
+        let upstream_id = UpstreamId::Number(42);
+
+        pool.register_upstream_request(upstream_id.clone(), "lua-ls");
+        pool.register_upstream_request(upstream_id.clone(), "pyright");
+        pool.unregister_upstream_request(&upstream_id, "lua-ls");
+
+        let registry = pool.upstream_request_registry.lock().unwrap();
+        let servers = registry.get(&upstream_id).expect("should still have entry");
+
+        assert!(!servers.contains("lua-ls"));
+        assert!(servers.contains("pyright"));
+        assert_eq!(servers.len(), 1);
+    }
+
+    /// Test that unregistering the last server cleans up the entire entry.
+    #[test]
+    fn unregister_upstream_request_cleans_up_empty_set() {
+        let pool = LanguageServerPool::new();
+        let upstream_id = UpstreamId::Number(42);
+
+        pool.register_upstream_request(upstream_id.clone(), "lua-ls");
+        pool.unregister_upstream_request(&upstream_id, "lua-ls");
+
+        let registry = pool.upstream_request_registry.lock().unwrap();
+        assert!(
+            registry.get(&upstream_id).is_none(),
+            "entry should be removed when set is empty"
+        );
+    }
+
+    /// Test that forward_cancel_by_upstream_id iterates over all servers.
+    #[tokio::test]
+    async fn forward_cancel_by_upstream_id_iterates_all_servers() {
+        use std::sync::Arc;
+
+        let pool = LanguageServerPool::new();
+        let upstream_id = UpstreamId::Number(42);
+
+        // Create two Ready connections with registered requests
+        let handle_lua = create_handle_with_state(ConnectionState::Ready).await;
+        let (_downstream_id_lua, _rx_lua) = handle_lua
+            .register_request_with_upstream(Some(upstream_id.clone()))
+            .expect("should register lua request");
+
+        let handle_py = create_handle_with_state(ConnectionState::Ready).await;
+        let (_downstream_id_py, _rx_py) = handle_py
+            .register_request_with_upstream(Some(upstream_id.clone()))
+            .expect("should register py request");
+
+        // Insert handles
+        {
+            let mut connections = pool.connections.lock().await;
+            connections.insert("lua-ls".to_string(), Arc::clone(&handle_lua));
+            connections.insert("pyright".to_string(), Arc::clone(&handle_py));
+        }
+
+        // Register both servers for the same upstream ID
+        pool.register_upstream_request(upstream_id.clone(), "lua-ls");
+        pool.register_upstream_request(upstream_id.clone(), "pyright");
+
+        // Forward cancel - should succeed for both servers
+        let result = pool
+            .forward_cancel_by_upstream_id(upstream_id.clone())
+            .await;
+        assert!(result.is_ok());
+
+        // Verify metrics show 2 successful cancels
+        let (successful, _, _, _, _) = pool.cancel_metrics().snapshot();
+        assert_eq!(
+            successful, 2,
+            "should have forwarded cancel to both servers"
+        );
     }
 }
