@@ -109,7 +109,7 @@ impl VirtualDocumentUri {
     pub(crate) fn to_uri_string(&self) -> String {
         // Parse the host URI using the url crate for proper handling
         let Ok(mut url) = url::Url::parse(self.host_uri.as_str()) else {
-            // Fallback for unparseable URIs (shouldn't happen with valid file:// URIs)
+            // Fallback for unparseable URIs (shouldn't happen with valid URIs)
             return self.host_uri.to_string();
         };
 
@@ -121,12 +121,23 @@ impl VirtualDocumentUri {
 
         // Use url crate's path_segments_mut to properly handle the path
         // This correctly handles edge cases like root paths and percent-encoding
-        if let Ok(mut segments) = url.path_segments_mut() {
+        if url.path_segments_mut().is_ok() {
+            // We checked it's Ok, so unwrap is safe
+            let mut segments = url.path_segments_mut().unwrap();
             segments.pop(); // Remove the host filename
             segments.push(&virtual_filename); // Add the virtual filename
+            drop(segments); // Explicitly drop to release mutable borrow
+            return url.to_string();
         }
 
-        url.to_string()
+        // Fallback for cannot-be-a-base URIs (e.g., "untitled:Untitled-1", "mailto:", "data:")
+        // These have no authority component and their path cannot be manipulated.
+        // Use kakehashi:// scheme with encoded host URI for traceability.
+        let encoded_host = percent_encoding::utf8_percent_encode(
+            self.host_uri.as_str(),
+            percent_encoding::NON_ALPHANUMERIC,
+        );
+        format!("kakehashi:///virtual/{encoded_host}/{virtual_filename}")
     }
 
     /// Map language name to file extension.
