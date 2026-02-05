@@ -39,6 +39,7 @@ ulid = "1"
 url = "2"
 percent-encoding = "2"
 rayon = "1"
+futures = "0.3.31"
 
 # Unix-only dependencies (signal handling)
 [target.'cfg(unix)'.dependencies]

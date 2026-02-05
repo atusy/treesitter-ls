@@ -1019,10 +1019,21 @@ impl LanguageServerPool {
             }
         };
 
-        // Forward cancel to all servers (best-effort, continue on individual failures)
-        for server_name in server_names {
-            // Ignore individual errors - cancel is best-effort per LSP spec
-            let _ = self.forward_cancel(&server_name, &upstream_id).await;
+        // Forward cancel to all servers in parallel (best-effort, log I/O errors).
+        let cancel_futures = server_names
+            .iter()
+            .map(|server_name| self.forward_cancel(server_name, &upstream_id));
+        for result in futures::future::join_all(cancel_futures).await {
+            if let Err(e) = result {
+                // Log I/O errors (queue full, channel closed) for observability.
+                // These indicate connection issues worth investigating.
+                log::warn!(
+                    target: "kakehashi::bridge::cancel",
+                    "Error forwarding cancel for upstream_id {}: {}",
+                    upstream_id,
+                    e
+                );
+            }
         }
 
         Ok(())
