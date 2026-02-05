@@ -1,8 +1,12 @@
 //! Virtual document URI for injection regions.
 //!
 //! This module provides the `VirtualDocumentUri` type for encoding host URI,
-//! injection language, and region ID into a file:// URI that downstream
-//! language servers can use to identify virtual documents.
+//! injection language, and region ID into a URI that downstream language
+//! servers can use to identify virtual documents.
+//!
+//! For most URIs (file://, https://, etc.), the virtual URI preserves the
+//! original scheme and directory. For "cannot-be-a-base" URIs (untitled:,
+//! mailto:, data:), a kakehashi:// scheme fallback is used.
 
 /// Prefix used for virtual document filenames.
 ///
@@ -11,15 +15,18 @@ const VIRTUAL_URI_PREFIX: &str = "kakehashi-virtual-uri-";
 
 /// Virtual document URI for injection regions.
 ///
-/// Encodes host URI + injection language + region ID into a file:// URI
-/// that downstream language servers can use to identify virtual documents.
+/// Encodes host URI + injection language + region ID into a URI that
+/// downstream language servers can use to identify virtual documents.
 ///
-/// Format: `file:///{host_dir}/kakehashi-virtual-uri-{region_id}.{ext}`
+/// ## URI Format
 ///
-/// Example: `file:///project/docs/kakehashi-virtual-uri-01ARZ3NDEKTSV4.lua`
+/// For normal URIs (file://, https://, etc.):
+/// - Format: `{scheme}:///{host_dir}/kakehashi-virtual-uri-{region_id}.{ext}`
+/// - Example: `file:///project/docs/kakehashi-virtual-uri-01ARZ3NDEKTSV4.lua`
 ///
-/// The file:// scheme is used for compatibility with language servers that
-/// only support file:// URIs (e.g., lua-language-server).
+/// For cannot-be-a-base URIs (untitled:, mailto:, data:):
+/// - Format: `kakehashi:///virtual/{encoded_host}/kakehashi-virtual-uri-{region_id}.{ext}`
+/// - Example: `kakehashi:///virtual/untitled%3AUntitled-1/kakehashi-virtual-uri-REGION.lua`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VirtualDocumentUri {
     host_uri: tower_lsp_server::ls_types::Uri,
@@ -119,20 +126,24 @@ impl VirtualDocumentUri {
         // Build the virtual filename (url crate handles percent-encoding)
         let virtual_filename = format!("{VIRTUAL_URI_PREFIX}{}.{extension}", self.region_id);
 
-        // Use url crate's path_segments_mut to properly handle the path
-        // This correctly handles edge cases like root paths and percent-encoding
-        if url.path_segments_mut().is_ok() {
-            // We checked it's Ok, so unwrap is safe
-            let mut segments = url.path_segments_mut().unwrap();
-            segments.pop(); // Remove the host filename
-            segments.push(&virtual_filename); // Add the virtual filename
-            drop(segments); // Explicitly drop to release mutable borrow
+        // Try to modify path segments (works for file://, https://, etc.)
+        // Returns Err for cannot-be-a-base URIs (untitled:, mailto:, data:)
+        let can_modify = {
+            if let Ok(mut segments) = url.path_segments_mut() {
+                segments.pop(); // Remove the host filename
+                segments.push(&virtual_filename); // Add the virtual filename
+                true
+            } else {
+                false
+            }
+        };
+
+        if can_modify {
             return url.to_string();
         }
 
-        // Fallback for cannot-be-a-base URIs (e.g., "untitled:Untitled-1", "mailto:", "data:")
-        // These have no authority component and their path cannot be manipulated.
-        // Use kakehashi:// scheme with encoded host URI for traceability.
+        // Fallback for cannot-be-a-base URIs
+        // Use kakehashi:// scheme with encoded host URI for traceability
         let encoded_host = percent_encoding::utf8_percent_encode(
             self.host_uri.as_str(),
             percent_encoding::NON_ALPHANUMERIC,
