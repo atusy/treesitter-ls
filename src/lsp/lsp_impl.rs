@@ -856,17 +856,12 @@ impl LanguageServer for Kakehashi {
         self.bridge.pool().set_root_uri(root_uri_for_bridge);
 
         // Get root path from workspace folders, deprecated root_uri, or current directory
+        let uri_to_path = |uri: &Uri| uri_to_url(uri).ok().and_then(|url| url.to_file_path().ok());
+
         #[allow(deprecated)]
         let root_path = first_folder
-            .and_then(|f| uri_to_url(&f.uri).ok())
-            .and_then(|url| url.to_file_path().ok())
-            .or_else(|| {
-                params
-                    .root_uri
-                    .as_ref()
-                    .and_then(|uri| uri_to_url(uri).ok())
-                    .and_then(|url| url.to_file_path().ok())
-            })
+            .and_then(|f| uri_to_path(&f.uri))
+            .or_else(|| params.root_uri.as_ref().and_then(uri_to_path))
             .or_else(|| std::env::current_dir().ok());
 
         // Store root path for later use and log the source
