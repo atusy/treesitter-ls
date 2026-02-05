@@ -111,7 +111,8 @@ impl SettingsManager {
     /// Set the workspace root path.
     ///
     /// Called during initialize() to store the workspace root derived from
-    /// workspace_folders or current working directory.
+    /// `workspace_folders`, `root_uri` (deprecated but supported for backward
+    /// compatibility), or the current working directory.
     ///
     /// # Arguments
     /// * `path` - The workspace root path, or None if it couldn't be determined
