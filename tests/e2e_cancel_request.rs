@@ -579,7 +579,8 @@ fn e2e_diagnostic_cancel_multi_region_same_server() {
     client.send_notification("initialized", json!({}));
 
     // Open markdown with multiple Lua code blocks
-    // This creates multiple injection regions, each registering with the HashSet
+    // This creates multiple injection regions that all use the same lua-language-server
+    // entry in the HashSet; multi-server fan-out behavior is covered by unit tests.
     let markdown_content = r#"# Multi-Region Document
 
 ```lua
