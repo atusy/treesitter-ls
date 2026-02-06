@@ -218,6 +218,60 @@ impl BridgeCoordinator {
         None
     }
 
+    /// Get all bridge server configs for a given injection language from settings.
+    ///
+    /// Unlike `get_config_for_language()` which returns the first matching server,
+    /// this method returns **all** servers configured for the injection language.
+    /// This enables diagnostic fan-out to multiple servers (e.g., pyright + ruff
+    /// both handling Python).
+    ///
+    /// Results are sorted by server name for deterministic ordering.
+    ///
+    /// Returns an empty Vec if:
+    /// - No servers are configured for this injection language, OR
+    /// - The host language has a bridge filter that excludes this injection language
+    pub(crate) fn get_all_configs_for_language(
+        &self,
+        settings: &WorkspaceSettings,
+        host_language: &str,
+        injection_language: &str,
+    ) -> Vec<ResolvedServerConfig> {
+        // Check bridge filter (same logic as get_config_for_language)
+        if let Some(host_settings) =
+            resolve_language_settings_with_wildcard(&settings.languages, host_language)
+            && !host_settings.is_language_bridgeable(injection_language)
+        {
+            log::debug!(
+                target: "kakehashi::bridge",
+                "Bridge filter for {} blocks injection language {}",
+                host_language,
+                injection_language
+            );
+            return Vec::new();
+        }
+
+        let Some(ref servers) = settings.language_servers else {
+            return Vec::new();
+        };
+
+        let mut results: Vec<ResolvedServerConfig> = servers
+            .keys()
+            .filter(|name| *name != "_")
+            .filter_map(|server_name| {
+                resolve_language_server_with_wildcard(servers, server_name)
+                    .filter(|c| c.languages.iter().any(|l| l == injection_language))
+                    .map(|config| ResolvedServerConfig {
+                        server_name: server_name.clone(),
+                        config,
+                    })
+            })
+            .collect();
+
+        // Sort by server name for deterministic ordering
+        results.sort_by(|a, b| a.server_name.cmp(&b.server_name));
+        results
+    }
+
     // ========================================
     // Region ID management (delegate to tracker)
     // ========================================
@@ -435,6 +489,125 @@ mod tests {
         let resolved = result.unwrap();
         assert_eq!(resolved.server_name, "rust-analyzer");
         assert_eq!(resolved.config.cmd, vec!["rust-analyzer".to_string()]);
+    }
+
+    #[test]
+    fn test_get_all_configs_returns_multiple_servers_for_same_language() {
+        let coordinator = BridgeCoordinator::new();
+
+        // No bridge filter (all languages allowed)
+        let languages = HashMap::new();
+
+        // Configure two servers that both handle python
+        let mut servers = HashMap::new();
+        servers.insert(
+            "pyright".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["pyright-langserver".to_string()],
+                languages: vec!["python".to_string()],
+                initialization_options: None,
+                workspace_type: None,
+            },
+        );
+        servers.insert(
+            "ruff".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["ruff".to_string(), "server".to_string()],
+                languages: vec!["python".to_string()],
+                initialization_options: None,
+                workspace_type: None,
+            },
+        );
+
+        let settings = WorkspaceSettings::with_language_servers(
+            vec![],
+            languages,
+            HashMap::new(),
+            false,
+            Some(servers),
+        );
+
+        let result = coordinator.get_all_configs_for_language(&settings, "markdown", "python");
+        assert_eq!(result.len(), 2, "should return both pyright and ruff");
+
+        // Use HashSet for order-independent comparison (HashMap iteration is non-deterministic)
+        let names: std::collections::HashSet<&str> =
+            result.iter().map(|r| r.server_name.as_str()).collect();
+        assert!(names.contains("pyright"), "should contain pyright");
+        assert!(names.contains("ruff"), "should contain ruff");
+    }
+
+    #[test]
+    fn test_get_all_configs_returns_empty_when_blocked_by_filter() {
+        let coordinator = BridgeCoordinator::new();
+
+        // Create settings with a markdown host that only allows python bridging
+        let mut languages = HashMap::new();
+        let mut bridge_filter = HashMap::new();
+        bridge_filter.insert("python".to_string(), BridgeLanguageConfig { enabled: true });
+        languages.insert(
+            "markdown".to_string(),
+            LanguageSettings::with_bridge(None, None, Some(bridge_filter)),
+        );
+
+        // Create language server config for rust (which is NOT in the filter)
+        let mut servers = HashMap::new();
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec!["rust".to_string()],
+                initialization_options: None,
+                workspace_type: None,
+            },
+        );
+
+        let settings = WorkspaceSettings::with_language_servers(
+            vec![],
+            languages,
+            HashMap::new(),
+            false,
+            Some(servers),
+        );
+
+        // rust should be blocked by markdown's bridge filter
+        let result = coordinator.get_all_configs_for_language(&settings, "markdown", "rust");
+        assert!(
+            result.is_empty(),
+            "rust should be blocked by markdown's bridge filter"
+        );
+    }
+
+    #[test]
+    fn test_get_all_configs_returns_single_server_when_only_one_matches() {
+        let coordinator = BridgeCoordinator::new();
+
+        // No bridge filter
+        let languages = HashMap::new();
+
+        // Single server for rust
+        let mut servers = HashMap::new();
+        servers.insert(
+            "rust-analyzer".to_string(),
+            BridgeServerConfig {
+                cmd: vec!["rust-analyzer".to_string()],
+                languages: vec!["rust".to_string()],
+                initialization_options: None,
+                workspace_type: None,
+            },
+        );
+
+        let settings = WorkspaceSettings::with_language_servers(
+            vec![],
+            languages,
+            HashMap::new(),
+            false,
+            Some(servers),
+        );
+
+        let result = coordinator.get_all_configs_for_language(&settings, "markdown", "rust");
+        assert_eq!(result.len(), 1, "should return exactly one server");
+        assert_eq!(result[0].server_name, "rust-analyzer");
     }
 
     #[test]
