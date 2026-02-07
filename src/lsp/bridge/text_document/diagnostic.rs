@@ -72,6 +72,16 @@ impl LanguageServerPool {
             )
             .await?;
 
+        // Skip if server doesn't advertise pull diagnostic support
+        if !handle.has_capability("diagnosticProvider") {
+            log::debug!(
+                target: "kakehashi::bridge",
+                "[{}] Server does not support diagnosticProvider, skipping",
+                server_name
+            );
+            return Ok(serde_json::json!({ "kind": "full", "items": [] }));
+        }
+
         // Convert host_uri to lsp_types::Uri for bridge protocol functions
         let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
