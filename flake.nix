@@ -155,6 +155,16 @@
               pkgs.libiconv
             ];
 
+          # Skip tests that require network access or debug-only assertions
+          checkFlags = [
+            "--skip"
+            "test_clone_repo"
+            "--skip"
+            "test_edit_info_new_rejects_invalid_in_debug"
+            "--skip"
+            "test_dynamic_lua_load"
+          ];
+
           meta = with pkgs.lib; {
             description = "kakehashi - A Tree-sitter Language Server";
             homepage = "https://github.com/atusy/kakehashi";
