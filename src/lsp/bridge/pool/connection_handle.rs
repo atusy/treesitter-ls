@@ -15,6 +15,7 @@
 
 use std::io;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
@@ -99,6 +100,13 @@ pub(crate) struct ConnectionHandle {
     /// so we generate unique IDs for downstream requests to avoid
     /// "duplicate request ID" errors in the ResponseRouter.
     next_request_id: AtomicI64,
+    /// Server capabilities from the initialize response.
+    ///
+    /// Set once after successful LSP handshake, read by request handlers
+    /// to skip requests for unsupported capabilities.
+    /// Uses OnceLock for "set once, read many" semantics
+    /// (same pattern as SettingsManager::client_capabilities).
+    server_capabilities: OnceLock<serde_json::Value>,
 }
 
 impl ConnectionHandle {
@@ -156,6 +164,7 @@ impl ConnectionHandle {
             // Start at 2 because ID=1 is reserved for the initialize request
             // which is pre-registered before spawning the reader task.
             next_request_id: AtomicI64::new(2),
+            server_capabilities: OnceLock::new(),
         }
     }
 
@@ -359,6 +368,30 @@ impl ConnectionHandle {
         // Notify watchers of state change. send_replace() is non-blocking and
         // always succeeds (it replaces the current value regardless of receivers).
         self.state_watch.send_replace(new_state);
+    }
+
+    /// Store server capabilities from the initialize response.
+    ///
+    /// Called once after successful LSP handshake, before transitioning to Ready.
+    /// Subsequent calls are ignored (OnceLock semantics).
+    pub(super) fn set_server_capabilities(&self, capabilities: serde_json::Value) {
+        // OnceLock::set() returns Err if already set - ignore since handshake
+        // happens exactly once per connection.
+        let _ = self.server_capabilities.set(capabilities);
+    }
+
+    /// Check if the server advertises support for a specific capability.
+    ///
+    /// Returns `true` if the field exists in `ServerCapabilities` and is truthy
+    /// (non-null, non-false). Handles both boolean providers (`hoverProvider: true`)
+    /// and options-object providers (`completionProvider: {triggerCharacters: ["."]}`).
+    ///
+    /// Returns `false` if capabilities haven't been set yet (server still initializing).
+    pub(crate) fn has_capability(&self, field_name: &str) -> bool {
+        self.server_capabilities
+            .get()
+            .and_then(|caps| caps.get(field_name))
+            .is_some_and(|v| !v.is_null() && v.as_bool() != Some(false))
     }
 
     /// Begin graceful shutdown of the connection.
@@ -1245,5 +1278,146 @@ mod tests {
             "Error should mention shutdown: {}",
             err
         );
+    }
+
+    // ========================================
+    // Server Capabilities Tests
+    // ========================================
+
+    /// Test that has_capability returns false before set_server_capabilities is called.
+    #[tokio::test]
+    async fn has_capability_returns_false_before_init() {
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+        let handle = ConnectionHandle::new(writer, router, reader_handle);
+
+        // Before setting capabilities, all queries should return false
+        assert!(!handle.has_capability("hoverProvider"));
+        assert!(!handle.has_capability("diagnosticProvider"));
+        assert!(!handle.has_capability("completionProvider"));
+    }
+
+    /// Test that has_capability detects boolean true capability.
+    #[tokio::test]
+    async fn has_capability_detects_boolean_true() {
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+        let handle = ConnectionHandle::new(writer, router, reader_handle);
+
+        handle.set_server_capabilities(serde_json::json!({
+            "hoverProvider": true
+        }));
+
+        assert!(handle.has_capability("hoverProvider"));
+    }
+
+    /// Test that has_capability returns false for boolean false capability.
+    #[tokio::test]
+    async fn has_capability_detects_boolean_false() {
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+        let handle = ConnectionHandle::new(writer, router, reader_handle);
+
+        handle.set_server_capabilities(serde_json::json!({
+            "hoverProvider": false
+        }));
+
+        assert!(!handle.has_capability("hoverProvider"));
+    }
+
+    /// Test that has_capability detects options object as supported.
+    #[tokio::test]
+    async fn has_capability_detects_options_object() {
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+        let handle = ConnectionHandle::new(writer, router, reader_handle);
+
+        handle.set_server_capabilities(serde_json::json!({
+            "completionProvider": {
+                "triggerCharacters": ["."]
+            }
+        }));
+
+        assert!(handle.has_capability("completionProvider"));
+    }
+
+    /// Test that has_capability returns false for null capability value.
+    #[tokio::test]
+    async fn has_capability_returns_false_for_null() {
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+        let handle = ConnectionHandle::new(writer, router, reader_handle);
+
+        handle.set_server_capabilities(serde_json::json!({
+            "diagnosticProvider": null
+        }));
+
+        assert!(!handle.has_capability("diagnosticProvider"));
+    }
+
+    /// Test that has_capability returns false for missing field.
+    #[tokio::test]
+    async fn has_capability_returns_false_for_missing() {
+        let mut conn = AsyncBridgeConnection::spawn(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat > /dev/null".to_string(),
+        ])
+        .await
+        .expect("should spawn process");
+
+        let (writer, reader) = conn.split();
+        let router = Arc::new(ResponseRouter::new());
+        let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
+        let handle = ConnectionHandle::new(writer, router, reader_handle);
+
+        handle.set_server_capabilities(serde_json::json!({}));
+
+        assert!(!handle.has_capability("hoverProvider"));
     }
 }
