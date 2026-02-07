@@ -506,6 +506,22 @@ impl Kakehashi {
             .get_config_for_language(&settings, host_language, injection_language)
     }
 
+    /// Get all bridge server configs for a given injection language from settings.
+    ///
+    /// Unlike `get_bridge_config_for_language()` which returns the first match,
+    /// this returns **all** servers configured for the injection language.
+    /// Used by diagnostic fan-out to support multiple servers per language
+    /// (e.g., pyright + ruff both handling Python).
+    fn get_all_bridge_configs_for_language(
+        &self,
+        host_language: &str,
+        injection_language: &str,
+    ) -> Vec<crate::lsp::bridge::ResolvedServerConfig> {
+        let settings = self.settings_manager.load_settings();
+        self.bridge
+            .get_all_configs_for_language(&settings, host_language, injection_language)
+    }
+
     async fn apply_settings(&self, settings: WorkspaceSettings) {
         // Store settings via SettingsManager for auto_install check
         self.settings_manager.apply_settings(settings.clone());

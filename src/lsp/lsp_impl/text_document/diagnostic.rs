@@ -226,12 +226,22 @@ impl Kakehashi {
         let mut request_infos: Vec<DiagnosticRequestInfo> = Vec::with_capacity(all_regions.len());
 
         for resolved in all_regions {
-            // Get bridge server config for this language
-            // The bridge filter is checked inside get_bridge_config_for_language
-            if let Some(resolved_config) =
-                self.get_bridge_config_for_language(language_name, &resolved.injection_language)
-            {
-                // Clone server_name once, use for both HashMap lookup and DiagnosticRequestInfo
+            // Get ALL bridge server configs for this language (N-server fan-out).
+            // For each region, we emit one DiagnosticRequestInfo per matching server,
+            // enabling diagnostics from multiple servers (e.g., pyright + ruff for Python).
+            let configs = self
+                .get_all_bridge_configs_for_language(language_name, &resolved.injection_language);
+
+            if configs.is_empty() {
+                log::debug!(
+                    target: "kakehashi::diagnostic",
+                    "No bridge config for language {}",
+                    resolved.injection_language
+                );
+                continue;
+            }
+
+            for resolved_config in configs {
                 let server_name = resolved_config.server_name.clone();
 
                 // Reuse Arc if we've already seen this server, otherwise create new Arc
@@ -248,12 +258,6 @@ impl Kakehashi {
                     region_start_line: resolved.region.line_range.start,
                     virtual_content: resolved.virtual_content.clone(),
                 });
-            } else {
-                log::debug!(
-                    target: "kakehashi::diagnostic",
-                    "No bridge config for language {}",
-                    resolved.injection_language
-                );
             }
         }
 
