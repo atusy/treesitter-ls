@@ -753,13 +753,14 @@ impl LanguageServerPool {
 
             // Handle initialization result - transition state
             match init_result {
-                Ok(Ok(())) => {
-                    // Init succeeded - transition to Ready
+                Ok(Ok(capabilities)) => {
+                    // Init succeeded - store capabilities and transition to Ready
                     log::info!(
                         target: "kakehashi::bridge::init",
                         "[{}] LSP handshake completed successfully",
                         server_name_for_log
                     );
+                    handle_for_handshake.set_server_capabilities(capabilities);
                     handle_for_handshake.set_state(ConnectionState::Ready);
                     Ok(())
                 }
