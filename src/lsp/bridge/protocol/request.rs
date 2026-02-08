@@ -376,7 +376,6 @@ pub(crate) fn build_bridge_document_symbol_request(
     )
 }
 
-/// Build a JSON-RPC diagnostic request for a downstream language server.
 /// Build a JSON-RPC inlay hint request for a downstream language server.
 ///
 /// Unlike position-based requests (hover, definition, etc.), InlayHintParams
