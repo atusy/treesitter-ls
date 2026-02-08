@@ -30,7 +30,7 @@ use super::virtual_uri::VirtualDocumentUri;
 /// This can occur during race conditions when document edits invalidate region
 /// data while an LSP request is in flight. In such cases, the request will use
 /// line 0, which may produce incorrect results but won't crash the server.
-fn build_position_based_request(
+pub(crate) fn build_position_based_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
     host_position: tower_lsp_server::ls_types::Position,
     injection_language: &str,
