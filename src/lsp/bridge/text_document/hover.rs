@@ -15,7 +15,7 @@ use tower_lsp_server::ls_types::{Hover, Position};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
-use super::super::protocol::{RequestId, VirtualDocumentUri};
+use super::super::protocol::{RequestId, VirtualDocumentUri, build_position_based_request};
 
 impl LanguageServerPool {
     /// Send a hover request and wait for the response.
@@ -125,25 +125,8 @@ impl LanguageServerPool {
 
 /// Build a JSON-RPC hover request for a downstream language server.
 ///
-/// This function handles:
-/// - Creating the virtual document URI
-/// - Translating host position to virtual coordinates
-/// - Building the JSON-RPC request structure
-///
-/// # Arguments
-/// * `host_uri` - The URI of the host document
-/// * `host_position` - The position in the host document
-/// * `injection_language` - The injection language (e.g., "lua")
-/// * `region_id` - The unique region ID for this injection
-/// * `region_start_line` - The starting line of the injection region in the host document
-/// * `request_id` - The JSON-RPC request ID
-///
-/// # Defensive Arithmetic
-///
-/// Uses `saturating_sub` for line translation to prevent panic on underflow.
-/// This can occur during race conditions when document edits invalidate region
-/// data while an LSP request is in flight. In such cases, the request will use
-/// line 0, which may produce incorrect results but won't crash the server.
+/// This is a thin wrapper around [`build_position_based_request`] that
+/// specifies the "textDocument/hover" method.
 fn build_hover_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
     host_position: tower_lsp_server::ls_types::Position,
@@ -152,31 +135,15 @@ fn build_hover_request(
     region_start_line: u32,
     request_id: RequestId,
 ) -> serde_json::Value {
-    // Create virtual document URI
-    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-
-    // Translate position from host to virtual coordinates
-    // Uses saturating_sub to prevent panic on race conditions where stale region data
-    // has region_start_line > host_position.line after a document edit
-    let virtual_position = tower_lsp_server::ls_types::Position {
-        line: host_position.line.saturating_sub(region_start_line),
-        character: host_position.character,
-    };
-
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": request_id.as_i64(),
-        "method": "textDocument/hover",
-        "params": {
-            "textDocument": {
-                "uri": virtual_uri.to_uri_string()
-            },
-            "position": {
-                "line": virtual_position.line,
-                "character": virtual_position.character
-            }
-        }
-    })
+    build_position_based_request(
+        host_uri,
+        host_position,
+        injection_language,
+        region_id,
+        region_start_line,
+        request_id,
+        "textDocument/hover",
+    )
 }
 
 /// Parse a JSON-RPC hover response and transform coordinates to host document space.
