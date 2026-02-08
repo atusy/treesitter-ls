@@ -17,14 +17,14 @@ use std::io;
 use std::time::Duration;
 
 use crate::config::settings::BridgeServerConfig;
+use tower_lsp_server::ls_types::Diagnostic;
 use url::Url;
 
 use super::super::pool::{
     ConnectionHandleSender, INIT_TIMEOUT_SECS, LanguageServerPool, UpstreamId,
 };
 use super::super::protocol::{
-    ResponseTransformContext, VirtualDocumentUri, build_bridge_diagnostic_request,
-    transform_diagnostic_response_to_host,
+    VirtualDocumentUri, build_bridge_diagnostic_request, parse_and_transform_diagnostic_response,
 };
 
 impl LanguageServerPool {
@@ -60,7 +60,7 @@ impl LanguageServerPool {
         virtual_content: &str,
         upstream_request_id: UpstreamId,
         previous_result_id: Option<&str>,
-    ) -> io::Result<serde_json::Value> {
+    ) -> io::Result<Vec<Diagnostic>> {
         // Get or create connection, waiting for Ready state if initializing.
         // Unlike other requests that fail fast, diagnostics wait for initialization
         // to provide better UX (diagnostics appear once server is ready).
@@ -83,7 +83,7 @@ impl LanguageServerPool {
                 "[{}] Server does not support diagnosticProvider, skipping",
                 server_name
             );
-            return Ok(serde_json::json!({ "result": { "kind": "full", "items": [] } }));
+            return Ok(Vec::new());
         }
 
         // Convert host_uri to lsp_types::Uri for bridge protocol functions
@@ -92,7 +92,6 @@ impl LanguageServerPool {
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
-        let virtual_uri_string = virtual_uri.to_uri_string();
 
         // Register in the upstream request registry FIRST for cancel lookup.
         // This order matters: if a cancel arrives between pool and router registration,
@@ -149,20 +148,17 @@ impl LanguageServerPool {
             return Err(e.into());
         }
 
-        // Build transformation context for response handling
-        let context = ResponseTransformContext {
-            request_virtual_uri: virtual_uri_string,
-            request_host_uri: host_uri.as_str().to_string(),
-            request_region_start_line: region_start_line,
-        };
-
         // Wait for response via oneshot channel (no Mutex held) with timeout
         let response = handle.wait_for_response(request_id, response_rx).await;
 
         // Unregister from the upstream request registry regardless of result
         self.unregister_upstream_request(&upstream_request_id, server_name);
 
-        // Transform response to host coordinates
-        Ok(transform_diagnostic_response_to_host(response?, &context))
+        // Parse and transform response to typed diagnostics in host coordinates
+        Ok(parse_and_transform_diagnostic_response(
+            response?,
+            region_start_line,
+            host_uri.as_str(),
+        ))
     }
 }
