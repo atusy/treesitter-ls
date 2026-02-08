@@ -121,22 +121,7 @@ impl Kakehashi {
             .await;
 
         match response {
-            Ok(json_response) => {
-                // Parse the signature help response
-                if let Some(result) = json_response.get("result") {
-                    if result.is_null() {
-                        return Ok(None);
-                    }
-
-                    // Parse the result into a SignatureHelp
-                    if let Ok(signature_help) =
-                        serde_json::from_value::<SignatureHelp>(result.clone())
-                    {
-                        return Ok(Some(signature_help));
-                    }
-                }
-                Ok(None)
-            }
+            Ok(signature_help) => Ok(signature_help),
             Err(e) => {
                 self.client
                     .log_message(

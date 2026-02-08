@@ -11,7 +11,7 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::{Position, SignatureHelp};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
@@ -60,20 +60,32 @@ fn build_bridge_signature_help_request(
 /// Transform a signature help response from virtual to host document coordinates.
 ///
 /// SignatureHelp responses contain activeSignature and activeParameter indices,
-/// not coordinates, so no transformation is needed. This function passes through
-/// the response unchanged.
+/// not coordinates, so no transformation is needed. This function extracts the
+/// SignatureHelp from the JSON-RPC response and returns it typed.
 ///
 /// # Arguments
 /// * `response` - The JSON-RPC response from the downstream language server
 /// * `_region_start_line` - The starting line (unused, kept for API consistency)
+///
+/// # Returns
+/// * `Some(SignatureHelp)` if the response contains valid signature help data
+/// * `None` if the result is null or cannot be parsed
 fn transform_signature_help_response_to_host(
     response: serde_json::Value,
     _region_start_line: u32,
-) -> serde_json::Value {
+) -> Option<SignatureHelp> {
     // SignatureHelp doesn't have ranges that need transformation.
     // activeSignature and activeParameter are indices, not coordinates.
-    // Pass through unchanged.
-    response
+    // Extract the result field from the JSON-RPC response
+    let result = response.get("result")?;
+
+    // If result is null, return None
+    if result.is_null() {
+        return None;
+    }
+
+    // Parse the result into a SignatureHelp struct
+    serde_json::from_value(result.clone()).ok()
 }
 
 impl LanguageServerPool {
@@ -87,6 +99,11 @@ impl LanguageServerPool {
     ///
     /// The `upstream_request_id` enables $/cancelRequest forwarding.
     /// See [`LanguageServerPool::register_upstream_request()`] for the full flow.
+    ///
+    /// # Returns
+    /// * `Ok(Some(SignatureHelp))` - Successfully received signature help data
+    /// * `Ok(None)` - Server returned null (no signature help available)
+    /// * `Err(io::Error)` - Request failed (network error, timeout, etc.)
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_signature_help_request(
         &self,
@@ -99,7 +116,7 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
         upstream_request_id: UpstreamId,
-    ) -> io::Result<serde_json::Value> {
+    ) -> io::Result<Option<SignatureHelp>> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(server_name, server_config)
@@ -313,7 +330,7 @@ mod tests {
     // ==========================================================================
 
     #[test]
-    fn signature_help_response_passes_through_unchanged() {
+    fn signature_help_response_extracts_typed_data() {
         let response = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -336,14 +353,19 @@ mod tests {
         let transformed =
             transform_signature_help_response_to_host(response.clone(), region_start_line);
 
+        assert!(transformed.is_some());
+        let signature_help = transformed.unwrap();
+        assert_eq!(signature_help.signatures.len(), 1);
         assert_eq!(
-            transformed, response,
-            "SignatureHelp response should pass through unchanged"
+            signature_help.signatures[0].label,
+            "function(arg1: string, arg2: number)"
         );
+        assert_eq!(signature_help.active_signature, Some(0));
+        assert_eq!(signature_help.active_parameter, Some(1));
     }
 
     #[test]
-    fn signature_help_response_null_result_passes_through() {
+    fn signature_help_response_null_result_returns_none() {
         let response = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -354,9 +376,100 @@ mod tests {
         let transformed =
             transform_signature_help_response_to_host(response.clone(), region_start_line);
 
-        assert_eq!(
-            transformed, response,
-            "Null result should pass through unchanged"
+        assert!(transformed.is_none(), "Null result should return None");
+    }
+
+    #[test]
+    fn signature_help_response_missing_result_returns_none() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_signature_help_response_to_host(response, region_start_line);
+
+        assert!(
+            transformed.is_none(),
+            "Missing result field should return None"
         );
+    }
+
+    #[test]
+    fn signature_help_response_invalid_format_returns_none() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "invalid": "format"
+            }
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_signature_help_response_to_host(response, region_start_line);
+
+        assert!(
+            transformed.is_none(),
+            "Invalid format should return None rather than panic"
+        );
+    }
+
+    #[test]
+    fn signature_help_response_with_minimal_data() {
+        // SignatureHelp with only required fields
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "signatures": [
+                    {
+                        "label": "print(...)"
+                    }
+                ]
+            }
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_signature_help_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let signature_help = transformed.unwrap();
+        assert_eq!(signature_help.signatures.len(), 1);
+        assert_eq!(signature_help.signatures[0].label, "print(...)");
+        assert_eq!(signature_help.active_signature, None);
+        assert_eq!(signature_help.active_parameter, None);
+    }
+
+    #[test]
+    fn signature_help_response_with_multiple_signatures() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "signatures": [
+                    {
+                        "label": "overload1(x: number)"
+                    },
+                    {
+                        "label": "overload2(x: string)"
+                    },
+                    {
+                        "label": "overload3(x: boolean)"
+                    }
+                ],
+                "activeSignature": 1
+            }
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_signature_help_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let signature_help = transformed.unwrap();
+        assert_eq!(signature_help.signatures.len(), 3);
+        assert_eq!(signature_help.signatures[0].label, "overload1(x: number)");
+        assert_eq!(signature_help.signatures[1].label, "overload2(x: string)");
+        assert_eq!(signature_help.signatures[2].label, "overload3(x: boolean)");
+        assert_eq!(signature_help.active_signature, Some(1));
     }
 }
