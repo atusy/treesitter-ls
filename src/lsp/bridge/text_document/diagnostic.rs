@@ -73,13 +73,17 @@ impl LanguageServerPool {
             .await?;
 
         // Skip if server doesn't advertise pull diagnostic support
-        if !handle.has_capability("diagnosticProvider") {
+        if handle
+            .server_capabilities()
+            .and_then(|c| c.diagnostic_provider.as_ref())
+            .is_none()
+        {
             log::debug!(
                 target: "kakehashi::bridge",
                 "[{}] Server does not support diagnosticProvider, skipping",
                 server_name
             );
-            return Ok(serde_json::json!({ "kind": "full", "items": [] }));
+            return Ok(serde_json::json!({ "result": { "kind": "full", "items": [] } }));
         }
 
         // Convert host_uri to lsp_types::Uri for bridge protocol functions
