@@ -3,28 +3,95 @@
 //! Transforms definition responses from virtual to host document coordinates.
 //! Handles Location and LocationLink formats, and filters out cross-region references.
 
-/// Transform a range's line numbers from virtual to host coordinates.
+use std::str::FromStr;
+use tower_lsp_server::ls_types::{GotoDefinitionResponse, Location, LocationLink, Position, Range};
+
+/// Transform a single position from virtual to host coordinates.
 ///
 /// Uses saturating_add to prevent overflow for large line numbers.
-fn transform_range(range: &mut serde_json::Value, region_start_line: u32) {
-    if let Some(start) = range.get_mut("start")
-        && let Some(line) = start.get_mut("line")
-        && let Some(line_num) = line.as_u64()
-    {
-        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
+fn transform_position(position: Position, region_start_line: u32) -> Position {
+    Position {
+        line: position.line.saturating_add(region_start_line),
+        character: position.character,
     }
+}
 
-    if let Some(end) = range.get_mut("end")
-        && let Some(line) = end.get_mut("line")
-        && let Some(line_num) = line.as_u64()
-    {
-        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
+/// Transform a range from virtual to host coordinates.
+///
+/// Uses saturating_add to prevent overflow for large line numbers.
+fn transform_range(range: Range, region_start_line: u32) -> Range {
+    Range {
+        start: transform_position(range.start, region_start_line),
+        end: transform_position(range.end, region_start_line),
     }
 }
 
 /// Check if a URI is a virtual URI (contains the virtual URI marker).
-fn is_virtual_uri(uri: &str) -> bool {
-    uri.contains("kakehashi-virtual-uri-")
+fn is_virtual_uri(uri_str: &str) -> bool {
+    uri_str.contains("kakehashi-virtual-uri-")
+}
+
+/// Transform a Location from virtual to host coordinates.
+///
+/// Returns `None` if the location references a different virtual region (cross-region).
+fn transform_location(
+    location: Location,
+    request_virtual_uri: &str,
+    request_host_uri: &str,
+    request_region_start_line: u32,
+) -> Option<Location> {
+    let uri_str = location.uri.as_str();
+
+    // Case 1: NOT a virtual URI (real file reference) → preserve as-is
+    if !is_virtual_uri(uri_str) {
+        return Some(location);
+    }
+
+    // Case 2: Same virtual URI as request → transform to host coordinates
+    if uri_str == request_virtual_uri {
+        let host_uri = tower_lsp_server::ls_types::Uri::from_str(request_host_uri).ok()?;
+        return Some(Location {
+            uri: host_uri,
+            range: transform_range(location.range, request_region_start_line),
+        });
+    }
+
+    // Case 3: Different virtual URI (cross-region) → filter out
+    None
+}
+
+/// Transform a LocationLink from virtual to host coordinates.
+///
+/// Returns `None` if the link references a different virtual region (cross-region).
+fn transform_location_link(
+    link: LocationLink,
+    request_virtual_uri: &str,
+    request_host_uri: &str,
+    request_region_start_line: u32,
+) -> Option<LocationLink> {
+    let target_uri_str = link.target_uri.as_str();
+
+    // Case 1: NOT a virtual URI (real file reference) → preserve as-is
+    if !is_virtual_uri(target_uri_str) {
+        return Some(link);
+    }
+
+    // Case 2: Same virtual URI as request → transform to host coordinates
+    if target_uri_str == request_virtual_uri {
+        let host_uri = tower_lsp_server::ls_types::Uri::from_str(request_host_uri).ok()?;
+        return Some(LocationLink {
+            origin_selection_range: link.origin_selection_range,
+            target_uri: host_uri,
+            target_range: transform_range(link.target_range, request_region_start_line),
+            target_selection_range: transform_range(
+                link.target_selection_range,
+                request_region_start_line,
+            ),
+        });
+    }
+
+    // Case 3: Different virtual URI (cross-region) → filter out
+    None
 }
 
 /// Transform a definition response from virtual to host document coordinates.
@@ -40,150 +107,76 @@ fn is_virtual_uri(uri: &str) -> bool {
 /// * `request_host_uri` - The host URI to map back to
 /// * `request_region_start_line` - The starting line of the injection region
 pub(super) fn transform_definition_response_to_host(
-    mut response: serde_json::Value,
+    response: serde_json::Value,
     request_virtual_uri: &str,
     request_host_uri: &str,
     request_region_start_line: u32,
-) -> serde_json::Value {
-    let Some(result) = response.get_mut("result") else {
-        return response;
-    };
+) -> Option<GotoDefinitionResponse> {
+    // Extract the result field
+    let result = response.get("result")?;
 
+    // Handle null result
     if result.is_null() {
-        return response;
+        return None;
     }
 
-    // Array format: Location[] or LocationLink[]
-    if let Some(arr) = result.as_array_mut() {
-        // Filter out cross-region virtual URIs, transform the rest
-        arr.retain_mut(|item| {
-            transform_definition_item(
-                item,
+    // Try to deserialize as GotoDefinitionResponse
+    let definition_response: GotoDefinitionResponse =
+        serde_json::from_value(result.clone()).ok()?;
+
+    // Transform based on the variant
+    match definition_response {
+        GotoDefinitionResponse::Scalar(location) => {
+            // Single Location
+            transform_location(
+                location,
                 request_virtual_uri,
                 request_host_uri,
                 request_region_start_line,
             )
-        });
-    } else if result.is_object() {
-        // Single Location or LocationLink
-        if !transform_definition_item(
-            result,
-            request_virtual_uri,
-            request_host_uri,
-            request_region_start_line,
-        ) {
-            // Item was filtered - return null result
-            response["result"] = serde_json::Value::Null;
+            .map(GotoDefinitionResponse::Scalar)
+        }
+        GotoDefinitionResponse::Array(locations) => {
+            // Vec<Location>
+            let transformed: Vec<Location> = locations
+                .into_iter()
+                .filter_map(|loc| {
+                    transform_location(
+                        loc,
+                        request_virtual_uri,
+                        request_host_uri,
+                        request_region_start_line,
+                    )
+                })
+                .collect();
+
+            if transformed.is_empty() {
+                None
+            } else {
+                Some(GotoDefinitionResponse::Array(transformed))
+            }
+        }
+        GotoDefinitionResponse::Link(links) => {
+            // Vec<LocationLink>
+            let transformed: Vec<LocationLink> = links
+                .into_iter()
+                .filter_map(|link| {
+                    transform_location_link(
+                        link,
+                        request_virtual_uri,
+                        request_host_uri,
+                        request_region_start_line,
+                    )
+                })
+                .collect();
+
+            if transformed.is_empty() {
+                None
+            } else {
+                Some(GotoDefinitionResponse::Link(transformed))
+            }
         }
     }
-
-    response
-}
-
-/// Transform a single Location or LocationLink item to host coordinates.
-///
-/// Returns `true` if the item should be kept, `false` if it should be filtered out.
-fn transform_definition_item(
-    item: &mut serde_json::Value,
-    request_virtual_uri: &str,
-    request_host_uri: &str,
-    request_region_start_line: u32,
-) -> bool {
-    // Handle Location format (has uri + range)
-    if let Some(uri_str) = item
-        .get("uri")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-    {
-        return transform_location_uri(
-            item,
-            &uri_str,
-            "uri",
-            "range",
-            request_virtual_uri,
-            request_host_uri,
-            request_region_start_line,
-        );
-    }
-
-    // Handle LocationLink format (has targetUri + targetRange + targetSelectionRange)
-    if let Some(target_uri_str) = item
-        .get("targetUri")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-    {
-        return transform_location_link_target(
-            item,
-            &target_uri_str,
-            request_virtual_uri,
-            request_host_uri,
-            request_region_start_line,
-        );
-    }
-
-    // Unknown format - keep it
-    true
-}
-
-/// Transform a Location's uri and range based on URI type.
-///
-/// Returns `true` if the item should be kept, `false` if it should be filtered out.
-fn transform_location_uri(
-    item: &mut serde_json::Value,
-    uri_str: &str,
-    uri_field: &str,
-    range_field: &str,
-    request_virtual_uri: &str,
-    request_host_uri: &str,
-    request_region_start_line: u32,
-) -> bool {
-    // Case 1: NOT a virtual URI (real file reference) → preserve as-is
-    if !is_virtual_uri(uri_str) {
-        return true;
-    }
-
-    // Case 2: Same virtual URI as request → use request's context
-    if uri_str == request_virtual_uri {
-        item[uri_field] = serde_json::json!(request_host_uri);
-        if let Some(range) = item.get_mut(range_field) {
-            transform_range(range, request_region_start_line);
-        }
-        return true;
-    }
-
-    // Case 3: Different virtual URI (cross-region) → filter out
-    false
-}
-
-/// Transform a LocationLink's targetUri and associated ranges.
-///
-/// Returns `true` if the item should be kept, `false` if it should be filtered out.
-fn transform_location_link_target(
-    item: &mut serde_json::Value,
-    target_uri_str: &str,
-    request_virtual_uri: &str,
-    request_host_uri: &str,
-    request_region_start_line: u32,
-) -> bool {
-    // Case 1: NOT a virtual URI (real file reference) → preserve as-is
-    if !is_virtual_uri(target_uri_str) {
-        return true;
-    }
-
-    // Case 2: Same virtual URI as request → use request's context
-    if target_uri_str == request_virtual_uri {
-        item["targetUri"] = serde_json::json!(request_host_uri);
-        if let Some(range) = item.get_mut("targetRange") {
-            transform_range(range, request_region_start_line);
-        }
-        if let Some(range) = item.get_mut("targetSelectionRange") {
-            transform_range(range, request_region_start_line);
-        }
-        return true;
-    }
-
-    // Case 3: Different virtual URI (cross-region) → filter out
-    false
 }
 
 #[cfg(test)]
@@ -209,18 +202,23 @@ mod tests {
             }
         });
 
-        let transformed = transform_definition_response_to_host(
+        let result = transform_definition_response_to_host(
             response,
             TEST_VIRTUAL_URI,
             TEST_HOST_URI,
             TEST_REGION_START_LINE,
         );
 
-        let result = &transformed["result"];
-        assert_eq!(result["uri"], TEST_HOST_URI);
-        assert_eq!(result["range"]["start"]["line"], 7); // 2 + 5
-        assert_eq!(result["range"]["end"]["line"], 7);
-        assert_eq!(result["range"]["start"]["character"], 5); // unchanged
+        assert!(result.is_some());
+        match result.unwrap() {
+            GotoDefinitionResponse::Scalar(location) => {
+                assert_eq!(location.uri.as_str(), TEST_HOST_URI);
+                assert_eq!(location.range.start.line, 7); // 2 + 5
+                assert_eq!(location.range.end.line, 7);
+                assert_eq!(location.range.start.character, 5); // unchanged
+            }
+            _ => panic!("Expected Scalar variant"),
+        }
     }
 
     #[test]
@@ -246,25 +244,30 @@ mod tests {
             ]
         });
 
-        let transformed = transform_definition_response_to_host(
+        let result = transform_definition_response_to_host(
             response,
             TEST_VIRTUAL_URI,
             TEST_HOST_URI,
             TEST_REGION_START_LINE,
         );
 
-        let result = transformed["result"].as_array().unwrap();
-        assert_eq!(result.len(), 2);
+        assert!(result.is_some());
+        match result.unwrap() {
+            GotoDefinitionResponse::Array(locations) => {
+                assert_eq!(locations.len(), 2);
 
-        // First location: line 0 + 5 = 5
-        assert_eq!(result[0]["uri"], TEST_HOST_URI);
-        assert_eq!(result[0]["range"]["start"]["line"], 5);
-        assert_eq!(result[0]["range"]["end"]["line"], 5);
+                // First location: line 0 + 5 = 5
+                assert_eq!(locations[0].uri.as_str(), TEST_HOST_URI);
+                assert_eq!(locations[0].range.start.line, 5);
+                assert_eq!(locations[0].range.end.line, 5);
 
-        // Second location: lines 3,4 + 5 = 8,9
-        assert_eq!(result[1]["uri"], TEST_HOST_URI);
-        assert_eq!(result[1]["range"]["start"]["line"], 8);
-        assert_eq!(result[1]["range"]["end"]["line"], 9);
+                // Second location: lines 3,4 + 5 = 8,9
+                assert_eq!(locations[1].uri.as_str(), TEST_HOST_URI);
+                assert_eq!(locations[1].range.start.line, 8);
+                assert_eq!(locations[1].range.end.line, 9);
+            }
+            _ => panic!("Expected Array variant"),
+        }
     }
 
     #[test]
@@ -272,7 +275,7 @@ mod tests {
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
-            "result": {
+            "result": [{
                 "targetUri": TEST_VIRTUAL_URI,
                 "targetRange": {
                     "start": { "line": 1, "character": 0 },
@@ -282,22 +285,28 @@ mod tests {
                     "start": { "line": 1, "character": 9 },
                     "end": { "line": 1, "character": 14 }
                 }
-            }
+            }]
         });
 
-        let transformed = transform_definition_response_to_host(
+        let result = transform_definition_response_to_host(
             response,
             TEST_VIRTUAL_URI,
             TEST_HOST_URI,
             TEST_REGION_START_LINE,
         );
 
-        let result = &transformed["result"];
-        assert_eq!(result["targetUri"], TEST_HOST_URI);
-        assert_eq!(result["targetRange"]["start"]["line"], 6); // 1 + 5
-        assert_eq!(result["targetRange"]["end"]["line"], 8); // 3 + 5
-        assert_eq!(result["targetSelectionRange"]["start"]["line"], 6);
-        assert_eq!(result["targetSelectionRange"]["end"]["line"], 6);
+        assert!(result.is_some());
+        match result.unwrap() {
+            GotoDefinitionResponse::Link(links) => {
+                assert_eq!(links.len(), 1);
+                assert_eq!(links[0].target_uri.as_str(), TEST_HOST_URI);
+                assert_eq!(links[0].target_range.start.line, 6); // 1 + 5
+                assert_eq!(links[0].target_range.end.line, 8); // 3 + 5
+                assert_eq!(links[0].target_selection_range.start.line, 6);
+                assert_eq!(links[0].target_selection_range.end.line, 6);
+            }
+            _ => panic!("Expected Link variant"),
+        }
     }
 
     #[test]
@@ -314,15 +323,22 @@ mod tests {
             }
         });
 
-        let transformed = transform_definition_response_to_host(
-            response.clone(),
+        let result = transform_definition_response_to_host(
+            response,
             TEST_VIRTUAL_URI,
             TEST_HOST_URI,
             TEST_REGION_START_LINE,
         );
 
-        // Should be unchanged
-        assert_eq!(transformed, response);
+        assert!(result.is_some());
+        match result.unwrap() {
+            GotoDefinitionResponse::Scalar(location) => {
+                assert_eq!(location.uri.as_str(), "file:///other_module.lua");
+                assert_eq!(location.range.start.line, 10); // unchanged
+                assert_eq!(location.range.end.line, 10);
+            }
+            _ => panic!("Expected Scalar variant"),
+        }
     }
 
     #[test]
@@ -330,7 +346,7 @@ mod tests {
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
-            "result": {
+            "result": [{
                 "targetUri": "file:///stdlib/builtin.lua",
                 "targetRange": {
                     "start": { "line": 25, "character": 0 },
@@ -340,18 +356,26 @@ mod tests {
                     "start": { "line": 25, "character": 4 },
                     "end": { "line": 25, "character": 9 }
                 }
-            }
+            }]
         });
 
-        let transformed = transform_definition_response_to_host(
-            response.clone(),
+        let result = transform_definition_response_to_host(
+            response,
             TEST_VIRTUAL_URI,
             TEST_HOST_URI,
             TEST_REGION_START_LINE,
         );
 
-        // Should be unchanged
-        assert_eq!(transformed, response);
+        assert!(result.is_some());
+        match result.unwrap() {
+            GotoDefinitionResponse::Link(links) => {
+                assert_eq!(links.len(), 1);
+                assert_eq!(links[0].target_uri.as_str(), "file:///stdlib/builtin.lua");
+                assert_eq!(links[0].target_range.start.line, 25); // unchanged
+                assert_eq!(links[0].target_range.end.line, 28);
+            }
+            _ => panic!("Expected Link variant"),
+        }
     }
 
     #[test]
@@ -368,15 +392,15 @@ mod tests {
             }
         });
 
-        let transformed = transform_definition_response_to_host(
+        let result = transform_definition_response_to_host(
             response,
             TEST_VIRTUAL_URI,
             TEST_HOST_URI,
             TEST_REGION_START_LINE,
         );
 
-        // Should be filtered to null
-        assert!(transformed["result"].is_null());
+        // Should be filtered to None
+        assert!(result.is_none());
     }
 
     #[test]
@@ -409,21 +433,26 @@ mod tests {
             ]
         });
 
-        let transformed = transform_definition_response_to_host(
+        let result = transform_definition_response_to_host(
             response,
             TEST_VIRTUAL_URI,
             TEST_HOST_URI,
             TEST_REGION_START_LINE,
         );
 
-        let result = transformed["result"].as_array().unwrap();
-        assert_eq!(result.len(), 2); // Only 2 items kept
+        assert!(result.is_some());
+        match result.unwrap() {
+            GotoDefinitionResponse::Array(locations) => {
+                assert_eq!(locations.len(), 2); // Only 2 items kept
 
-        assert_eq!(result[0]["uri"], TEST_HOST_URI);
-        assert_eq!(result[0]["range"]["start"]["line"], 6); // Transformed
+                assert_eq!(locations[0].uri.as_str(), TEST_HOST_URI);
+                assert_eq!(locations[0].range.start.line, 6); // Transformed
 
-        assert_eq!(result[1]["uri"], "file:///real_file.lua");
-        assert_eq!(result[1]["range"]["start"]["line"], 10); // Unchanged
+                assert_eq!(locations[1].uri.as_str(), "file:///real_file.lua");
+                assert_eq!(locations[1].range.start.line, 10); // Unchanged
+            }
+            _ => panic!("Expected Array variant"),
+        }
     }
 
     #[test]
@@ -434,14 +463,14 @@ mod tests {
             "result": null
         });
 
-        let transformed = transform_definition_response_to_host(
-            response.clone(),
+        let result = transform_definition_response_to_host(
+            response,
             TEST_VIRTUAL_URI,
             TEST_HOST_URI,
             TEST_REGION_START_LINE,
         );
 
-        assert_eq!(transformed, response);
+        assert!(result.is_none());
     }
 
     #[test]
@@ -452,14 +481,14 @@ mod tests {
             "error": { "code": -32603, "message": "internal error" }
         });
 
-        let transformed = transform_definition_response_to_host(
-            response.clone(),
+        let result = transform_definition_response_to_host(
+            response,
             TEST_VIRTUAL_URI,
             TEST_HOST_URI,
             TEST_REGION_START_LINE,
         );
 
-        assert_eq!(transformed, response);
+        assert!(result.is_none());
     }
 
     #[test]
@@ -470,14 +499,15 @@ mod tests {
             "result": []
         });
 
-        let transformed = transform_definition_response_to_host(
-            response.clone(),
+        let result = transform_definition_response_to_host(
+            response,
             TEST_VIRTUAL_URI,
             TEST_HOST_URI,
             TEST_REGION_START_LINE,
         );
 
-        assert_eq!(transformed, response);
+        // Empty array should return None (no results)
+        assert!(result.is_none());
     }
 
     #[test]
@@ -488,20 +518,27 @@ mod tests {
             "result": {
                 "uri": TEST_VIRTUAL_URI,
                 "range": {
-                    "start": { "line": u64::MAX - 2, "character": 0 },
-                    "end": { "line": u64::MAX - 2, "character": 5 }
+                    "start": { "line": u32::MAX - 2, "character": 0 },
+                    "end": { "line": u32::MAX - 2, "character": 5 }
                 }
             }
         });
 
-        let transformed = transform_definition_response_to_host(
+        let result = transform_definition_response_to_host(
             response,
             TEST_VIRTUAL_URI,
             TEST_HOST_URI,
             TEST_REGION_START_LINE,
         );
 
-        // Should saturate at u64::MAX instead of overflowing
-        assert_eq!(transformed["result"]["range"]["start"]["line"], u64::MAX);
+        assert!(result.is_some());
+        match result.unwrap() {
+            GotoDefinitionResponse::Scalar(location) => {
+                // Should saturate at u32::MAX instead of overflowing
+                assert_eq!(location.range.start.line, u32::MAX);
+                assert_eq!(location.range.end.line, u32::MAX);
+            }
+            _ => panic!("Expected Scalar variant"),
+        }
     }
 }

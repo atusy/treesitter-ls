@@ -121,22 +121,7 @@ impl Kakehashi {
             .await;
 
         match response {
-            Ok(json_response) => {
-                // Parse the definition response
-                if let Some(result) = json_response.get("result") {
-                    if result.is_null() {
-                        return Ok(None);
-                    }
-
-                    // Parse the result into a GotoDefinitionResponse
-                    if let Ok(definition) =
-                        serde_json::from_value::<GotoDefinitionResponse>(result.clone())
-                    {
-                        return Ok(Some(definition));
-                    }
-                }
-                Ok(None)
-            }
+            Ok(definition) => Ok(definition),
             Err(e) => {
                 self.client
                     .log_message(
