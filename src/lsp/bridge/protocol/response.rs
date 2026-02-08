@@ -13,7 +13,6 @@
 //! Used when transformation only requires adding a line offset. The response contains
 //! ranges that reference the same virtual document as the request.
 //!
-//! - [`transform_signature_help_response_to_host`] - No ranges (passthrough)
 //! - [`transform_moniker_response_to_host`] - No ranges (passthrough)
 //! - [`transform_document_highlight_response_to_host`] - Ranges in highlight array
 //! - [`transform_document_link_response_to_host`] - Ranges in document links
@@ -52,27 +51,6 @@ fn transform_range(range: &mut serde_json::Value, region_start_line: u32) {
     {
         *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
     }
-}
-
-/// Transform a signature help response from virtual to host document coordinates.
-///
-/// SignatureHelp responses don't contain ranges that need transformation.
-/// This function passes through the response unchanged, preserving:
-/// - signatures array with label, documentation, and parameters
-/// - activeSignature index
-/// - activeParameter index
-///
-/// # Arguments
-/// * `response` - The JSON-RPC response from the downstream language server
-/// * `_region_start_line` - The starting line (unused for signature help, kept for API consistency)
-pub(crate) fn transform_signature_help_response_to_host(
-    response: serde_json::Value,
-    _region_start_line: u32,
-) -> serde_json::Value {
-    // SignatureHelp doesn't have ranges that need transformation.
-    // activeSignature and activeParameter are indices, not coordinates.
-    // Pass through unchanged.
-    response
 }
 
 /// Transform a document highlight response from virtual to host document coordinates.
@@ -789,67 +767,6 @@ fn transform_workspace_edit_document_changes(
 mod tests {
     use super::*;
     use serde_json::json;
-
-    // ==========================================================================
-    // SignatureHelp response transformation tests
-    // ==========================================================================
-
-    #[test]
-    fn signature_help_response_with_null_result_passes_through() {
-        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
-
-        let transformed = transform_signature_help_response_to_host(response.clone(), 5);
-        assert_eq!(transformed, response);
-    }
-
-    #[test]
-    fn signature_help_response_preserves_active_parameter_and_signature() {
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": {
-                "signatures": [
-                    {
-                        "label": "string.format(formatstring, ...)",
-                        "documentation": "Formats a string",
-                        "parameters": [
-                            { "label": "formatstring" },
-                            { "label": "..." }
-                        ]
-                    }
-                ],
-                "activeSignature": 0,
-                "activeParameter": 1
-            }
-        });
-        let region_start_line = 3;
-
-        let transformed =
-            transform_signature_help_response_to_host(response.clone(), region_start_line);
-
-        assert_eq!(transformed["result"]["activeSignature"], 0);
-        assert_eq!(transformed["result"]["activeParameter"], 1);
-        assert_eq!(
-            transformed["result"]["signatures"][0]["label"],
-            "string.format(formatstring, ...)"
-        );
-    }
-
-    #[test]
-    fn signature_help_response_without_metadata_passes_through() {
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": {
-                "signatures": [
-                    { "label": "print(...)" }
-                ]
-            }
-        });
-
-        let transformed = transform_signature_help_response_to_host(response.clone(), 5);
-        assert_eq!(transformed, response);
-    }
 
     // ==========================================================================
     // Definition response transformation tests
