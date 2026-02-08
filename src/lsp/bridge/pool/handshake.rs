@@ -14,6 +14,8 @@
 
 use std::io;
 
+use tower_lsp_server::ls_types::ServerCapabilities;
+
 use super::ConnectionHandle;
 use super::connection_handle::NotificationSendResult;
 use crate::lsp::bridge::protocol::{
@@ -37,7 +39,7 @@ use crate::lsp::bridge::protocol::{
 /// * `root_uri` - The workspace root URI (forwarded from upstream client)
 ///
 /// # Returns
-/// * `Ok(())` - Handshake completed successfully
+/// * `Ok(capabilities)` - Handshake completed, returns typed `ServerCapabilities`
 /// * `Err(e)` - Handshake failed (server error, I/O error)
 pub(super) async fn perform_lsp_handshake(
     handle: &ConnectionHandle,
@@ -45,7 +47,7 @@ pub(super) async fn perform_lsp_handshake(
     init_response_rx: tokio::sync::oneshot::Receiver<serde_json::Value>,
     init_options: Option<serde_json::Value>,
     root_uri: Option<String>,
-) -> io::Result<()> {
+) -> io::Result<ServerCapabilities> {
     // 1. Build and send initialize request via the single-writer loop
     let init_request = build_initialize_request(init_request_id, init_options, root_uri);
     handle
@@ -57,8 +59,14 @@ pub(super) async fn perform_lsp_handshake(
         .await
         .map_err(|_| io::Error::other("bridge: initialize response channel closed"))?;
 
-    // 3. Validate response
+    // 3. Validate response and extract typed capabilities
     validate_initialize_response(&response)?;
+    let caps_value = response
+        .get("result")
+        .and_then(|r| r.get("capabilities"))
+        .cloned()
+        .unwrap_or_default();
+    let capabilities = serde_json::from_value::<ServerCapabilities>(caps_value).unwrap_or_default();
 
     // 4. Send initialized notification via the single-writer loop
     let initialized = build_initialized_notification();
@@ -78,5 +86,5 @@ pub(super) async fn perform_lsp_handshake(
         }
     }
 
-    Ok(())
+    Ok(capabilities)
 }
