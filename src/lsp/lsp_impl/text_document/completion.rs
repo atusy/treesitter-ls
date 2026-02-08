@@ -121,7 +121,8 @@ impl Kakehashi {
             .await;
 
         match response {
-            Ok(completion_response) => Ok(completion_response),
+            Ok(Some(completion_list)) => Ok(Some(CompletionResponse::List(completion_list))),
+            Ok(None) => Ok(None),
             Err(e) => {
                 self.client
                     .log_message(

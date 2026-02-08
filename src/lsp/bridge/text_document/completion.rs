@@ -11,9 +11,7 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::{
-    CompletionItem, CompletionList, CompletionResponse, Position, Range,
-};
+use tower_lsp_server::ls_types::{CompletionItem, CompletionList, Position, Range};
 use url::Url;
 
 use super::super::pool::{
@@ -45,7 +43,7 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
         upstream_request_id: UpstreamId,
-    ) -> io::Result<Option<CompletionResponse>> {
+    ) -> io::Result<Option<CompletionList>> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(server_name, server_config)
@@ -214,8 +212,8 @@ fn build_completion_request(
 
 /// Parse a JSON-RPC completion response and transform coordinates to host document space.
 ///
-/// Instead of returning a modified JSON envelope, this deserializes the response
-/// into `Option<CompletionResponse>` with coordinates already transformed.
+/// Normalizes all responses to `CompletionList` format. If the server returns an array,
+/// it's wrapped as `CompletionList { isIncomplete: false, items }`.
 ///
 /// Returns `None` for: null results, missing results, and deserialization failures.
 ///
@@ -225,29 +223,33 @@ fn build_completion_request(
 fn transform_completion_response_to_host(
     response: serde_json::Value,
     region_start_line: u32,
-) -> Option<CompletionResponse> {
+) -> Option<CompletionList> {
     // Extract result from JSON-RPC envelope
     let result = response.get("result")?;
     if result.is_null() {
         return None;
     }
 
-    // Try to deserialize as CompletionList first
+    // Try to deserialize as CompletionList first (preferred format)
     if let Ok(mut list) = serde_json::from_value::<CompletionList>(result.clone()) {
         // Transform all items in the list
         for item in &mut list.items {
             transform_completion_item(item, region_start_line);
         }
-        return Some(CompletionResponse::List(list));
+        return Some(list);
     }
 
-    // Try to deserialize as array of CompletionItem
+    // Try to deserialize as array of CompletionItem (legacy format)
+    // Normalize to CompletionList with isIncomplete=false (the default)
     if let Ok(mut items) = serde_json::from_value::<Vec<CompletionItem>>(result.clone()) {
         // Transform all items in the array
         for item in &mut items {
             transform_completion_item(item, region_start_line);
         }
-        return Some(CompletionResponse::Array(items));
+        return Some(CompletionList {
+            is_incomplete: false,
+            items,
+        });
     }
 
     // Failed to deserialize
@@ -422,9 +424,7 @@ mod tests {
         let transformed = transform_completion_response_to_host(response, region_start_line);
 
         assert!(transformed.is_some());
-        let CompletionResponse::List(list) = transformed.unwrap() else {
-            panic!("Expected CompletionResponse::List");
-        };
+        let list = transformed.unwrap();
         assert_eq!(list.items.len(), 2);
 
         // First item should have transformed range
@@ -472,13 +472,13 @@ mod tests {
         let transformed = transform_completion_response_to_host(response, region_start_line);
 
         assert!(transformed.is_some());
-        let CompletionResponse::Array(items) = transformed.unwrap() else {
-            panic!("Expected CompletionResponse::Array");
-        };
-        assert_eq!(items.len(), 1);
+        let list = transformed.unwrap();
+        // Array format is normalized to CompletionList with isIncomplete=false
+        assert!(!list.is_incomplete);
+        assert_eq!(list.items.len(), 1);
 
         if let Some(tower_lsp_server::ls_types::CompletionTextEdit::Edit(ref edit)) =
-            items[0].text_edit
+            list.items[0].text_edit
         {
             assert_eq!(edit.range.start.line, 5); // 0 + 5 = 5
             assert_eq!(edit.range.end.line, 5);
@@ -516,9 +516,7 @@ mod tests {
         let transformed = transform_completion_response_to_host(response, region_start_line);
 
         assert!(transformed.is_some());
-        let CompletionResponse::List(list) = transformed.unwrap() else {
-            panic!("Expected CompletionResponse::List");
-        };
+        let list = transformed.unwrap();
 
         let item = &list.items[0];
         if let Some(tower_lsp_server::ls_types::CompletionTextEdit::InsertAndReplace(ref edit)) =
@@ -570,9 +568,7 @@ mod tests {
         let transformed = transform_completion_response_to_host(response, region_start_line);
 
         assert!(transformed.is_some());
-        let CompletionResponse::List(list) = transformed.unwrap() else {
-            panic!("Expected CompletionResponse::List");
-        };
+        let list = transformed.unwrap();
 
         let item = &list.items[0];
         assert!(item.additional_text_edits.is_some());
@@ -603,12 +599,12 @@ mod tests {
         let transformed = transform_completion_response_to_host(response, region_start_line);
 
         assert!(transformed.is_some());
-        let CompletionResponse::Array(items) = transformed.unwrap() else {
-            panic!("Expected CompletionResponse::Array");
-        };
+        let list = transformed.unwrap();
+        // Array format is normalized to CompletionList with isIncomplete=false
+        assert!(!list.is_incomplete);
 
         if let Some(tower_lsp_server::ls_types::CompletionTextEdit::Edit(ref edit)) =
-            items[0].text_edit
+            list.items[0].text_edit
         {
             assert_eq!(edit.range.start.line, u32::MAX);
             assert_eq!(edit.range.end.line, u32::MAX);
