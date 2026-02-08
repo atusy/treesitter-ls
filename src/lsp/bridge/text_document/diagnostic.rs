@@ -23,9 +23,7 @@ use url::Url;
 use super::super::pool::{
     ConnectionHandleSender, INIT_TIMEOUT_SECS, LanguageServerPool, UpstreamId,
 };
-use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_diagnostic_request, parse_and_transform_diagnostic_response,
-};
+use super::super::protocol::{VirtualDocumentUri, build_bridge_diagnostic_request};
 
 impl LanguageServerPool {
     /// Send a diagnostic request and wait for the response.
@@ -160,5 +158,416 @@ impl LanguageServerPool {
             region_start_line,
             host_uri.as_str(),
         ))
+    }
+}
+
+/// Parse a JSON-RPC diagnostic response and transform coordinates to host document space.
+///
+/// Instead of returning a modified JSON envelope, this deserializes the response
+/// into `Vec<Diagnostic>` with coordinates already transformed.
+///
+/// Returns empty `Vec` for: null results, unchanged reports, missing items, and
+/// deserialization failures.
+///
+/// # Arguments
+/// * `response` - Raw JSON-RPC response envelope (`{"result": {"kind":"full","items":[...]}}`)
+/// * `region_start_line` - Line offset to add to diagnostic ranges
+/// * `host_uri` - The host document URI; only related info matching this URI gets transformed
+fn parse_and_transform_diagnostic_response(
+    response: serde_json::Value,
+    region_start_line: u32,
+    host_uri: &str,
+) -> Vec<Diagnostic> {
+    // Extract result from JSON-RPC envelope
+    let Some(result) = response.get("result") else {
+        return Vec::new();
+    };
+    if result.is_null() {
+        return Vec::new();
+    }
+
+    // Check report kind
+    match result.get("kind").and_then(|k| k.as_str()) {
+        Some("unchanged") => return Vec::new(),
+        Some("full") | None => {}
+        Some(other) => {
+            log::warn!(
+                target: "kakehashi::bridge",
+                "Unknown diagnostic report kind: {}",
+                other
+            );
+            return Vec::new();
+        }
+    }
+
+    // Deserialize items
+    let Some(items) = result.get("items") else {
+        return Vec::new();
+    };
+    let Ok(mut diagnostics) = serde_json::from_value::<Vec<Diagnostic>>(items.clone()) else {
+        return Vec::new();
+    };
+
+    // Transform coordinates on typed structs
+    for diag in &mut diagnostics {
+        transform_diagnostic(diag, region_start_line, host_uri);
+    }
+
+    diagnostics
+}
+
+/// Transform a single typed Diagnostic by adding region_start_line to its range.
+///
+/// Also transforms relatedInformation locations if present, filtering out entries
+/// that reference virtual URIs (which clients cannot resolve).
+fn transform_diagnostic(diag: &mut Diagnostic, region_start_line: u32, host_uri: &str) {
+    // Transform main range
+    diag.range.start.line = diag.range.start.line.saturating_add(region_start_line);
+    diag.range.end.line = diag.range.end.line.saturating_add(region_start_line);
+
+    // Transform related information
+    if let Some(related) = &mut diag.related_information {
+        related.retain_mut(|info| {
+            let uri_str = info.location.uri.as_str();
+            if VirtualDocumentUri::is_virtual_uri(uri_str) {
+                // Virtual URI - filter out this entry
+                return false;
+            }
+
+            // Only transform ranges for entries that reference the same host document.
+            // Related info pointing to other files (e.g., imported modules) should
+            // keep their original coordinates since they're not in the injection region.
+            if uri_str == host_uri {
+                info.location.range.start.line = info
+                    .location
+                    .range
+                    .start
+                    .line
+                    .saturating_add(region_start_line);
+                info.location.range.end.line = info
+                    .location
+                    .range
+                    .end
+                    .line
+                    .saturating_add(region_start_line);
+            }
+            true
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn transforms_range_to_host_coordinates() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 5 },
+                            "end": { "line": 0, "character": 10 }
+                        },
+                        "message": "syntax error",
+                        "severity": 1
+                    },
+                    {
+                        "range": {
+                            "start": { "line": 2, "character": 0 },
+                            "end": { "line": 3, "character": 5 }
+                        },
+                        "message": "undefined variable",
+                        "severity": 2
+                    }
+                ]
+            }
+        });
+
+        let diagnostics = parse_and_transform_diagnostic_response(response, 5, "unused");
+
+        assert_eq!(diagnostics.len(), 2);
+
+        // First diagnostic: line 0 + 5 = 5
+        assert_eq!(diagnostics[0].range.start.line, 5);
+        assert_eq!(diagnostics[0].range.end.line, 5);
+        assert_eq!(diagnostics[0].range.start.character, 5); // character unchanged
+        assert_eq!(diagnostics[0].message, "syntax error");
+
+        // Second diagnostic: lines 2,3 + 5 = 7,8
+        assert_eq!(diagnostics[1].range.start.line, 7);
+        assert_eq!(diagnostics[1].range.end.line, 8);
+    }
+
+    #[test]
+    fn transforms_related_information_for_same_host() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 10 }
+                        },
+                        "message": "unused variable 'x'",
+                        "relatedInformation": [
+                            {
+                                "location": {
+                                    "uri": "file:///test.md",
+                                    "range": {
+                                        "start": { "line": 5, "character": 0 },
+                                        "end": { "line": 5, "character": 5 }
+                                    }
+                                },
+                                "message": "'x' is declared here"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        let diagnostics = parse_and_transform_diagnostic_response(response, 3, "file:///test.md");
+
+        assert_eq!(diagnostics.len(), 1);
+
+        // Main diagnostic range transformed
+        assert_eq!(diagnostics[0].range.start.line, 3);
+
+        // Related information location range transformed (same host file)
+        let related = diagnostics[0].related_information.as_ref().unwrap();
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].location.range.start.line, 8); // 5 + 3
+        assert_eq!(related[0].location.range.end.line, 8);
+    }
+
+    #[test]
+    fn preserves_related_info_for_different_file() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 10 }
+                        },
+                        "message": "type mismatch",
+                        "relatedInformation": [
+                            {
+                                "location": {
+                                    "uri": "file:///other_module.lua",
+                                    "range": {
+                                        "start": { "line": 5, "character": 0 },
+                                        "end": { "line": 5, "character": 5 }
+                                    }
+                                },
+                                "message": "expected type defined here"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        let diagnostics = parse_and_transform_diagnostic_response(response, 3, "file:///test.md");
+
+        assert_eq!(diagnostics.len(), 1);
+
+        // Main diagnostic range transformed
+        assert_eq!(diagnostics[0].range.start.line, 3);
+
+        // Related info pointing to different file should NOT be transformed
+        let related = diagnostics[0].related_information.as_ref().unwrap();
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].location.uri.as_str(), "file:///other_module.lua");
+        assert_eq!(related[0].location.range.start.line, 5); // unchanged!
+        assert_eq!(related[0].location.range.end.line, 5);
+    }
+
+    #[test]
+    fn unchanged_kind_returns_empty() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "unchanged",
+                "resultId": "prev-123"
+            }
+        });
+
+        let diagnostics = parse_and_transform_diagnostic_response(response, 5, "unused");
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn null_result_returns_empty() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let diagnostics = parse_and_transform_diagnostic_response(response, 5, "unused");
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn missing_result_returns_empty() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "error": { "code": -32603, "message": "internal error" } });
+
+        let diagnostics = parse_and_transform_diagnostic_response(response, 5, "unused");
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn empty_items_returns_empty() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": []
+            }
+        });
+
+        let diagnostics = parse_and_transform_diagnostic_response(response, 5, "unused");
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn filters_related_info_with_virtual_uris() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 10 }
+                        },
+                        "message": "unused variable",
+                        "relatedInformation": [
+                            {
+                                "location": {
+                                    "uri": "file:///lua/kakehashi-virtual-uri-region-0.lua",
+                                    "range": {
+                                        "start": { "line": 5, "character": 0 },
+                                        "end": { "line": 5, "character": 5 }
+                                    }
+                                },
+                                "message": "this is a virtual URI - should be filtered"
+                            },
+                            {
+                                "location": {
+                                    "uri": "file:///real/file.lua",
+                                    "range": {
+                                        "start": { "line": 10, "character": 0 },
+                                        "end": { "line": 10, "character": 5 }
+                                    }
+                                },
+                                "message": "this is a real file URI - should be kept"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        let diagnostics = parse_and_transform_diagnostic_response(response, 3, "unused");
+
+        assert_eq!(diagnostics.len(), 1);
+        let related = diagnostics[0].related_information.as_ref().unwrap();
+
+        // Only the real file URI entry should remain
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].location.uri.as_str(), "file:///real/file.lua");
+        // The range for real file entry is NOT transformed (different from host URI)
+        assert_eq!(related[0].location.range.start.line, 10); // unchanged
+    }
+
+    #[test]
+    fn filters_all_related_info_with_virtual_uris() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 10 }
+                        },
+                        "message": "unused variable",
+                        "relatedInformation": [
+                            {
+                                "location": {
+                                    "uri": "file:///lua/kakehashi-virtual-uri-region-0.lua",
+                                    "range": {
+                                        "start": { "line": 5, "character": 0 },
+                                        "end": { "line": 5, "character": 5 }
+                                    }
+                                },
+                                "message": "first virtual URI"
+                            },
+                            {
+                                "location": {
+                                    "uri": "file:///python/kakehashi-virtual-uri-region-1.py",
+                                    "range": {
+                                        "start": { "line": 10, "character": 0 },
+                                        "end": { "line": 10, "character": 5 }
+                                    }
+                                },
+                                "message": "second virtual URI"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        let diagnostics = parse_and_transform_diagnostic_response(response, 3, "unused");
+
+        assert_eq!(diagnostics.len(), 1);
+        let related = diagnostics[0].related_information.as_ref().unwrap();
+        assert!(related.is_empty());
+    }
+
+    #[test]
+    fn near_max_line_saturates() {
+        // u32::MAX because lsp_types::Position.line is u32
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": [
+                    {
+                        "range": {
+                            "start": { "line": u32::MAX - 10, "character": 0 },
+                            "end": { "line": u32::MAX - 5, "character": 10 }
+                        },
+                        "message": "diagnostic at very large line number"
+                    }
+                ]
+            }
+        });
+
+        // This should not panic due to overflow
+        let diagnostics = parse_and_transform_diagnostic_response(response, 100, "unused");
+
+        // Values should saturate at u32::MAX
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].range.start.line, u32::MAX);
+        assert_eq!(diagnostics[0].range.end.line, u32::MAX);
     }
 }
