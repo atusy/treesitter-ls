@@ -86,26 +86,6 @@ pub(crate) fn build_bridge_signature_help_request(
     )
 }
 
-/// Build a JSON-RPC completion request for a downstream language server.
-pub(crate) fn build_bridge_completion_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    host_position: tower_lsp_server::ls_types::Position,
-    injection_language: &str,
-    region_id: &str,
-    region_start_line: u32,
-    request_id: RequestId,
-) -> serde_json::Value {
-    build_position_based_request(
-        host_uri,
-        host_position,
-        injection_language,
-        region_id,
-        region_start_line,
-        request_id,
-        "textDocument/completion",
-    )
-}
-
 /// Build a JSON-RPC definition request for a downstream language server.
 pub(crate) fn build_bridge_definition_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
@@ -793,39 +773,6 @@ mod tests {
         let changes = notification["params"]["contentChanges"].as_array().unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0]["text"], content);
-    }
-
-    // ==========================================================================
-    // Completion request tests
-    // ==========================================================================
-
-    #[test]
-    fn completion_request_uses_virtual_uri() {
-        let request = build_bridge_completion_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
-
-        assert_uses_virtual_uri(&request, "lua");
-    }
-
-    #[test]
-    fn completion_request_translates_position_to_virtual_coordinates() {
-        // Host line 5, region starts at line 3 -> virtual line 2
-        let request = build_bridge_completion_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
-
-        assert_position_request(&request, "textDocument/completion", 2);
     }
 
     // ==========================================================================

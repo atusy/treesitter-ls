@@ -17,10 +17,7 @@ use url::Url;
 use super::super::pool::{
     ConnectionHandleSender, LanguageServerPool, NotificationSendResult, UpstreamId,
 };
-use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_completion_request, build_bridge_didchange_notification,
-    transform_completion_response_to_host,
-};
+use super::super::protocol::{RequestId, VirtualDocumentUri, build_bridge_didchange_notification};
 
 impl LanguageServerPool {
     /// Send a completion request and wait for the response.
@@ -77,7 +74,7 @@ impl LanguageServerPool {
             };
 
         // Build completion request
-        let completion_request = build_bridge_completion_request(
+        let completion_request = build_completion_request(
             &host_uri_lsp,
             host_position,
             injection_language,
@@ -161,5 +158,365 @@ impl LanguageServerPool {
             response?,
             region_start_line,
         ))
+    }
+}
+
+/// Build a JSON-RPC completion request for a downstream language server.
+///
+/// This function uses the generic position-based request builder to create a
+/// textDocument/completion request with proper virtual URI and coordinate translation.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `host_position` - The position in the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `region_start_line` - The starting line of the injection region in the host document
+/// * `request_id` - The JSON-RPC request ID
+///
+/// # Defensive Arithmetic
+///
+/// Uses `saturating_sub` for line translation to prevent panic on underflow.
+fn build_completion_request(
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: RequestId,
+) -> serde_json::Value {
+    // Create virtual document URI
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    // Translate position from host to virtual coordinates
+    let virtual_position = tower_lsp_server::ls_types::Position {
+        line: host_position.line.saturating_sub(region_start_line),
+        character: host_position.character,
+    };
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id.as_i64(),
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            },
+            "position": {
+                "line": virtual_position.line,
+                "character": virtual_position.character
+            }
+        }
+    })
+}
+
+/// Transform a completion response from virtual to host document coordinates.
+///
+/// If completion items contain textEdit ranges, translates the line numbers from virtual
+/// coordinates to host coordinates by adding the region's starting line offset.
+fn transform_completion_response_to_host(
+    mut response: serde_json::Value,
+    region_start_line: u32,
+) -> serde_json::Value {
+    // Get mutable reference to result
+    let Some(result) = response.get_mut("result") else {
+        return response;
+    };
+
+    // Null result - pass through unchanged
+    if result.is_null() {
+        return response;
+    }
+
+    // Determine the items to transform
+    // CompletionList: { items: [...] } or direct array: [...]
+    let items = if result.is_array() {
+        result.as_array_mut()
+    } else if result.is_object() {
+        result.get_mut("items").and_then(|i| i.as_array_mut())
+    } else {
+        None
+    };
+
+    if let Some(items) = items {
+        for item in items.iter_mut() {
+            transform_completion_item_range(item, region_start_line);
+        }
+    }
+
+    response
+}
+
+/// Transform the textEdit range in a single completion item to host coordinates.
+///
+/// Handles both TextEdit format (has `range`) and InsertReplaceEdit format (has `insert` + `replace`).
+/// InsertReplaceEdit is used by some language servers (e.g., rust-analyzer, tsserver) to provide
+/// both insert and replace options for the same completion.
+fn transform_completion_item_range(item: &mut serde_json::Value, region_start_line: u32) {
+    // Check for textEdit field
+    if let Some(text_edit) = item.get_mut("textEdit") {
+        // TextEdit format: { range, newText }
+        if let Some(range) = text_edit.get_mut("range")
+            && range.is_object()
+        {
+            transform_range(range, region_start_line);
+        }
+
+        // InsertReplaceEdit format: { insert, replace, newText }
+        // Used by some language servers to offer both insert and replace behaviors
+        if let Some(insert) = text_edit.get_mut("insert")
+            && insert.is_object()
+        {
+            transform_range(insert, region_start_line);
+        }
+        if let Some(replace) = text_edit.get_mut("replace")
+            && replace.is_object()
+        {
+            transform_range(replace, region_start_line);
+        }
+    }
+
+    // Also check for additionalTextEdits (array of TextEdit)
+    if let Some(additional) = item.get_mut("additionalTextEdits")
+        && let Some(additional_arr) = additional.as_array_mut()
+    {
+        for edit in additional_arr.iter_mut() {
+            if let Some(range) = edit.get_mut("range")
+                && range.is_object()
+            {
+                transform_range(range, region_start_line);
+            }
+        }
+    }
+}
+
+/// Transform a range's line numbers from virtual to host coordinates.
+///
+/// Uses saturating_add to prevent overflow for large line numbers, consistent
+/// with saturating_sub used elsewhere in the codebase.
+fn transform_range(range: &mut serde_json::Value, region_start_line: u32) {
+    // Transform start position
+    if let Some(start) = range.get_mut("start")
+        && let Some(line) = start.get_mut("line")
+        && let Some(line_num) = line.as_u64()
+    {
+        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
+    }
+
+    // Transform end position
+    if let Some(end) = range.get_mut("end")
+        && let Some(line) = end.get_mut("line")
+        && let Some(line_num) = line.as_u64()
+    {
+        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tower_lsp_server::ls_types::Position;
+    use url::Url;
+
+    // ==========================================================================
+    // Test helpers
+    // ==========================================================================
+
+    /// Standard test request ID used across most tests.
+    fn test_request_id() -> RequestId {
+        RequestId::new(42)
+    }
+
+    /// Standard test host URI used across most tests.
+    fn test_host_uri() -> tower_lsp_server::ls_types::Uri {
+        let url = Url::parse("file:///project/doc.md").unwrap();
+        crate::lsp::lsp_impl::url_to_uri(&url).expect("test URL should convert to URI")
+    }
+
+    /// Standard test position (line 5, character 10).
+    fn test_position() -> Position {
+        Position {
+            line: 5,
+            character: 10,
+        }
+    }
+
+    /// Assert that a request uses a virtual URI with the expected extension.
+    fn assert_uses_virtual_uri(request: &serde_json::Value, extension: &str) {
+        let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
+        // Use url crate for robust parsing (handles query strings with slashes, fragments, etc.)
+        let url = url::Url::parse(uri_str).expect("URI should be parseable");
+        let filename = url
+            .path_segments()
+            .and_then(|mut s| s.next_back())
+            .unwrap_or("");
+        assert!(
+            filename.starts_with("kakehashi-virtual-uri-")
+                && filename.ends_with(&format!(".{}", extension)),
+            "Request should use virtual URI with .{} extension: {}",
+            extension,
+            uri_str
+        );
+    }
+
+    /// Assert that a position-based request has correct structure and translated coordinates.
+    fn assert_position_request(
+        request: &serde_json::Value,
+        expected_method: &str,
+        expected_virtual_line: u64,
+    ) {
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], expected_method);
+        assert_eq!(
+            request["params"]["position"]["line"], expected_virtual_line,
+            "Position line should be translated"
+        );
+        assert_eq!(
+            request["params"]["position"]["character"], 10,
+            "Character should remain unchanged"
+        );
+    }
+
+    // ==========================================================================
+    // Completion request tests
+    // ==========================================================================
+
+    #[test]
+    fn completion_request_uses_virtual_uri() {
+        let request = build_completion_request(
+            &test_host_uri(),
+            test_position(),
+            "lua",
+            "region-0",
+            3,
+            test_request_id(),
+        );
+
+        assert_uses_virtual_uri(&request, "lua");
+    }
+
+    #[test]
+    fn completion_request_translates_position_to_virtual_coordinates() {
+        // Host line 5, region starts at line 3 -> virtual line 2
+        let request = build_completion_request(
+            &test_host_uri(),
+            test_position(),
+            "lua",
+            "region-0",
+            3,
+            test_request_id(),
+        );
+
+        assert_position_request(&request, "textDocument/completion", 2);
+    }
+
+    // ==========================================================================
+    // Completion response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn completion_response_transforms_textedit_ranges() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "isIncomplete": false,
+                "items": [
+                    {
+                        "label": "print",
+                        "kind": 3,
+                        "textEdit": {
+                            "range": {
+                                "start": { "line": 1, "character": 0 },
+                                "end": { "line": 1, "character": 3 }
+                            },
+                            "newText": "print"
+                        }
+                    },
+                    { "label": "pairs", "kind": 3 }
+                ]
+            }
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        let items = transformed["result"]["items"].as_array().unwrap();
+        assert_eq!(items[0]["textEdit"]["range"]["start"]["line"], 4);
+        assert_eq!(items[0]["textEdit"]["range"]["end"]["line"], 4);
+        assert_eq!(items[1]["label"], "pairs");
+        assert!(items[1].get("textEdit").is_none());
+    }
+
+    #[test]
+    fn completion_response_with_null_result_passes_through() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_completion_response_to_host(response.clone(), 3);
+        assert_eq!(transformed, response);
+    }
+
+    #[test]
+    fn completion_response_handles_array_format() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "label": "print",
+                "textEdit": {
+                    "range": {
+                        "start": { "line": 0, "character": 0 },
+                        "end": { "line": 0, "character": 2 }
+                    },
+                    "newText": "print"
+                }
+            }]
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        let items = transformed["result"].as_array().unwrap();
+        assert_eq!(items[0]["textEdit"]["range"]["start"]["line"], 5);
+        assert_eq!(items[0]["textEdit"]["range"]["end"]["line"], 5);
+    }
+
+    #[test]
+    fn completion_response_transforms_insert_replace_edit() {
+        // InsertReplaceEdit format used by rust-analyzer, tsserver, etc.
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "isIncomplete": false,
+                "items": [{
+                    "label": "println!",
+                    "textEdit": {
+                        "insert": {
+                            "start": { "line": 2, "character": 0 },
+                            "end": { "line": 2, "character": 3 }
+                        },
+                        "replace": {
+                            "start": { "line": 2, "character": 0 },
+                            "end": { "line": 2, "character": 8 }
+                        },
+                        "newText": "println!"
+                    }
+                }]
+            }
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        let item = &transformed["result"]["items"][0]["textEdit"];
+        // Insert range transformed: line 2 + 10 = 12
+        assert_eq!(item["insert"]["start"]["line"], 12);
+        assert_eq!(item["insert"]["end"]["line"], 12);
+        // Replace range transformed: line 2 + 10 = 12
+        assert_eq!(item["replace"]["start"]["line"], 12);
+        assert_eq!(item["replace"]["end"]["line"], 12);
     }
 }
