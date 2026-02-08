@@ -15,15 +15,12 @@ use tower_lsp_server::ls_types::{Position, SignatureHelp};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
-use super::super::protocol::{RequestId, VirtualDocumentUri};
+use super::super::protocol::{RequestId, VirtualDocumentUri, build_position_based_request};
 
 /// Build a JSON-RPC signature help request for a downstream language server.
 ///
-/// # Defensive Arithmetic
-///
-/// Uses `saturating_sub` for line translation to prevent panic on underflow.
-/// This can occur during race conditions when document edits invalidate region
-/// data while an LSP request is in flight.
+/// This is a thin wrapper around [`build_position_based_request`] that
+/// specifies the "textDocument/signatureHelp" method.
 fn build_bridge_signature_help_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
     host_position: tower_lsp_server::ls_types::Position,
@@ -32,29 +29,15 @@ fn build_bridge_signature_help_request(
     region_start_line: u32,
     request_id: RequestId,
 ) -> serde_json::Value {
-    // Create virtual document URI
-    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-
-    // Translate position from host to virtual coordinates
-    let virtual_position = tower_lsp_server::ls_types::Position {
-        line: host_position.line.saturating_sub(region_start_line),
-        character: host_position.character,
-    };
-
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": request_id.as_i64(),
-        "method": "textDocument/signatureHelp",
-        "params": {
-            "textDocument": {
-                "uri": virtual_uri.to_uri_string()
-            },
-            "position": {
-                "line": virtual_position.line,
-                "character": virtual_position.character
-            }
-        }
-    })
+    build_position_based_request(
+        host_uri,
+        host_position,
+        injection_language,
+        region_id,
+        region_start_line,
+        request_id,
+        "textDocument/signatureHelp",
+    )
 }
 
 /// Transform a signature help response from virtual to host document coordinates.
