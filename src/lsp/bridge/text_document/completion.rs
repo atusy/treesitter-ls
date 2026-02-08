@@ -17,7 +17,10 @@ use url::Url;
 use super::super::pool::{
     ConnectionHandleSender, LanguageServerPool, NotificationSendResult, UpstreamId,
 };
-use super::super::protocol::{RequestId, VirtualDocumentUri, build_bridge_didchange_notification};
+use super::super::protocol::{
+    RequestId, VirtualDocumentUri, build_bridge_didchange_notification,
+    build_position_based_request,
+};
 
 impl LanguageServerPool {
     /// Send a completion request and wait for the response.
@@ -163,20 +166,8 @@ impl LanguageServerPool {
 
 /// Build a JSON-RPC completion request for a downstream language server.
 ///
-/// This function uses the generic position-based request builder to create a
-/// textDocument/completion request with proper virtual URI and coordinate translation.
-///
-/// # Arguments
-/// * `host_uri` - The URI of the host document
-/// * `host_position` - The position in the host document
-/// * `injection_language` - The injection language (e.g., "lua")
-/// * `region_id` - The unique region ID for this injection
-/// * `region_start_line` - The starting line of the injection region in the host document
-/// * `request_id` - The JSON-RPC request ID
-///
-/// # Defensive Arithmetic
-///
-/// Uses `saturating_sub` for line translation to prevent panic on underflow.
+/// This is a thin wrapper around [`build_position_based_request`] that
+/// specifies the "textDocument/completion" method.
 fn build_completion_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
     host_position: tower_lsp_server::ls_types::Position,
@@ -185,29 +176,15 @@ fn build_completion_request(
     region_start_line: u32,
     request_id: RequestId,
 ) -> serde_json::Value {
-    // Create virtual document URI
-    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-
-    // Translate position from host to virtual coordinates
-    let virtual_position = tower_lsp_server::ls_types::Position {
-        line: host_position.line.saturating_sub(region_start_line),
-        character: host_position.character,
-    };
-
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": request_id.as_i64(),
-        "method": "textDocument/completion",
-        "params": {
-            "textDocument": {
-                "uri": virtual_uri.to_uri_string()
-            },
-            "position": {
-                "line": virtual_position.line,
-                "character": virtual_position.character
-            }
-        }
-    })
+    build_position_based_request(
+        host_uri,
+        host_position,
+        injection_language,
+        region_id,
+        region_start_line,
+        request_id,
+        "textDocument/completion",
+    )
 }
 
 /// Parse a JSON-RPC completion response and transform coordinates to host document space.
