@@ -11,7 +11,7 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::{Hover, Position};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
@@ -41,7 +41,7 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
         upstream_request_id: UpstreamId,
-    ) -> io::Result<serde_json::Value> {
+    ) -> io::Result<Option<Hover>> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(server_name, server_config)
@@ -179,50 +179,40 @@ fn build_hover_request(
     })
 }
 
-/// Transform a hover response from virtual to host document coordinates.
+/// Parse a JSON-RPC hover response and transform coordinates to host document space.
 ///
-/// If the response contains a range, translates the line numbers from virtual
-/// document coordinates back to host document coordinates by adding region_start_line.
+/// Instead of returning a modified JSON envelope, this deserializes the response
+/// into `Option<Hover>` with coordinates already transformed.
+///
+/// Returns `None` for: null results, missing results, and deserialization failures.
 ///
 /// # Arguments
-/// * `response` - The JSON-RPC response from the downstream language server
-/// * `region_start_line` - The starting line of the injection region in the host document
+/// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
+/// * `region_start_line` - Line offset to add to hover range if present
 fn transform_hover_response_to_host(
-    mut response: serde_json::Value,
+    response: serde_json::Value,
     region_start_line: u32,
-) -> serde_json::Value {
-    // Check if response has a result with a range
-    if let Some(result) = response.get_mut("result")
-        && result.is_object()
-        && let Some(range) = result.get_mut("range")
-        && range.is_object()
-    {
-        transform_range(range, region_start_line);
+) -> Option<Hover> {
+    // Extract result from JSON-RPC envelope
+    let result = response.get("result")?;
+    if result.is_null() {
+        return None;
     }
 
-    response
-}
+    // Deserialize into typed Hover
+    let Ok(mut hover) = serde_json::from_value::<Hover>(result.clone()) else {
+        return None;
+    };
 
-/// Transform a range's line numbers from virtual to host coordinates.
-///
-/// Uses saturating_add to prevent overflow for large line numbers, consistent
-/// with saturating_sub used elsewhere in the codebase.
-fn transform_range(range: &mut serde_json::Value, region_start_line: u32) {
-    // Transform start position
-    if let Some(start) = range.get_mut("start")
-        && let Some(line) = start.get_mut("line")
-        && let Some(line_num) = line.as_u64()
-    {
-        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
+    // Transform range if present
+    if let Some(range) = &mut hover.range {
+        // Uses saturating_add to prevent overflow, consistent with saturating_sub
+        // used elsewhere in the codebase for defensive arithmetic
+        range.start.line = range.start.line.saturating_add(region_start_line);
+        range.end.line = range.end.line.saturating_add(region_start_line);
     }
 
-    // Transform end position
-    if let Some(end) = range.get_mut("end")
-        && let Some(line) = end.get_mut("line")
-        && let Some(line_num) = line.as_u64()
-    {
-        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
-    }
+    Some(hover)
 }
 
 #[cfg(test)]
@@ -395,6 +385,157 @@ mod tests {
         assert_eq!(
             request["params"]["position"]["character"], 10,
             "Character should remain unchanged"
+        );
+    }
+
+    // ==========================================================================
+    // Hover response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn hover_response_transforms_range_to_host_coordinates() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": {
+                    "kind": "markdown",
+                    "value": "docs"
+                },
+                "range": {
+                    "start": { "line": 0, "character": 9 },
+                    "end": { "line": 0, "character": 14 }
+                }
+            }
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let hover = transformed.unwrap();
+        assert!(hover.range.is_some());
+        let range = hover.range.unwrap();
+        assert_eq!(range.start.line, 3);
+        assert_eq!(range.end.line, 3);
+        assert_eq!(range.start.character, 9);
+        assert_eq!(range.end.character, 14);
+    }
+
+    #[test]
+    fn hover_response_without_range_passes_through() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": "Simple hover text"
+            }
+        });
+
+        let transformed = transform_hover_response_to_host(response, 5);
+        assert!(transformed.is_some());
+        let hover = transformed.unwrap();
+        assert!(hover.range.is_none());
+    }
+
+    #[test]
+    fn hover_response_with_null_result_returns_none() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": null
+        });
+
+        let transformed = transform_hover_response_to_host(response, 5);
+        assert!(transformed.is_none());
+    }
+
+    #[test]
+    fn hover_response_transformation_with_zero_region_start() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": { "kind": "markdown", "value": "docs" },
+                "range": {
+                    "start": { "line": 2, "character": 0 },
+                    "end": { "line": 2, "character": 10 }
+                }
+            }
+        });
+        let region_start_line = 0;
+
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let hover = transformed.unwrap();
+        let range = hover.range.unwrap();
+        assert_eq!(
+            range.start.line, 2,
+            "With region_start_line=0, host line equals virtual line"
+        );
+    }
+
+    #[test]
+    fn hover_response_transformation_at_line_zero() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": { "kind": "markdown", "value": "docs" },
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 5 }
+                }
+            }
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let hover = transformed.unwrap();
+        let range = hover.range.unwrap();
+        assert_eq!(
+            range.start.line, 10,
+            "Virtual line 0 should map to region_start_line"
+        );
+        assert_eq!(
+            range.end.line, 10,
+            "Virtual line 0 should map to region_start_line"
+        );
+    }
+
+    #[test]
+    fn hover_response_transformation_saturates_on_overflow() {
+        // Test defensive arithmetic: saturating_add prevents panic on overflow
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": { "kind": "markdown", "value": "docs" },
+                "range": {
+                    "start": { "line": u32::MAX, "character": 0 },
+                    "end": { "line": u32::MAX, "character": 5 }
+                }
+            }
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let hover = transformed.unwrap();
+        let range = hover.range.unwrap();
+        assert_eq!(
+            range.start.line,
+            u32::MAX,
+            "Overflow should saturate at u32::MAX, not panic"
+        );
+        assert_eq!(
+            range.end.line,
+            u32::MAX,
+            "Overflow should saturate at u32::MAX, not panic"
         );
     }
 }
