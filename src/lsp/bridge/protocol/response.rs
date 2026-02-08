@@ -13,7 +13,6 @@
 //! Used when transformation only requires adding a line offset. The response contains
 //! ranges that reference the same virtual document as the request.
 //!
-//! - [`transform_hover_response_to_host`] - Range in hover result
 //! - [`transform_completion_response_to_host`] - TextEdit ranges in completion items
 //! - [`transform_signature_help_response_to_host`] - No ranges (passthrough)
 //! - [`transform_moniker_response_to_host`] - No ranges (passthrough)
@@ -33,30 +32,6 @@
 //! - [`transform_document_symbol_response_to_host`] - SymbolInformation with URIs
 
 use super::virtual_uri::VirtualDocumentUri;
-
-/// Transform a hover response from virtual to host document coordinates.
-///
-/// If the response contains a range, translates the line numbers from virtual
-/// document coordinates back to host document coordinates by adding region_start_line.
-///
-/// # Arguments
-/// * `response` - The JSON-RPC response from the downstream language server
-/// * `region_start_line` - The starting line of the injection region in the host document
-pub(crate) fn transform_hover_response_to_host(
-    mut response: serde_json::Value,
-    region_start_line: u32,
-) -> serde_json::Value {
-    // Check if response has a result with a range
-    if let Some(result) = response.get_mut("result")
-        && result.is_object()
-        && let Some(range) = result.get_mut("range")
-        && range.is_object()
-    {
-        transform_range(range, region_start_line);
-    }
-
-    response
-}
 
 /// Transform a completion response from virtual to host document coordinates.
 ///
@@ -900,103 +875,6 @@ fn transform_workspace_edit_document_changes(
 mod tests {
     use super::*;
     use serde_json::json;
-
-    // ==========================================================================
-    // Hover response transformation tests
-    // ==========================================================================
-
-    #[test]
-    fn response_transformation_with_zero_region_start() {
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": {
-                "contents": { "kind": "markdown", "value": "docs" },
-                "range": {
-                    "start": { "line": 2, "character": 0 },
-                    "end": { "line": 2, "character": 10 }
-                }
-            }
-        });
-        let region_start_line = 0;
-
-        let transformed = transform_hover_response_to_host(response, region_start_line);
-
-        assert_eq!(
-            transformed["result"]["range"]["start"]["line"], 2,
-            "With region_start_line=0, host line equals virtual line"
-        );
-    }
-
-    #[test]
-    fn response_transformation_at_line_zero() {
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": {
-                "contents": { "kind": "markdown", "value": "docs" },
-                "range": {
-                    "start": { "line": 0, "character": 0 },
-                    "end": { "line": 0, "character": 5 }
-                }
-            }
-        });
-        let region_start_line = 10;
-
-        let transformed = transform_hover_response_to_host(response, region_start_line);
-
-        assert_eq!(
-            transformed["result"]["range"]["start"]["line"], 10,
-            "Virtual line 0 should map to region_start_line"
-        );
-        assert_eq!(
-            transformed["result"]["range"]["end"]["line"], 10,
-            "Virtual line 0 should map to region_start_line"
-        );
-    }
-
-    #[test]
-    fn hover_response_transforms_range_to_host_coordinates() {
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": {
-                "contents": { "kind": "markdown", "value": "docs" },
-                "range": {
-                    "start": { "line": 0, "character": 9 },
-                    "end": { "line": 0, "character": 14 }
-                }
-            }
-        });
-        let region_start_line = 3;
-
-        let transformed = transform_hover_response_to_host(response, region_start_line);
-
-        assert_eq!(transformed["result"]["range"]["start"]["line"], 3);
-        assert_eq!(transformed["result"]["range"]["end"]["line"], 3);
-        assert_eq!(transformed["result"]["range"]["start"]["character"], 9);
-        assert_eq!(transformed["result"]["range"]["end"]["character"], 14);
-    }
-
-    #[test]
-    fn hover_response_without_range_passes_through() {
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": { "contents": "Simple hover text" }
-        });
-
-        let transformed = transform_hover_response_to_host(response.clone(), 5);
-        assert_eq!(transformed, response);
-    }
-
-    #[test]
-    fn hover_response_with_null_result_passes_through() {
-        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
-
-        let transformed = transform_hover_response_to_host(response.clone(), 5);
-        assert_eq!(transformed, response);
-    }
 
     // ==========================================================================
     // Completion response transformation tests

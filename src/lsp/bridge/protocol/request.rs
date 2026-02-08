@@ -66,26 +66,6 @@ fn build_position_based_request(
     })
 }
 
-/// Build a JSON-RPC hover request for a downstream language server.
-pub(crate) fn build_bridge_hover_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    host_position: tower_lsp_server::ls_types::Position,
-    injection_language: &str,
-    region_id: &str,
-    region_start_line: u32,
-    request_id: RequestId,
-) -> serde_json::Value {
-    build_position_based_request(
-        host_uri,
-        host_position,
-        injection_language,
-        region_id,
-        region_start_line,
-        request_id,
-        "textDocument/hover",
-    )
-}
-
 /// Build a JSON-RPC signature help request for a downstream language server.
 pub(crate) fn build_bridge_signature_help_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
@@ -694,118 +674,11 @@ mod tests {
     }
 
     // ==========================================================================
-    // Hover request tests
-    // ==========================================================================
-
-    #[test]
-    fn hover_request_uses_virtual_uri() {
-        let request = build_bridge_hover_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
-
-        assert_uses_virtual_uri(&request, "lua");
-    }
-
-    #[test]
-    fn hover_request_translates_position_to_virtual_coordinates() {
-        // Host line 5, region starts at line 3 -> virtual line 2
-        let request = build_bridge_hover_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
-
-        assert_position_request(&request, "textDocument/hover", 2);
-    }
-
-    #[test]
-    fn position_translation_at_region_start_becomes_line_zero() {
-        // When cursor is at the first line of the region, virtual line should be 0
-        let host_position = Position {
-            line: 3, // Same as region_start_line
-            character: 5,
-        };
-
-        let request = build_bridge_hover_request(
-            &test_host_uri(),
-            host_position,
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
-
-        assert_eq!(
-            request["params"]["position"]["line"], 0,
-            "Position at region start should translate to line 0"
-        );
-    }
-
-    #[test]
-    fn position_translation_with_zero_region_start() {
-        // Region starting at line 0 (e.g., first line of document)
-        let host_position = Position {
-            line: 5,
-            character: 0,
-        };
-
-        let request = build_bridge_hover_request(
-            &test_host_uri(),
-            host_position,
-            "lua",
-            "region-0",
-            0,
-            test_request_id(),
-        );
-
-        assert_eq!(
-            request["params"]["position"]["line"], 5,
-            "With region_start_line=0, virtual line equals host line"
-        );
-    }
-
-    // ==========================================================================
     // Underflow regression tests (saturating_sub)
     // ==========================================================================
     // These tests verify that position translation doesn't panic when
     // host_position.line < region_start_line, which can occur during race
     // conditions when document edits invalidate region data.
-
-    #[test]
-    fn position_translation_saturates_on_underflow_for_position_request() {
-        // Simulate race condition: host_position.line (2) < region_start_line (5)
-        // This should NOT panic, instead saturate to line 0
-        let host_position = Position {
-            line: 2, // Less than region_start_line
-            character: 10,
-        };
-
-        let request = build_bridge_hover_request(
-            &test_host_uri(),
-            host_position,
-            "lua",
-            "region-0",
-            5, // region_start_line > host_position.line
-            test_request_id(),
-        );
-
-        assert_eq!(
-            request["params"]["position"]["line"], 0,
-            "Underflow should saturate to line 0, not panic"
-        );
-        assert_eq!(
-            request["params"]["position"]["character"], 10,
-            "Character should remain unchanged"
-        );
-    }
 
     #[test]
     fn range_translation_saturates_on_underflow_for_inlay_hint() {
