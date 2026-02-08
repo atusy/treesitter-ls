@@ -1,9 +1,7 @@
 //! Completion method for Kakehashi.
 
 use tower_lsp_server::jsonrpc::{Id, Result};
-use tower_lsp_server::ls_types::{
-    CompletionItem, CompletionList, CompletionParams, CompletionResponse, MessageType,
-};
+use tower_lsp_server::ls_types::{CompletionParams, CompletionResponse, MessageType};
 
 use crate::language::InjectionResolver;
 use crate::lsp::bridge::UpstreamId;
@@ -123,26 +121,7 @@ impl Kakehashi {
             .await;
 
         match response {
-            Ok(json_response) => {
-                // Parse the completion response
-                if let Some(result) = json_response.get("result") {
-                    if result.is_null() {
-                        return Ok(None);
-                    }
-
-                    // Try to parse as CompletionList first
-                    if let Ok(list) = serde_json::from_value::<CompletionList>(result.clone()) {
-                        return Ok(Some(CompletionResponse::List(list)));
-                    }
-
-                    // Try to parse as array of CompletionItem
-                    if let Ok(items) = serde_json::from_value::<Vec<CompletionItem>>(result.clone())
-                    {
-                        return Ok(Some(CompletionResponse::Array(items)));
-                    }
-                }
-                Ok(None)
-            }
+            Ok(completion_response) => Ok(completion_response),
             Err(e) => {
                 self.client
                     .log_message(

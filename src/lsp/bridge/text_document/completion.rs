@@ -11,7 +11,9 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::{
+    CompletionItem, CompletionList, CompletionResponse, Position, Range,
+};
 use url::Url;
 
 use super::super::pool::{
@@ -43,7 +45,7 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
         upstream_request_id: UpstreamId,
-    ) -> io::Result<serde_json::Value> {
+    ) -> io::Result<Option<CompletionResponse>> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(server_name, server_config)
@@ -210,82 +212,70 @@ fn build_completion_request(
     })
 }
 
-/// Transform a completion response from virtual to host document coordinates.
+/// Parse a JSON-RPC completion response and transform coordinates to host document space.
 ///
-/// If completion items contain textEdit ranges, translates the line numbers from virtual
-/// coordinates to host coordinates by adding the region's starting line offset.
+/// Instead of returning a modified JSON envelope, this deserializes the response
+/// into `Option<CompletionResponse>` with coordinates already transformed.
+///
+/// Returns `None` for: null results, missing results, and deserialization failures.
+///
+/// # Arguments
+/// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
+/// * `region_start_line` - Line offset to add to completion item ranges
 fn transform_completion_response_to_host(
-    mut response: serde_json::Value,
+    response: serde_json::Value,
     region_start_line: u32,
-) -> serde_json::Value {
-    // Get mutable reference to result
-    let Some(result) = response.get_mut("result") else {
-        return response;
-    };
-
-    // Null result - pass through unchanged
+) -> Option<CompletionResponse> {
+    // Extract result from JSON-RPC envelope
+    let result = response.get("result")?;
     if result.is_null() {
-        return response;
+        return None;
     }
 
-    // Determine the items to transform
-    // CompletionList: { items: [...] } or direct array: [...]
-    let items = if result.is_array() {
-        result.as_array_mut()
-    } else if result.is_object() {
-        result.get_mut("items").and_then(|i| i.as_array_mut())
-    } else {
-        None
-    };
-
-    if let Some(items) = items {
-        for item in items.iter_mut() {
-            transform_completion_item_range(item, region_start_line);
+    // Try to deserialize as CompletionList first
+    if let Ok(mut list) = serde_json::from_value::<CompletionList>(result.clone()) {
+        // Transform all items in the list
+        for item in &mut list.items {
+            transform_completion_item(item, region_start_line);
         }
+        return Some(CompletionResponse::List(list));
     }
 
-    response
+    // Try to deserialize as array of CompletionItem
+    if let Ok(mut items) = serde_json::from_value::<Vec<CompletionItem>>(result.clone()) {
+        // Transform all items in the array
+        for item in &mut items {
+            transform_completion_item(item, region_start_line);
+        }
+        return Some(CompletionResponse::Array(items));
+    }
+
+    // Failed to deserialize
+    None
 }
 
-/// Transform the textEdit range in a single completion item to host coordinates.
+/// Transform textEdit range in a single completion item to host coordinates.
 ///
-/// Handles both TextEdit format (has `range`) and InsertReplaceEdit format (has `insert` + `replace`).
-/// InsertReplaceEdit is used by some language servers (e.g., rust-analyzer, tsserver) to provide
-/// both insert and replace options for the same completion.
-fn transform_completion_item_range(item: &mut serde_json::Value, region_start_line: u32) {
-    // Check for textEdit field
-    if let Some(text_edit) = item.get_mut("textEdit") {
-        // TextEdit format: { range, newText }
-        if let Some(range) = text_edit.get_mut("range")
-            && range.is_object()
-        {
-            transform_range(range, region_start_line);
-        }
-
-        // InsertReplaceEdit format: { insert, replace, newText }
-        // Used by some language servers to offer both insert and replace behaviors
-        if let Some(insert) = text_edit.get_mut("insert")
-            && insert.is_object()
-        {
-            transform_range(insert, region_start_line);
-        }
-        if let Some(replace) = text_edit.get_mut("replace")
-            && replace.is_object()
-        {
-            transform_range(replace, region_start_line);
+/// Handles both TextEdit format and InsertReplaceEdit format. Also transforms
+/// additionalTextEdits if present.
+fn transform_completion_item(item: &mut CompletionItem, region_start_line: u32) {
+    // Transform text_edit if present
+    if let Some(ref mut text_edit) = item.text_edit {
+        match text_edit {
+            tower_lsp_server::ls_types::CompletionTextEdit::Edit(edit) => {
+                transform_range(&mut edit.range, region_start_line);
+            }
+            tower_lsp_server::ls_types::CompletionTextEdit::InsertAndReplace(edit) => {
+                transform_range(&mut edit.insert, region_start_line);
+                transform_range(&mut edit.replace, region_start_line);
+            }
         }
     }
 
-    // Also check for additionalTextEdits (array of TextEdit)
-    if let Some(additional) = item.get_mut("additionalTextEdits")
-        && let Some(additional_arr) = additional.as_array_mut()
-    {
-        for edit in additional_arr.iter_mut() {
-            if let Some(range) = edit.get_mut("range")
-                && range.is_object()
-            {
-                transform_range(range, region_start_line);
-            }
+    // Transform additional_text_edits if present
+    if let Some(ref mut additional_edits) = item.additional_text_edits {
+        for edit in additional_edits {
+            transform_range(&mut edit.range, region_start_line);
         }
     }
 }
@@ -294,22 +284,10 @@ fn transform_completion_item_range(item: &mut serde_json::Value, region_start_li
 ///
 /// Uses saturating_add to prevent overflow for large line numbers, consistent
 /// with saturating_sub used elsewhere in the codebase.
-fn transform_range(range: &mut serde_json::Value, region_start_line: u32) {
-    // Transform start position
-    if let Some(start) = range.get_mut("start")
-        && let Some(line) = start.get_mut("line")
-        && let Some(line_num) = line.as_u64()
-    {
-        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
-    }
-
-    // Transform end position
-    if let Some(end) = range.get_mut("end")
-        && let Some(line) = end.get_mut("line")
-        && let Some(line_num) = line.as_u64()
-    {
-        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
-    }
+fn transform_range(range: &mut Range, region_start_line: u32) {
+    // Transform start and end positions
+    range.start.line = range.start.line.saturating_add(region_start_line);
+    range.end.line = range.end.line.saturating_add(region_start_line);
 }
 
 #[cfg(test)]
@@ -443,19 +421,34 @@ mod tests {
 
         let transformed = transform_completion_response_to_host(response, region_start_line);
 
-        let items = transformed["result"]["items"].as_array().unwrap();
-        assert_eq!(items[0]["textEdit"]["range"]["start"]["line"], 4);
-        assert_eq!(items[0]["textEdit"]["range"]["end"]["line"], 4);
-        assert_eq!(items[1]["label"], "pairs");
-        assert!(items[1].get("textEdit").is_none());
+        assert!(transformed.is_some());
+        let CompletionResponse::List(list) = transformed.unwrap() else {
+            panic!("Expected CompletionResponse::List");
+        };
+        assert_eq!(list.items.len(), 2);
+
+        // First item should have transformed range
+        let item = &list.items[0];
+        assert_eq!(item.label, "print");
+        if let Some(tower_lsp_server::ls_types::CompletionTextEdit::Edit(ref edit)) = item.text_edit
+        {
+            assert_eq!(edit.range.start.line, 4); // 1 + 3 = 4
+            assert_eq!(edit.range.end.line, 4);
+        } else {
+            panic!("Expected TextEdit");
+        }
+
+        // Second item has no textEdit
+        assert_eq!(list.items[1].label, "pairs");
+        assert!(list.items[1].text_edit.is_none());
     }
 
     #[test]
-    fn completion_response_with_null_result_passes_through() {
+    fn completion_response_with_null_result_returns_none() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
 
-        let transformed = transform_completion_response_to_host(response.clone(), 3);
-        assert_eq!(transformed, response);
+        let transformed = transform_completion_response_to_host(response, 3);
+        assert!(transformed.is_none());
     }
 
     #[test]
@@ -478,9 +471,20 @@ mod tests {
 
         let transformed = transform_completion_response_to_host(response, region_start_line);
 
-        let items = transformed["result"].as_array().unwrap();
-        assert_eq!(items[0]["textEdit"]["range"]["start"]["line"], 5);
-        assert_eq!(items[0]["textEdit"]["range"]["end"]["line"], 5);
+        assert!(transformed.is_some());
+        let CompletionResponse::Array(items) = transformed.unwrap() else {
+            panic!("Expected CompletionResponse::Array");
+        };
+        assert_eq!(items.len(), 1);
+
+        if let Some(tower_lsp_server::ls_types::CompletionTextEdit::Edit(ref edit)) =
+            items[0].text_edit
+        {
+            assert_eq!(edit.range.start.line, 5); // 0 + 5 = 5
+            assert_eq!(edit.range.end.line, 5);
+        } else {
+            panic!("Expected TextEdit");
+        }
     }
 
     #[test]
@@ -511,12 +515,105 @@ mod tests {
 
         let transformed = transform_completion_response_to_host(response, region_start_line);
 
-        let item = &transformed["result"]["items"][0]["textEdit"];
-        // Insert range transformed: line 2 + 10 = 12
-        assert_eq!(item["insert"]["start"]["line"], 12);
-        assert_eq!(item["insert"]["end"]["line"], 12);
-        // Replace range transformed: line 2 + 10 = 12
-        assert_eq!(item["replace"]["start"]["line"], 12);
-        assert_eq!(item["replace"]["end"]["line"], 12);
+        assert!(transformed.is_some());
+        let CompletionResponse::List(list) = transformed.unwrap() else {
+            panic!("Expected CompletionResponse::List");
+        };
+
+        let item = &list.items[0];
+        if let Some(tower_lsp_server::ls_types::CompletionTextEdit::InsertAndReplace(ref edit)) =
+            item.text_edit
+        {
+            // Insert range transformed: line 2 + 10 = 12
+            assert_eq!(edit.insert.start.line, 12);
+            assert_eq!(edit.insert.end.line, 12);
+            // Replace range transformed: line 2 + 10 = 12
+            assert_eq!(edit.replace.start.line, 12);
+            assert_eq!(edit.replace.end.line, 12);
+        } else {
+            panic!("Expected InsertReplaceEdit");
+        }
+    }
+
+    #[test]
+    fn completion_response_without_result_returns_none() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42
+        });
+
+        let transformed = transform_completion_response_to_host(response, 3);
+        assert!(transformed.is_none());
+    }
+
+    #[test]
+    fn completion_response_transforms_additional_text_edits() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "isIncomplete": false,
+                "items": [{
+                    "label": "import",
+                    "additionalTextEdits": [{
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 0 }
+                        },
+                        "newText": "import module\n"
+                    }]
+                }]
+            }
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let CompletionResponse::List(list) = transformed.unwrap() else {
+            panic!("Expected CompletionResponse::List");
+        };
+
+        let item = &list.items[0];
+        assert!(item.additional_text_edits.is_some());
+        let edits = item.additional_text_edits.as_ref().unwrap();
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].range.start.line, 5); // 0 + 5 = 5
+    }
+
+    #[test]
+    fn completion_range_transformation_saturates_on_overflow() {
+        // Test defensive arithmetic: saturating_add prevents panic on overflow
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "label": "test",
+                "textEdit": {
+                    "range": {
+                        "start": { "line": 4294967295u32, "character": 0 },  // u32::MAX
+                        "end": { "line": 4294967295u32, "character": 5 }
+                    },
+                    "newText": "test"
+                }
+            }]
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let CompletionResponse::Array(items) = transformed.unwrap() else {
+            panic!("Expected CompletionResponse::Array");
+        };
+
+        if let Some(tower_lsp_server::ls_types::CompletionTextEdit::Edit(ref edit)) =
+            items[0].text_edit
+        {
+            assert_eq!(edit.range.start.line, u32::MAX);
+            assert_eq!(edit.range.end.line, u32::MAX);
+        } else {
+            panic!("Expected TextEdit");
+        }
     }
 }
