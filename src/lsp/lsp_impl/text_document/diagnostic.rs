@@ -104,8 +104,8 @@ pub(crate) async fn send_diagnostic_with_timeout(
     );
 
     // Apply timeout per-request (ADR-0020: return partial results on timeout)
-    let response = match tokio::time::timeout(timeout, request_future).await {
-        Ok(Ok(response)) => response,
+    match tokio::time::timeout(timeout, request_future).await {
+        Ok(Ok(diagnostics)) => Some(diagnostics),
         Ok(Err(e)) => {
             log::warn!(
                 target: log_target,
@@ -113,7 +113,7 @@ pub(crate) async fn send_diagnostic_with_timeout(
                 info.region_id,
                 e
             );
-            return None;
+            None
         }
         Err(_) => {
             log::warn!(
@@ -122,26 +122,9 @@ pub(crate) async fn send_diagnostic_with_timeout(
                 info.region_id,
                 timeout
             );
-            return None;
+            None
         }
-    };
-
-    // Parse the diagnostic response
-    let result = response.get("result")?;
-    if result.is_null() {
-        return Some(Vec::new());
     }
-
-    // Check if it's an "unchanged" report - treat as empty for aggregation
-    // since we can't meaningfully aggregate unchanged reports
-    if result.get("kind").and_then(|k| k.as_str()) == Some("unchanged") {
-        return Some(Vec::new());
-    }
-
-    // Parse as full report with diagnostics
-    // The positions have already been transformed by transform_diagnostic_response_to_host
-    let items = result.get("items")?;
-    serde_json::from_value::<Vec<Diagnostic>>(items.clone()).ok()
 }
 
 /// Fan-out diagnostic requests to downstream servers.
