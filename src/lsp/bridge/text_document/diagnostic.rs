@@ -23,7 +23,7 @@ use url::Url;
 use super::super::pool::{
     ConnectionHandleSender, INIT_TIMEOUT_SECS, LanguageServerPool, UpstreamId,
 };
-use super::super::protocol::{VirtualDocumentUri, build_bridge_diagnostic_request};
+use super::super::protocol::{RequestId, VirtualDocumentUri};
 
 impl LanguageServerPool {
     /// Send a diagnostic request and wait for the response.
@@ -110,7 +110,7 @@ impl LanguageServerPool {
 
         // Build diagnostic request
         // Note: diagnostic doesn't need position - it operates on the whole document
-        let request = build_bridge_diagnostic_request(
+        let request = build_diagnostic_request(
             &host_uri_lsp,
             injection_language,
             region_id,
@@ -153,12 +153,50 @@ impl LanguageServerPool {
         self.unregister_upstream_request(&upstream_request_id, server_name);
 
         // Parse and transform response to typed diagnostics in host coordinates
-        Ok(parse_and_transform_diagnostic_response(
+        Ok(transform_diagnostic_response_to_host(
             response?,
             region_start_line,
             host_uri.as_str(),
         ))
     }
+}
+
+/// Build a JSON-RPC diagnostic request for a downstream language server.
+///
+/// Like DocumentSymbolParams, DocumentDiagnosticParams operates on the entire document.
+/// The request may include an optional previousResultId for incremental updates.
+///
+/// # Arguments
+/// * `host_uri` - The URI of the host document
+/// * `injection_language` - The injection language (e.g., "lua")
+/// * `region_id` - The unique region ID for this injection
+/// * `request_id` - The JSON-RPC request ID
+/// * `previous_result_id` - Optional previous result ID for incremental updates
+fn build_diagnostic_request(
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    injection_language: &str,
+    region_id: &str,
+    request_id: RequestId,
+    previous_result_id: Option<&str>,
+) -> serde_json::Value {
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    let mut params = serde_json::json!({
+        "textDocument": {
+            "uri": virtual_uri.to_uri_string()
+        }
+    });
+
+    if let Some(prev_id) = previous_result_id {
+        params["previousResultId"] = serde_json::json!(prev_id);
+    }
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id.as_i64(),
+        "method": "textDocument/diagnostic",
+        "params": params
+    })
 }
 
 /// Parse a JSON-RPC diagnostic response and transform coordinates to host document space.
@@ -173,7 +211,7 @@ impl LanguageServerPool {
 /// * `response` - Raw JSON-RPC response envelope (`{"result": {"kind":"full","items":[...]}}`)
 /// * `region_start_line` - Line offset to add to diagnostic ranges
 /// * `host_uri` - The host document URI; only related info matching this URI gets transformed
-fn parse_and_transform_diagnostic_response(
+fn transform_diagnostic_response_to_host(
     response: serde_json::Value,
     region_start_line: u32,
     host_uri: &str,
@@ -289,7 +327,7 @@ mod tests {
             }
         });
 
-        let diagnostics = parse_and_transform_diagnostic_response(response, 5, "unused");
+        let diagnostics = transform_diagnostic_response_to_host(response, 5, "unused");
 
         assert_eq!(diagnostics.len(), 2);
 
@@ -335,7 +373,7 @@ mod tests {
             }
         });
 
-        let diagnostics = parse_and_transform_diagnostic_response(response, 3, "file:///test.md");
+        let diagnostics = transform_diagnostic_response_to_host(response, 3, "file:///test.md");
 
         assert_eq!(diagnostics.len(), 1);
 
@@ -380,7 +418,7 @@ mod tests {
             }
         });
 
-        let diagnostics = parse_and_transform_diagnostic_response(response, 3, "file:///test.md");
+        let diagnostics = transform_diagnostic_response_to_host(response, 3, "file:///test.md");
 
         assert_eq!(diagnostics.len(), 1);
 
@@ -406,7 +444,7 @@ mod tests {
             }
         });
 
-        let diagnostics = parse_and_transform_diagnostic_response(response, 5, "unused");
+        let diagnostics = transform_diagnostic_response_to_host(response, 5, "unused");
         assert!(diagnostics.is_empty());
     }
 
@@ -414,7 +452,7 @@ mod tests {
     fn null_result_returns_empty() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
 
-        let diagnostics = parse_and_transform_diagnostic_response(response, 5, "unused");
+        let diagnostics = transform_diagnostic_response_to_host(response, 5, "unused");
         assert!(diagnostics.is_empty());
     }
 
@@ -422,7 +460,7 @@ mod tests {
     fn missing_result_returns_empty() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "error": { "code": -32603, "message": "internal error" } });
 
-        let diagnostics = parse_and_transform_diagnostic_response(response, 5, "unused");
+        let diagnostics = transform_diagnostic_response_to_host(response, 5, "unused");
         assert!(diagnostics.is_empty());
     }
 
@@ -437,7 +475,7 @@ mod tests {
             }
         });
 
-        let diagnostics = parse_and_transform_diagnostic_response(response, 5, "unused");
+        let diagnostics = transform_diagnostic_response_to_host(response, 5, "unused");
         assert!(diagnostics.is_empty());
     }
 
@@ -482,7 +520,7 @@ mod tests {
             }
         });
 
-        let diagnostics = parse_and_transform_diagnostic_response(response, 3, "unused");
+        let diagnostics = transform_diagnostic_response_to_host(response, 3, "unused");
 
         assert_eq!(diagnostics.len(), 1);
         let related = diagnostics[0].related_information.as_ref().unwrap();
@@ -535,11 +573,77 @@ mod tests {
             }
         });
 
-        let diagnostics = parse_and_transform_diagnostic_response(response, 3, "unused");
+        let diagnostics = transform_diagnostic_response_to_host(response, 3, "unused");
 
         assert_eq!(diagnostics.len(), 1);
         let related = diagnostics[0].related_information.as_ref().unwrap();
         assert!(related.is_empty());
+    }
+
+    fn test_host_uri() -> tower_lsp_server::ls_types::Uri {
+        let url = url::Url::parse("file:///project/doc.md").unwrap();
+        crate::lsp::lsp_impl::url_to_uri(&url).expect("test URL should convert to URI")
+    }
+
+    #[test]
+    fn request_uses_virtual_uri() {
+        let request = build_diagnostic_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            RequestId::new(42),
+            None,
+        );
+
+        let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
+        let url = url::Url::parse(uri_str).expect("URI should be parseable");
+        let filename = url
+            .path_segments()
+            .and_then(|mut s| s.next_back())
+            .unwrap_or("");
+        assert!(
+            filename.starts_with("kakehashi-virtual-uri-") && filename.ends_with(".lua"),
+            "Request should use virtual URI with .lua extension: {}",
+            uri_str
+        );
+    }
+
+    #[test]
+    fn request_has_correct_method_and_structure() {
+        let request = build_diagnostic_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            RequestId::new(123),
+            None,
+        );
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 123);
+        assert_eq!(request["method"], "textDocument/diagnostic");
+        // Diagnostic request has no position parameter (whole-document operation)
+        assert!(
+            request["params"].get("position").is_none(),
+            "Diagnostic request should not have position parameter"
+        );
+        // Without previous_result_id, there should be no previousResultId field
+        assert!(
+            request["params"].get("previousResultId").is_none(),
+            "Diagnostic request without previous_result_id should not have previousResultId"
+        );
+    }
+
+    #[test]
+    fn request_includes_previous_result_id_when_provided() {
+        let request = build_diagnostic_request(
+            &test_host_uri(),
+            "lua",
+            "region-0",
+            RequestId::new(123),
+            Some("prev-result-123"),
+        );
+
+        assert_eq!(request["params"]["previousResultId"], "prev-result-123");
     }
 
     #[test]
@@ -563,7 +667,7 @@ mod tests {
         });
 
         // This should not panic due to overflow
-        let diagnostics = parse_and_transform_diagnostic_response(response, 100, "unused");
+        let diagnostics = transform_diagnostic_response_to_host(response, 100, "unused");
 
         // Values should saturate at u32::MAX
         assert_eq!(diagnostics.len(), 1);
