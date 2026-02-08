@@ -8,6 +8,9 @@
 //! This handler uses `send_request()` to queue requests via the channel-based
 //! writer task, ensuring FIFO ordering with other messages.
 
+mod request;
+mod response;
+
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
@@ -15,10 +18,10 @@ use tower_lsp_server::ls_types::Position;
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
-use super::super::protocol::{
-    ResponseTransformContext, VirtualDocumentUri, build_bridge_definition_request,
-    transform_definition_response_to_host,
-};
+use super::super::protocol::VirtualDocumentUri;
+
+use request::build_bridge_definition_request;
+use response::transform_definition_response_to_host;
 
 impl LanguageServerPool {
     /// Send a definition request and wait for the response.
@@ -113,13 +116,6 @@ impl LanguageServerPool {
             return Err(e.into());
         }
 
-        // Build transformation context for response handling
-        let context = ResponseTransformContext {
-            request_virtual_uri: virtual_uri_string,
-            request_host_uri: host_uri.as_str().to_string(),
-            request_region_start_line: region_start_line,
-        };
-
         // Wait for response via oneshot channel (no Mutex held) with timeout
         let response = handle.wait_for_response(request_id, response_rx).await;
 
@@ -128,6 +124,11 @@ impl LanguageServerPool {
 
         // Transform response to host coordinates and URI
         // Cross-region virtual URIs are filtered out
-        Ok(transform_definition_response_to_host(response?, &context))
+        Ok(transform_definition_response_to_host(
+            response?,
+            &virtual_uri_string,
+            host_uri.as_str(),
+            region_start_line,
+        ))
     }
 }
