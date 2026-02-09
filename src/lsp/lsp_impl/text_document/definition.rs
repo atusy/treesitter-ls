@@ -2,26 +2,16 @@
 
 use tower_lsp_server::jsonrpc::{Id, Result};
 use tower_lsp_server::ls_types::{
-    GotoDefinitionParams, GotoDefinitionResponse, Location, LocationLink, MessageType,
+    GotoDefinitionParams, GotoDefinitionResponse, Location, MessageType,
 };
 
 use crate::language::InjectionResolver;
 use crate::lsp::bridge::UpstreamId;
+use crate::lsp::bridge::location_link_to_location;
 use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
 use super::super::{Kakehashi, uri_to_url};
-
-/// Convert LocationLink to Location for clients that don't support link format.
-///
-/// Uses `target_selection_range` (the symbol name) rather than `target_range`
-/// (the whole definition) for more precise navigation to the symbol itself.
-fn location_link_to_location(link: LocationLink) -> Location {
-    Location {
-        uri: link.target_uri,
-        range: link.target_selection_range,
-    }
-}
 
 impl Kakehashi {
     pub(crate) async fn goto_definition_impl(

@@ -176,6 +176,17 @@ pub(crate) fn location_to_location_link(location: Location) -> LocationLink {
     }
 }
 
+/// Convert a LocationLink to Location for clients that don't support linkSupport.
+///
+/// Uses `target_selection_range` (the symbol name) rather than `target_range`
+/// (the whole definition) for more precise navigation to the symbol itself.
+pub(crate) fn location_link_to_location(link: LocationLink) -> Location {
+    Location {
+        uri: link.target_uri,
+        range: link.target_selection_range,
+    }
+}
+
 /// Transform a single Location to host coordinates for goto endpoints.
 ///
 /// Returns `None` if the location should be filtered out (cross-region virtual URI).

@@ -1,11 +1,12 @@
 //! Goto type definition method for Kakehashi.
 
 use tower_lsp_server::jsonrpc::{Id, Result};
-use tower_lsp_server::ls_types::{Location, MessageType};
 use tower_lsp_server::ls_types::request::{GotoTypeDefinitionParams, GotoTypeDefinitionResponse};
+use tower_lsp_server::ls_types::{Location, MessageType};
 
 use crate::language::InjectionResolver;
 use crate::lsp::bridge::UpstreamId;
+use crate::lsp::bridge::location_link_to_location;
 use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
@@ -130,10 +131,8 @@ impl Kakehashi {
                     Ok(Some(GotoTypeDefinitionResponse::Link(links)))
                 } else {
                     // Client doesn't support LocationLink - convert to Location[]
-                    let locations: Vec<Location> = links
-                        .into_iter()
-                        .map(location_link_to_location)
-                        .collect();
+                    let locations: Vec<Location> =
+                        links.into_iter().map(location_link_to_location).collect();
                     Ok(Some(GotoTypeDefinitionResponse::Array(locations)))
                 }
             }
@@ -148,16 +147,5 @@ impl Kakehashi {
                 Ok(None)
             }
         }
-    }
-}
-
-/// Convert LocationLink to Location for clients that don't support linkSupport.
-///
-/// Uses the target selection range (the precise symbol location) rather than
-/// the full target range for better navigation precision.
-fn location_link_to_location(link: tower_lsp_server::ls_types::LocationLink) -> Location {
-    Location {
-        uri: link.target_uri,
-        range: link.target_selection_range, // Use selection range for precision
     }
 }
