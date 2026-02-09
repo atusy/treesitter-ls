@@ -152,17 +152,24 @@ fn build_definition_request(
 /// into `Option<GotoDefinitionResponse>` with coordinates already transformed.
 ///
 /// Returns `None` for: null results, missing results, and deserialization failures.
+/// Returns `Some(Array(vec![]))` or `Some(Link(vec![]))` for empty arrays, preserving
+/// the semantic distinction between "searched, found nothing" (empty array) and
+/// "search failed/unsupported" (null).
 ///
 /// The GotoDefinitionResponse enum has three variants:
 /// - `Scalar(Location)` - single location
-/// - `Array(Vec<Location>)` - array of locations
-/// - `Link(Vec<LocationLink>)` - array of location links
+/// - `Array(Vec<Location>)` - array of locations (may be empty)
+/// - `Link(Vec<LocationLink>)` - array of location links (may be empty)
 ///
 /// # URI Filtering Logic
 ///
 /// - Real file URIs → keep as-is (cross-file jumps)
 /// - Same virtual URI as request → transform coordinates
 /// - Different virtual URI → filter out (cross-region, can't transform)
+///
+/// When filtering produces an empty array, it is preserved rather than converted to `None`
+/// to maintain compatibility with the previous JSON-based implementation and to provide
+/// better debugging information to clients.
 ///
 /// # Arguments
 /// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
@@ -200,7 +207,9 @@ fn transform_definition_response_to_host(
         // Inspect the first element to distinguish them
         let arr = result.as_array()?;
         if arr.is_empty() {
-            return None;
+            // Preserve empty arrays (semantic: "searched, found nothing")
+            // Return Array variant as the default for empty responses
+            return Some(GotoDefinitionResponse::Array(vec![]));
         }
 
         // Check if first element has "targetUri" to distinguish LocationLink from Location
@@ -219,9 +228,8 @@ fn transform_definition_response_to_host(
                     })
                     .collect();
 
-                if !transformed.is_empty() {
-                    return Some(GotoDefinitionResponse::Link(transformed));
-                }
+                // Preserve empty array after filtering
+                return Some(GotoDefinitionResponse::Link(transformed));
             }
         } else {
             // Try as Location array (Array variant)
@@ -238,9 +246,8 @@ fn transform_definition_response_to_host(
                     })
                     .collect();
 
-                if !transformed.is_empty() {
-                    return Some(GotoDefinitionResponse::Array(transformed));
-                }
+                // Preserve empty array after filtering
+                return Some(GotoDefinitionResponse::Array(transformed));
             }
         }
     }
@@ -625,8 +632,18 @@ mod tests {
             region_start_line,
         );
 
-        // Should filter out cross-region virtual URI
-        assert!(transformed.is_none());
+        // Should filter out cross-region virtual URI, resulting in empty array
+        // Preserve empty array to distinguish "found nothing" from "failed/null"
+        assert!(transformed.is_some());
+        match transformed.unwrap() {
+            GotoDefinitionResponse::Array(locations) => {
+                assert!(
+                    locations.is_empty(),
+                    "Should have empty array after filtering"
+                );
+            }
+            _ => panic!("Expected Array variant with empty vec"),
+        }
     }
 
     #[test]
@@ -700,6 +717,34 @@ mod tests {
         );
 
         assert!(transformed.is_none());
+    }
+
+    #[test]
+    fn definition_response_with_empty_array_preserves_empty() {
+        // Server explicitly returns [] - preserve it to distinguish from null
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": []
+        });
+
+        let transformed = transform_definition_response_to_host(
+            response,
+            "file:///project/kakehashi-virtual-uri-region-0.lua",
+            "file:///project/doc.md",
+            5,
+        );
+
+        assert!(transformed.is_some());
+        match transformed.unwrap() {
+            GotoDefinitionResponse::Array(locations) => {
+                assert!(
+                    locations.is_empty(),
+                    "Should preserve empty array from server"
+                );
+            }
+            _ => panic!("Expected Array variant with empty vec"),
+        }
     }
 
     #[test]
