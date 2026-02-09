@@ -757,10 +757,11 @@ pub(crate) fn is_virtual_uri(uri: &str) -> bool {
     VirtualDocumentUri::is_virtual_uri(uri)
 }
 
-/// Context for transforming definition responses to host coordinates.
+/// Context for transforming JSON-based responses to host coordinates.
 ///
-/// Contains information about the original request to enable proper coordinate
-/// transformation for responses that may reference different virtual documents.
+/// Used by context-based transformers (e.g., workspace edit, document symbol,
+/// inlay hint) that need the full request context to distinguish between real
+/// file URIs, same-region virtual URIs, and cross-region virtual URIs.
 #[derive(Debug, Clone)]
 pub(crate) struct ResponseTransformContext {
     /// The virtual URI string we sent in the request
