@@ -124,9 +124,6 @@ impl LanguageServerPool {
 }
 
 /// Build a JSON-RPC hover request for a downstream language server.
-///
-/// This is a thin wrapper around [`build_position_based_request`] that
-/// specifies the "textDocument/hover" method.
 fn build_hover_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
     host_position: tower_lsp_server::ls_types::Position,

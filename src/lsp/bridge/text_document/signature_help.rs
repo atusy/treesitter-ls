@@ -18,9 +18,6 @@ use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId}
 use super::super::protocol::{RequestId, VirtualDocumentUri, build_position_based_request};
 
 /// Build a JSON-RPC signature help request for a downstream language server.
-///
-/// This is a thin wrapper around [`build_position_based_request`] that
-/// specifies the "textDocument/signatureHelp" method.
 fn build_bridge_signature_help_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
     host_position: tower_lsp_server::ls_types::Position,

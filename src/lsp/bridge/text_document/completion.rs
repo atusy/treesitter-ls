@@ -165,9 +165,6 @@ impl LanguageServerPool {
 }
 
 /// Build a JSON-RPC completion request for a downstream language server.
-///
-/// This is a thin wrapper around [`build_position_based_request`] that
-/// specifies the "textDocument/completion" method.
 fn build_completion_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
     host_position: tower_lsp_server::ls_types::Position,
