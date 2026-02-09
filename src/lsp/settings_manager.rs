@@ -401,4 +401,101 @@ mod tests {
         // Should return false (safe default - use Location[] for compatibility)
         assert!(!manager.supports_definition_link());
     }
+
+    #[test]
+    fn test_supports_type_definition_link_before_init() {
+        // Before initialize() is called, capabilities are not set
+        let manager = SettingsManager::new();
+        // Should return false (safe default - use Location[] for compatibility)
+        assert!(!manager.supports_type_definition_link());
+    }
+
+    #[test]
+    fn test_supports_implementation_link_before_init() {
+        // Before initialize() is called, capabilities are not set
+        let manager = SettingsManager::new();
+        // Should return false (safe default - use Location[] for compatibility)
+        assert!(!manager.supports_implementation_link());
+    }
+
+    #[test]
+    fn test_supports_declaration_link_before_init() {
+        // Before initialize() is called, capabilities are not set
+        let manager = SettingsManager::new();
+        // Should return false (safe default - use Location[] for compatibility)
+        assert!(!manager.supports_declaration_link());
+    }
+
+    /// Parameterized tests for supports_*_link() capability checking.
+    ///
+    /// Each test case varies:
+    /// - `text_document`: Whether text_document field is Some
+    /// - `goto_cap`: Whether the specific goto capability is Some (requires text_document)
+    /// - `link_support`: The actual link_support value (requires goto_cap)
+    /// - `expected`: The expected result
+    ///
+    /// All four goto link methods (definition, type_definition, implementation,
+    /// declaration) use the same GotoCapability struct, so one parameterized test
+    /// covers all four by calling each method.
+    #[rstest]
+    #[case::link_support_true(true, true, Some(true), true)]
+    #[case::link_support_false(true, true, Some(false), false)]
+    #[case::link_support_none(true, true, None, false)]
+    #[case::goto_cap_none(true, false, None, false)]
+    #[case::text_document_none(false, false, None, false)]
+    fn test_supports_goto_link(
+        #[case] text_document: bool,
+        #[case] goto_cap: bool,
+        #[case] link_support: Option<bool>,
+        #[case] expected: bool,
+    ) {
+        use tower_lsp_server::ls_types::{GotoCapability, TextDocumentClientCapabilities};
+
+        let goto = if goto_cap {
+            Some(GotoCapability {
+                dynamic_registration: None,
+                link_support,
+            })
+        } else {
+            None
+        };
+
+        let manager = SettingsManager::new();
+        let caps = ClientCapabilities {
+            text_document: if text_document {
+                Some(TextDocumentClientCapabilities {
+                    definition: goto.clone(),
+                    type_definition: goto.clone(),
+                    implementation: goto.clone(),
+                    declaration: goto,
+                    ..Default::default()
+                })
+            } else {
+                None
+            },
+            ..Default::default()
+        };
+        manager.set_capabilities(caps);
+
+        assert_eq!(
+            manager.supports_definition_link(),
+            expected,
+            "supports_definition_link"
+        );
+        assert_eq!(
+            manager.supports_type_definition_link(),
+            expected,
+            "supports_type_definition_link"
+        );
+        assert_eq!(
+            manager.supports_implementation_link(),
+            expected,
+            "supports_implementation_link"
+        );
+        assert_eq!(
+            manager.supports_declaration_link(),
+            expected,
+            "supports_declaration_link"
+        );
+    }
 }
