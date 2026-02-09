@@ -16,7 +16,7 @@ use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
 use super::super::protocol::{
-    ResponseTransformContext, VirtualDocumentUri, build_bridge_definition_request,
+    RequestId, ResponseTransformContext, VirtualDocumentUri, build_position_based_request,
     transform_definition_response_to_host,
 };
 
@@ -76,7 +76,7 @@ impl LanguageServerPool {
             };
 
         // Build definition request
-        let definition_request = build_bridge_definition_request(
+        let definition_request = build_definition_request(
             &host_uri_lsp,
             host_position,
             injection_language,
@@ -129,4 +129,24 @@ impl LanguageServerPool {
         // Cross-region virtual URIs are filtered out
         Ok(transform_definition_response_to_host(response?, &context))
     }
+}
+
+/// Build a JSON-RPC definition request for a downstream language server.
+fn build_definition_request(
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: RequestId,
+) -> serde_json::Value {
+    build_position_based_request(
+        host_uri,
+        host_position,
+        injection_language,
+        region_id,
+        region_start_line,
+        request_id,
+        "textDocument/definition",
+    )
 }
