@@ -80,13 +80,7 @@ mod tests {
             )
             .await;
 
-        assert!(
-            response.is_ok(),
-            "Hover request should succeed: {:?}",
-            response.err()
-        );
-
-        let _hover_response = response.unwrap();
+        let _hover_response = response.expect("Hover request should succeed");
         // Response should be Some(Hover) or None - either is valid from lua-language-server
         // The important thing is that the request succeeded without errors
     }
@@ -133,13 +127,7 @@ mod tests {
             )
             .await;
 
-        assert!(
-            response.is_ok(),
-            "Completion request should succeed: {:?}",
-            response.err()
-        );
-
-        let _completion_response = response.unwrap();
+        let _completion_response = response.expect("Completion request should succeed");
         // Response should be Some(CompletionResponse) or None - either is valid from lua-language-server
         // The important thing is that the request succeeded without errors
     }
@@ -195,17 +183,11 @@ mod tests {
             )
             .await;
 
-        assert!(
-            response.is_ok(),
-            "Hover request should succeed: {:?}",
-            response.err()
-        );
-
         // Verify that the request succeeded and got a valid response
         // The response will be Option<Hover> - either Some or None is valid
         // The important part is that the bridge layer handled the request/response cycle
         // correctly using unique generated downstream IDs (verified internally)
-        let _hover_response = response.unwrap();
+        let _hover_response = response.expect("Hover request should succeed");
     }
 
     /// Integration test: Verify completion request uses unique generated downstream ID.
@@ -256,12 +238,6 @@ mod tests {
             )
             .await;
 
-        assert!(
-            response.is_ok(),
-            "Completion request should succeed: {:?}",
-            response.err()
-        );
-
         // The fact that the request succeeded means:
         // 1. Unique downstream ID was generated (not conflicting with initialize's ID 1)
         // 2. Request/response routing worked correctly
@@ -269,7 +245,7 @@ mod tests {
         //
         // We can't inspect the JSON-RPC envelope anymore since we return typed
         // Option<CompletionResponse>, but the success confirms ID generation worked.
-        let _completion_response = response.unwrap();
+        let _completion_response = response.expect("Completion request should succeed");
     }
 
     /// Integration test: LanguageServerPool sends document link request to lua-language-server
@@ -310,13 +286,7 @@ mod tests {
             )
             .await;
 
-        assert!(
-            response.is_ok(),
-            "Document link request should succeed: {:?}",
-            response.err()
-        );
-
-        let json_response = response.unwrap();
+        let json_response = response.expect("Document link request should succeed");
         assert_eq!(json_response["jsonrpc"], "2.0");
         assert!(json_response.get("id").is_some());
         // Result can be null, empty array, array of DocumentLink, or error
