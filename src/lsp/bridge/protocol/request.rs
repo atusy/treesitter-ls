@@ -67,6 +67,9 @@ pub(crate) fn build_position_based_request(
 }
 
 /// Build a JSON-RPC document highlight request for a downstream language server.
+///
+/// This is a thin wrapper around `build_position_based_request` with the method
+/// name "textDocument/documentHighlight". The request builder consolidation is complete.
 pub(crate) fn build_bridge_document_highlight_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
     host_position: tower_lsp_server::ls_types::Position,
