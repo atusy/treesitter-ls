@@ -153,17 +153,17 @@ fn build_hover_request(
 /// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
 /// * `region_start_line` - Line offset to add to hover range if present
 fn transform_hover_response_to_host(
-    response: serde_json::Value,
+    mut response: serde_json::Value,
     region_start_line: u32,
 ) -> Option<Hover> {
-    // Extract result from JSON-RPC envelope
-    let result = response.get("result")?;
+    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    let result = response.get_mut("result").map(serde_json::Value::take)?;
     if result.is_null() {
         return None;
     }
 
     // Deserialize into typed Hover
-    let Ok(mut hover) = serde_json::from_value::<Hover>(result.clone()) else {
+    let Ok(mut hover) = serde_json::from_value::<Hover>(result) else {
         return None;
     };
 
