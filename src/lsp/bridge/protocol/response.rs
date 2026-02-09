@@ -511,7 +511,7 @@ fn transform_document_symbol_item(
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
         {
-            // Use the same URI transformation logic as definition responses
+            // Use the shared context-based URI transformation logic
             return transform_location_uri(location, &uri_str, "uri", "range", context);
         }
     }
@@ -529,7 +529,7 @@ fn transform_document_symbol_item(
 /// - textEdits: Optional array of TextEdit (needs transformation, handled separately)
 ///
 /// When label is an array of InlayHintLabelPart, each part may have a location field
-/// that needs URI and range transformation following the same pattern as definition responses.
+/// that needs URI and range transformation following the same context-based pattern.
 ///
 /// This function handles three cases for each location URI:
 /// 1. **Real file URI** (not a virtual URI): Preserved as-is with original coordinates
@@ -588,7 +588,7 @@ fn transform_inlay_hint_item(item: &mut serde_json::Value, context: &ResponseTra
     // Transform label parts if label is an array (InlayHintLabelPart[])
     // Per LSP 3.17: label can be string | InlayHintLabelPart[]
     // InlayHintLabelPart has optional location: { uri, range }
-    // Cross-region parts are filtered out, same as definition response handling
+    // Cross-region parts are filtered out, same as other context-based responses
     if let Some(label) = item.get_mut("label")
         && let Some(label_parts) = label.as_array_mut()
     {
