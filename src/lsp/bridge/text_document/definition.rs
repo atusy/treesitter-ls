@@ -170,74 +170,82 @@ fn build_definition_request(
 /// * `request_host_uri` - The host URI to use in transformed responses
 /// * `region_start_line` - Line offset to add when transforming to host coordinates
 fn transform_definition_response_to_host(
-    response: serde_json::Value,
+    mut response: serde_json::Value,
     request_virtual_uri: &str,
     request_host_uri: &str,
     region_start_line: u32,
 ) -> Option<GotoDefinitionResponse> {
-    // Extract result from JSON-RPC envelope
-    let result = response.get("result")?;
+    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    let result = response.get_mut("result").map(serde_json::Value::take)?;
     if result.is_null() {
         return None;
     }
 
-    // Try to deserialize as each variant
     // The LSP spec defines GotoDefinitionResponse as: Location | Location[] | LocationLink[]
+    // Inspect structure first to determine which type to deserialize into
 
-    // First try as single Location (Scalar variant)
-    if let Ok(location) = serde_json::from_value::<Location>(result.clone()) {
-        let transformed = transform_location(
-            location,
-            request_virtual_uri,
-            request_host_uri,
-            region_start_line,
-        )?;
-        return Some(GotoDefinitionResponse::Scalar(transformed));
-    }
-
-    // Try as LocationLink array (Link variant)
-    if let Ok(links) = serde_json::from_value::<Vec<LocationLink>>(result.clone()) {
-        let transformed: Vec<LocationLink> = links
-            .into_iter()
-            .filter_map(|link| {
-                transform_location_link(
-                    link,
-                    request_virtual_uri,
-                    request_host_uri,
-                    region_start_line,
-                )
-            })
-            .collect();
-
-        // If all items were filtered out, return None
-        if transformed.is_empty() {
+    if result.is_object() {
+        // Must be a single Location (Scalar variant)
+        if let Ok(location) = serde_json::from_value::<Location>(result) {
+            return transform_location(
+                location,
+                request_virtual_uri,
+                request_host_uri,
+                region_start_line,
+            )
+            .map(GotoDefinitionResponse::Scalar);
+        }
+    } else if result.is_array() {
+        // Could be Location[] or LocationLink[]
+        // Inspect the first element to distinguish them
+        let arr = result.as_array()?;
+        if arr.is_empty() {
             return None;
         }
-        return Some(GotoDefinitionResponse::Link(transformed));
-    }
 
-    // Try as Location array (Array variant)
-    if let Ok(locations) = serde_json::from_value::<Vec<Location>>(result.clone()) {
-        let transformed: Vec<Location> = locations
-            .into_iter()
-            .filter_map(|location| {
-                transform_location(
-                    location,
-                    request_virtual_uri,
-                    request_host_uri,
-                    region_start_line,
-                )
-            })
-            .collect();
+        // Check if first element has "targetUri" to distinguish LocationLink from Location
+        if arr.first()?.get("targetUri").is_some() {
+            // Try as LocationLink array (Link variant)
+            if let Ok(links) = serde_json::from_value::<Vec<LocationLink>>(result) {
+                let transformed: Vec<LocationLink> = links
+                    .into_iter()
+                    .filter_map(|link| {
+                        transform_location_link(
+                            link,
+                            request_virtual_uri,
+                            request_host_uri,
+                            region_start_line,
+                        )
+                    })
+                    .collect();
 
-        // If all items were filtered out, return None
-        if transformed.is_empty() {
-            return None;
+                if !transformed.is_empty() {
+                    return Some(GotoDefinitionResponse::Link(transformed));
+                }
+            }
+        } else {
+            // Try as Location array (Array variant)
+            if let Ok(locations) = serde_json::from_value::<Vec<Location>>(result) {
+                let transformed: Vec<Location> = locations
+                    .into_iter()
+                    .filter_map(|location| {
+                        transform_location(
+                            location,
+                            request_virtual_uri,
+                            request_host_uri,
+                            region_start_line,
+                        )
+                    })
+                    .collect();
+
+                if !transformed.is_empty() {
+                    return Some(GotoDefinitionResponse::Array(transformed));
+                }
+            }
         }
-        return Some(GotoDefinitionResponse::Array(transformed));
     }
 
-    // Failed to deserialize as any known variant
+    // Failed to deserialize as any known variant or all items were filtered out
     None
 }
 
