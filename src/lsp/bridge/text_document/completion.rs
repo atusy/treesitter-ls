@@ -96,7 +96,6 @@ impl LanguageServerPool {
         let was_already_opened = self.is_document_opened(&virtual_uri);
 
         // Send didOpen notification only if document hasn't been opened yet
-        // Uses ConnectionHandleSender wrapper for MessageSender trait
         if let Err(e) = self
             .ensure_document_opened(
                 &mut ConnectionHandleSender(&handle),
