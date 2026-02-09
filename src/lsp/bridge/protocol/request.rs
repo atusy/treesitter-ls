@@ -86,38 +86,6 @@ pub(crate) fn build_bridge_document_highlight_request(
     )
 }
 
-/// Build a JSON-RPC references request for a downstream language server.
-///
-/// Note: References request has an additional `context.includeDeclaration` parameter
-/// that other position-based requests don't have.
-pub(crate) fn build_bridge_references_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    host_position: tower_lsp_server::ls_types::Position,
-    injection_language: &str,
-    region_id: &str,
-    region_start_line: u32,
-    include_declaration: bool,
-    request_id: RequestId,
-) -> serde_json::Value {
-    let mut request = build_position_based_request(
-        host_uri,
-        host_position,
-        injection_language,
-        region_id,
-        region_start_line,
-        request_id,
-        "textDocument/references",
-    );
-
-    // Add the context parameter required by references request
-    if let Some(params) = request.get_mut("params") {
-        params["context"] = serde_json::json!({
-            "includeDeclaration": include_declaration
-        });
-    }
-
-    request
-}
 
 /// Build a JSON-RPC rename request for a downstream language server.
 ///
@@ -673,77 +641,6 @@ mod tests {
         let changes = notification["params"]["contentChanges"].as_array().unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0]["text"], content);
-    }
-
-    // ==========================================================================
-    // References request tests
-    // ==========================================================================
-
-    #[test]
-    fn references_request_uses_virtual_uri() {
-        let request = build_bridge_references_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            true, // include_declaration
-            test_request_id(),
-        );
-
-        assert_uses_virtual_uri(&request, "lua");
-    }
-
-    #[test]
-    fn references_request_translates_position_to_virtual_coordinates() {
-        // Host line 5, region starts at line 3 -> virtual line 2
-        let request = build_bridge_references_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            true, // include_declaration
-            test_request_id(),
-        );
-
-        assert_position_request(&request, "textDocument/references", 2);
-    }
-
-    #[test]
-    fn references_request_includes_context_with_include_declaration_true() {
-        let request = build_bridge_references_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            true, // include_declaration = true
-            test_request_id(),
-        );
-
-        assert_eq!(
-            request["params"]["context"]["includeDeclaration"], true,
-            "Context should include includeDeclaration = true"
-        );
-    }
-
-    #[test]
-    fn references_request_includes_context_with_include_declaration_false() {
-        let request = build_bridge_references_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            false, // include_declaration = false
-            test_request_id(),
-        );
-
-        assert_eq!(
-            request["params"]["context"]["includeDeclaration"], false,
-            "Context should include includeDeclaration = false"
-        );
     }
 
     // ==========================================================================

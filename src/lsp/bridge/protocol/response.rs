@@ -32,9 +32,10 @@
 //! ### Type-safe transformers: `fn(response, request_virtual_uri, host_uri, region_start_line)`
 //!
 //! Modern type-safe transformers that return strongly-typed LSP types instead of JSON.
-//! Used by refactored goto-family endpoints.
+//! Used by refactored goto-family and references endpoints.
 //!
 //! - [`transform_goto_response_to_host`] - Returns Option<Vec<LocationLink>> for goto endpoints
+//! - [`transform_references_response_to_host`] - Returns Option<Vec<Location>> for references endpoint
 
 use super::virtual_uri::VirtualDocumentUri;
 use tower_lsp_server::ls_types::{Location, LocationLink, Range, Uri};
