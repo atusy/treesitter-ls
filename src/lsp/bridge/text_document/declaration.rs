@@ -11,7 +11,7 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::{Location, LocationLink, Position, Range, Uri};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
@@ -40,7 +40,7 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
         upstream_request_id: UpstreamId,
-    ) -> io::Result<serde_json::Value> {
+    ) -> io::Result<Option<Vec<LocationLink>>> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(server_name, server_config)
@@ -52,7 +52,7 @@ impl LanguageServerPool {
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
-        // let virtual_uri_string = virtual_uri.to_uri_string(); // Will be used in Step 2
+        let virtual_uri_string = virtual_uri.to_uri_string();
 
         // Register in the upstream request registry FIRST for cancel lookup.
         // This order matters: if a cancel arrives between pool and router registration,
@@ -114,9 +114,13 @@ impl LanguageServerPool {
         // Unregister from the upstream request registry regardless of result
         self.unregister_upstream_request(&upstream_request_id, server_name);
 
-        // Transform response to host coordinates and URI
-        // Cross-region virtual URIs are filtered out
-        Ok(response?)
+        // Transform response to host coordinates
+        Ok(transform_declaration_response_to_host(
+            response?,
+            &virtual_uri_string,
+            &host_uri_lsp,
+            region_start_line,
+        ))
     }
 }
 
@@ -138,4 +142,187 @@ fn build_declaration_request(
         request_id,
         "textDocument/declaration",
     )
+}
+
+/// Parse a JSON-RPC declaration response and transform coordinates to host document space.
+///
+/// The LSP spec defines GotoDeclarationResponse as: Location | Location[] | LocationLink[]
+///
+/// This function normalizes all variants to Vec<LocationLink> by:
+/// - Single Location → [LocationLink]
+/// - Location[] → Vec<LocationLink>
+/// - LocationLink[] → Vec<LocationLink> (identity)
+///
+/// Empty arrays are preserved to distinguish "searched, found nothing" from search failure.
+///
+/// # URI Filtering
+///
+/// Virtual URIs are filtered based on:
+/// - Same virtual URI → transformed to host URI
+/// - Cross-region virtual URI → filtered out (stale coordinate data risk)
+/// - Real file URI → preserved as-is
+///
+/// # Arguments
+/// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
+/// * `request_virtual_uri` - The virtual URI used in the request
+/// * `host_uri` - The host document URI
+/// * `region_start_line` - Line offset to add to ranges
+fn transform_declaration_response_to_host(
+    mut response: serde_json::Value,
+    request_virtual_uri: &str,
+    host_uri: &Uri,
+    region_start_line: u32,
+) -> Option<Vec<LocationLink>> {
+    // Extract result from JSON-RPC envelope using Value::take() to avoid clone
+    // (performance optimization from commit d315711a)
+    let result = response.get_mut("result")?.take();
+
+    if result.is_null() {
+        return None;
+    }
+
+    // Single Location → convert to LocationLink
+    if result.get("uri").is_some() {
+        if let Ok(location) = serde_json::from_value::<Location>(result) {
+            return transform_location(location, request_virtual_uri, host_uri, region_start_line)
+                .map(location_to_location_link)
+                .map(|link| vec![link]);
+        }
+    } else if result.is_array() {
+        // Could be Location[] or LocationLink[]
+        let arr = result.as_array()?;
+        if arr.is_empty() {
+            // Preserve empty arrays (semantic: "searched, found nothing")
+            return Some(vec![]);
+        }
+
+        // Check if first element has "targetUri" to distinguish LocationLink from Location
+        if arr.first()?.get("targetUri").is_some() {
+            // LocationLink[] → use directly
+            if let Ok(links) = serde_json::from_value::<Vec<LocationLink>>(result) {
+                let transformed: Vec<LocationLink> = links
+                    .into_iter()
+                    .filter_map(|link| {
+                        transform_location_link(
+                            link,
+                            request_virtual_uri,
+                            host_uri,
+                            region_start_line,
+                        )
+                    })
+                    .collect();
+
+                // Preserve empty array after filtering
+                return Some(transformed);
+            }
+        } else {
+            // Location[] → convert each to LocationLink
+            if let Ok(locations) = serde_json::from_value::<Vec<Location>>(result) {
+                let transformed: Vec<LocationLink> = locations
+                    .into_iter()
+                    .filter_map(|location| {
+                        transform_location(
+                            location,
+                            request_virtual_uri,
+                            host_uri,
+                            region_start_line,
+                        )
+                        .map(location_to_location_link)
+                    })
+                    .collect();
+
+                // Preserve empty array after filtering
+                return Some(transformed);
+            }
+        }
+    }
+
+    // Failed to deserialize as any known variant or all items were filtered out
+    None
+}
+
+/// Convert a Location to LocationLink format.
+///
+/// This is a lossless conversion - LocationLink is the more feature-rich format.
+/// We set `targetSelectionRange` equal to `targetRange` since Location doesn't
+/// distinguish between the full symbol range and the selection range.
+fn location_to_location_link(location: Location) -> LocationLink {
+    LocationLink {
+        origin_selection_range: None,
+        target_uri: location.uri,
+        target_range: location.range,
+        target_selection_range: location.range, // Use same range for selection
+    }
+}
+
+/// Transform a single Location to host coordinates.
+///
+/// Returns `None` if the location should be filtered out (cross-region virtual URI).
+///
+/// # URI Filtering Logic
+///
+/// 1. Real file URI → preserve as-is (cross-file jump to real file) - KEEP
+/// 2. Same virtual URI as request → transform using request's context - KEEP
+/// 3. Different virtual URI → cross-region jump - FILTER OUT
+fn transform_location(
+    mut location: Location,
+    request_virtual_uri: &str,
+    host_uri: &Uri,
+    region_start_line: u32,
+) -> Option<Location> {
+    let uri_str = location.uri.as_str();
+
+    // Case 1: NOT a virtual URI (real file reference) → preserve as-is
+    if !VirtualDocumentUri::is_virtual_uri(uri_str) {
+        return Some(location);
+    }
+
+    // Case 2: Same virtual URI as request → use request's context
+    if uri_str == request_virtual_uri {
+        location.uri = host_uri.clone();
+        transform_range_to_host(&mut location.range, region_start_line);
+        return Some(location);
+    }
+
+    // Case 3: Different virtual URI (cross-region) → filter out
+    None
+}
+
+/// Transform a single LocationLink to host coordinates.
+///
+/// Returns `None` if the location should be filtered out (cross-region virtual URI).
+///
+/// Note: originSelectionRange stays in host coordinates (it's already correct).
+fn transform_location_link(
+    mut link: LocationLink,
+    request_virtual_uri: &str,
+    host_uri: &Uri,
+    region_start_line: u32,
+) -> Option<LocationLink> {
+    let uri_str = link.target_uri.as_str();
+
+    // Case 1: NOT a virtual URI (real file reference) → preserve as-is
+    if !VirtualDocumentUri::is_virtual_uri(uri_str) {
+        return Some(link);
+    }
+
+    // Case 2: Same virtual URI as request → use request's context
+    if uri_str == request_virtual_uri {
+        link.target_uri = host_uri.clone();
+        transform_range_to_host(&mut link.target_range, region_start_line);
+        transform_range_to_host(&mut link.target_selection_range, region_start_line);
+        return Some(link);
+    }
+
+    // Case 3: Different virtual URI (cross-region) → filter out
+    None
+}
+
+/// Transform a range from virtual to host coordinates.
+///
+/// Uses `saturating_add` to prevent overflow, consistent with `saturating_sub`
+/// used elsewhere in the codebase for defensive arithmetic.
+fn transform_range_to_host(range: &mut Range, region_start_line: u32) {
+    range.start.line = range.start.line.saturating_add(region_start_line);
+    range.end.line = range.end.line.saturating_add(region_start_line);
 }

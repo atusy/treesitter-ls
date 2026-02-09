@@ -122,22 +122,12 @@ impl Kakehashi {
             .await;
 
         match response {
-            Ok(json_response) => {
-                // Parse the implementation response
-                if let Some(result) = json_response.get("result") {
-                    if result.is_null() {
-                        return Ok(None);
-                    }
-
-                    // Parse the result into a GotoImplementationResponse
-                    if let Ok(implementation) =
-                        serde_json::from_value::<GotoImplementationResponse>(result.clone())
-                    {
-                        return Ok(Some(implementation));
-                    }
-                }
-                Ok(None)
+            Ok(Some(links)) => {
+                // Bridge layer returns normalized Vec<LocationLink>
+                // For now, always return as LocationLink[] (capability checking in Step 3)
+                Ok(Some(GotoImplementationResponse::Link(links)))
             }
+            Ok(None) => Ok(None),
             Err(e) => {
                 self.client
                     .log_message(
