@@ -1017,6 +1017,35 @@ mod tests {
         assert!(highlights.is_empty());
     }
 
+    #[test]
+    fn document_highlight_response_preserves_character_coordinates() {
+        // Character coordinates should not be transformed, only line numbers
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "range": {
+                        "start": { "line": 0, "character": 15 },
+                        "end": { "line": 1, "character": 20 }
+                    }
+                }
+            ]
+        });
+        let region_start_line = 10;
+
+        let transformed =
+            transform_document_highlight_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let highlights = transformed.unwrap();
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(highlights[0].range.start.line, 10); // 0 + 10
+        assert_eq!(highlights[0].range.start.character, 15); // Preserved
+        assert_eq!(highlights[0].range.end.line, 11); // 1 + 10
+        assert_eq!(highlights[0].range.end.character, 20); // Preserved
+    }
+
     // ==========================================================================
     // Document link response transformation tests
     // ==========================================================================
