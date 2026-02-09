@@ -18,7 +18,7 @@ use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId}
 use super::super::protocol::{RequestId, VirtualDocumentUri, build_position_based_request};
 
 /// Build a JSON-RPC signature help request for a downstream language server.
-fn build_bridge_signature_help_request(
+fn build_signature_help_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
     host_position: tower_lsp_server::ls_types::Position,
     injection_language: &str,
@@ -127,7 +127,7 @@ impl LanguageServerPool {
             };
 
         // Build signature help request
-        let signature_help_request = build_bridge_signature_help_request(
+        let signature_help_request = build_signature_help_request(
             &host_uri_lsp,
             host_position,
             injection_language,
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn signature_help_request_uses_virtual_uri() {
-        let request = build_bridge_signature_help_request(
+        let request = build_signature_help_request(
             &test_host_uri(),
             test_position(),
             "lua",
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn signature_help_request_translates_position_to_virtual_coordinates() {
         // Host line 5, region starts at line 3 -> virtual line 2
-        let request = build_bridge_signature_help_request(
+        let request = build_signature_help_request(
             &test_host_uri(),
             test_position(),
             "lua",
@@ -285,7 +285,7 @@ mod tests {
             character: 10,
         };
 
-        let request = build_bridge_signature_help_request(
+        let request = build_signature_help_request(
             &test_host_uri(),
             host_position,
             "lua",
