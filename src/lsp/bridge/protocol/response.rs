@@ -776,11 +776,11 @@ pub(crate) fn is_virtual_uri(uri: &str) -> bool {
 #[derive(Debug, Clone)]
 pub(crate) struct ResponseTransformContext {
     /// The virtual URI string we sent in the request
-    pub request_virtual_uri: String,
+    pub(crate) request_virtual_uri: String,
     /// The host URI string for the request
-    pub request_host_uri: String,
+    pub(crate) request_host_uri: String,
     /// The region start line for the request's injection region
-    pub request_region_start_line: u32,
+    pub(crate) request_region_start_line: u32,
 }
 
 /// Transform a WorkspaceEdit response from virtual to host document coordinates.
