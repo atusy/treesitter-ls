@@ -771,18 +771,6 @@ pub(crate) struct ResponseTransformContext {
     pub request_region_start_line: u32,
 }
 
-/// Transform a definition response from virtual to host document coordinates.
-///
-/// Definition responses can be in multiple formats per LSP spec:
-/// - null (no definition found)
-/// - Location (single location with uri + range)
-/// - Location[] (array of locations)
-/// - LocationLink[] (array of location links with target ranges)
-///
-/// This function handles three cases for each URI in the response:
-/// 1. **Real file URI** (not a virtual URI): Preserved as-is with original coordinates
-/// 2. **Same virtual URI as request**: Transformed using request's context
-/// 3. **Different virtual URI** (cross-region): Filtered out from results
 /// Transform a WorkspaceEdit response from virtual to host document coordinates.
 ///
 /// WorkspaceEdit can have two formats per LSP spec:
