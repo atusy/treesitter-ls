@@ -377,32 +377,29 @@ fn transform_location_uri(
 /// * `response` - The JSON-RPC response from the downstream language server
 /// * `region_start_line` - The starting line of the injection region in the host document
 pub(crate) fn transform_document_highlight_response_to_host(
-    mut response: serde_json::Value,
+    response: serde_json::Value,
     region_start_line: u32,
-) -> serde_json::Value {
-    // Get mutable reference to result
-    let Some(result) = response.get_mut("result") else {
-        return response;
-    };
+) -> Option<Vec<tower_lsp_server::ls_types::DocumentHighlight>> {
+    use tower_lsp_server::ls_types::DocumentHighlight;
 
-    // Null result - pass through unchanged
+    // Get result field
+    let result = response.get("result")?;
+
+    // Null result - return None
     if result.is_null() {
-        return response;
+        return None;
     }
 
-    // DocumentHighlight[] is an array
-    if let Some(items) = result.as_array_mut() {
-        for item in items.iter_mut() {
-            // Transform range in each DocumentHighlight
-            if let Some(range) = item.get_mut("range")
-                && range.is_object()
-            {
-                transform_range(range, region_start_line);
-            }
-        }
+    // Parse into typed Vec<DocumentHighlight>
+    let mut highlights: Vec<DocumentHighlight> = serde_json::from_value(result.clone()).ok()?;
+
+    // Transform ranges to host coordinates
+    for highlight in &mut highlights {
+        highlight.range.start.line = highlight.range.start.line.saturating_add(region_start_line);
+        highlight.range.end.line = highlight.range.end.line.saturating_add(region_start_line);
     }
 
-    response
+    Some(highlights)
 }
 
 /// Transform a document link response from virtual to host document coordinates.
@@ -990,31 +987,34 @@ mod tests {
         let transformed =
             transform_document_highlight_response_to_host(response, region_start_line);
 
-        let result = transformed["result"].as_array().unwrap();
-        assert_eq!(result.len(), 3);
-        assert_eq!(result[0]["range"]["start"]["line"], 3);
-        assert_eq!(result[0]["range"]["end"]["line"], 3);
-        assert_eq!(result[0]["kind"], 1);
-        assert_eq!(result[1]["range"]["start"]["line"], 5);
-        assert_eq!(result[1]["range"]["end"]["line"], 5);
-        assert_eq!(result[2]["range"]["start"]["line"], 7);
+        assert!(transformed.is_some());
+        let highlights = transformed.unwrap();
+        assert_eq!(highlights.len(), 3);
+        assert_eq!(highlights[0].range.start.line, 3);
+        assert_eq!(highlights[0].range.end.line, 3);
+        assert!(highlights[0].kind.is_some());
+        assert_eq!(highlights[1].range.start.line, 5);
+        assert_eq!(highlights[1].range.end.line, 5);
+        assert!(highlights[1].kind.is_some());
+        assert_eq!(highlights[2].range.start.line, 7);
     }
 
     #[test]
-    fn document_highlight_response_with_null_result_passes_through() {
+    fn document_highlight_response_with_null_result_returns_none() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
 
-        let transformed = transform_document_highlight_response_to_host(response.clone(), 5);
-        assert_eq!(transformed, response);
+        let transformed = transform_document_highlight_response_to_host(response, 5);
+        assert!(transformed.is_none());
     }
 
     #[test]
-    fn document_highlight_response_with_empty_array_passes_through() {
+    fn document_highlight_response_with_empty_array_returns_empty_vec() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
 
-        let transformed = transform_document_highlight_response_to_host(response.clone(), 5);
-        let result = transformed["result"].as_array().unwrap();
-        assert!(result.is_empty());
+        let transformed = transform_document_highlight_response_to_host(response, 5);
+        assert!(transformed.is_some());
+        let highlights = transformed.unwrap();
+        assert!(highlights.is_empty());
     }
 
     // ==========================================================================

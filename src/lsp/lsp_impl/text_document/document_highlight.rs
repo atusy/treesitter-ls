@@ -121,22 +121,7 @@ impl Kakehashi {
             .await;
 
         match response {
-            Ok(json_response) => {
-                // Parse the document highlight response
-                if let Some(result) = json_response.get("result") {
-                    if result.is_null() {
-                        return Ok(None);
-                    }
-
-                    // Parse the result into Vec<DocumentHighlight>
-                    if let Ok(highlights) =
-                        serde_json::from_value::<Vec<DocumentHighlight>>(result.clone())
-                    {
-                        return Ok(Some(highlights));
-                    }
-                }
-                Ok(None)
-            }
+            Ok(highlights) => Ok(highlights),
             Err(e) => {
                 self.client
                     .log_message(

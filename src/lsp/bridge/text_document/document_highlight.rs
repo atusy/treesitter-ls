@@ -11,7 +11,7 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::{DocumentHighlight, Position};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
@@ -43,7 +43,7 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
         upstream_request_id: UpstreamId,
-    ) -> io::Result<serde_json::Value> {
+    ) -> io::Result<Option<Vec<DocumentHighlight>>> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(server_name, server_config)
