@@ -118,20 +118,7 @@ impl Kakehashi {
             .await;
 
         match response {
-            Ok(json_response) => {
-                // Parse the moniker response
-                if let Some(result) = json_response.get("result") {
-                    if result.is_null() {
-                        return Ok(None);
-                    }
-
-                    // Parse the result into Vec<Moniker>
-                    if let Ok(monikers) = serde_json::from_value::<Vec<Moniker>>(result.clone()) {
-                        return Ok(Some(monikers));
-                    }
-                }
-                Ok(None)
-            }
+            Ok(monikers) => Ok(monikers),
             Err(e) => {
                 self.client
                     .log_message(

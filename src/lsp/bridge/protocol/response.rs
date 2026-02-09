@@ -742,7 +742,7 @@ pub(crate) fn transform_color_presentation_response_to_host(
 /// Transform a moniker response from virtual to host document coordinates.
 ///
 /// Moniker responses don't contain ranges or positions that need transformation.
-/// This function passes through the response unchanged, preserving:
+/// This function parses the JSON response into typed Vec<Moniker>, preserving:
 /// - scheme: The moniker scheme (e.g., "tsc", "npm")
 /// - identifier: The unique identifier for the symbol
 /// - unique: Uniqueness level ("document", "project", "scheme", "global")
@@ -754,11 +754,19 @@ pub(crate) fn transform_color_presentation_response_to_host(
 pub(crate) fn transform_moniker_response_to_host(
     response: serde_json::Value,
     _region_start_line: u32,
-) -> serde_json::Value {
+) -> Option<Vec<tower_lsp_server::ls_types::Moniker>> {
+    // Get result field
+    let result = response.get("result")?;
+
+    // Null result - return None
+    if result.is_null() {
+        return None;
+    }
+
+    // Parse into typed Vec<Moniker>
     // Moniker doesn't have ranges that need transformation.
     // scheme, identifier, unique, and kind are all non-coordinate data.
-    // Pass through unchanged.
-    response
+    serde_json::from_value(result.clone()).ok()
 }
 
 /// Check if a URI string represents a virtual document.
@@ -2407,7 +2415,7 @@ mod tests {
     // ==========================================================================
 
     #[test]
-    fn moniker_response_passes_through_unchanged() {
+    fn moniker_response_returns_typed_vec() {
         // Moniker[] has scheme/identifier/unique/kind - no position/range data
         let response = json!({
             "jsonrpc": "2.0",
@@ -2429,27 +2437,33 @@ mod tests {
         });
         let region_start_line = 5;
 
-        let transformed = transform_moniker_response_to_host(response.clone(), region_start_line);
+        let transformed = transform_moniker_response_to_host(response, region_start_line);
 
-        // Response should be unchanged - no coordinates to transform
-        assert_eq!(transformed, response);
+        assert!(transformed.is_some());
+        let monikers = transformed.unwrap();
+        assert_eq!(monikers.len(), 2);
+        assert_eq!(monikers[0].scheme, "tsc");
+        assert_eq!(monikers[0].identifier, "typescript:foo:bar:Baz");
+        assert_eq!(monikers[1].scheme, "npm");
+        assert_eq!(monikers[1].identifier, "package:module:Class.method");
     }
 
     #[test]
-    fn moniker_response_with_null_result_passes_through() {
+    fn moniker_response_with_null_result_returns_none() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
 
-        let transformed = transform_moniker_response_to_host(response.clone(), 5);
-        assert_eq!(transformed, response);
+        let transformed = transform_moniker_response_to_host(response, 5);
+        assert!(transformed.is_none());
     }
 
     #[test]
-    fn moniker_response_with_empty_array_passes_through() {
+    fn moniker_response_with_empty_array_returns_empty_vec() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
 
-        let transformed = transform_moniker_response_to_host(response.clone(), 5);
-        let result = transformed["result"].as_array().unwrap();
-        assert!(result.is_empty());
+        let transformed = transform_moniker_response_to_host(response, 5);
+        assert!(transformed.is_some());
+        let monikers = transformed.unwrap();
+        assert!(monikers.is_empty());
     }
 
     // ==========================================================================
