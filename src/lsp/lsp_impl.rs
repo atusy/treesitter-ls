@@ -231,6 +231,13 @@ impl Kakehashi {
         self.settings_manager.supports_definition_link()
     }
 
+    /// Check if the client supports type definition link (LocationLink[]).
+    ///
+    /// Delegates to SettingsManager for capability checking.
+    fn supports_type_definition_link(&self) -> bool {
+        self.settings_manager.supports_type_definition_link()
+    }
+
     /// Check if the given search paths include the default data directory.
     fn search_paths_include_default_data_dir(&self, search_paths: &[String]) -> bool {
         self.settings_manager

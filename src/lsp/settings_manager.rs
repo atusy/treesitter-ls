@@ -214,6 +214,20 @@ impl SettingsManager {
             .and_then(|def| def.link_support)
             .unwrap_or(false)
     }
+
+    /// Check if client supports LocationLink[] for type definition responses.
+    ///
+    /// Per LSP spec, when linkSupport is true, the server can return LocationLink[]
+    /// which provides richer information. When false or missing, the server should
+    /// return Location[] for compatibility.
+    pub(crate) fn supports_type_definition_link(&self) -> bool {
+        self.client_capabilities
+            .get()
+            .and_then(|caps| caps.text_document.as_ref())
+            .and_then(|td| td.type_definition.as_ref())
+            .and_then(|typedef| typedef.link_support)
+            .unwrap_or(false)
+    }
 }
 
 #[cfg(test)]
