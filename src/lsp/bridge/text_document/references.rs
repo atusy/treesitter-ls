@@ -11,13 +11,12 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::{Location, Position};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
 use super::super::protocol::{
-    ResponseTransformContext, VirtualDocumentUri, build_bridge_references_request,
-    transform_definition_response_to_host,
+    VirtualDocumentUri, build_position_based_request, transform_references_response_to_host,
 };
 
 impl LanguageServerPool {
@@ -44,7 +43,7 @@ impl LanguageServerPool {
         virtual_content: &str,
         include_declaration: bool,
         upstream_request_id: UpstreamId,
-    ) -> io::Result<serde_json::Value> {
+    ) -> io::Result<Option<Vec<Location>>> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(server_name, server_config)
@@ -75,16 +74,23 @@ impl LanguageServerPool {
                 }
             };
 
-        // Build references request
-        let references_request = build_bridge_references_request(
+        // Build references request using position-based request builder
+        let mut references_request = build_position_based_request(
             &host_uri_lsp,
             host_position,
             injection_language,
             region_id,
             region_start_line,
-            include_declaration,
             request_id,
+            "textDocument/references",
         );
+
+        // Add the context parameter required by references request
+        if let Some(params) = references_request.get_mut("params") {
+            params["context"] = serde_json::json!({
+                "includeDeclaration": include_declaration
+            });
+        }
 
         // Use a closure for cleanup on any failure path
         let cleanup = || {
@@ -113,13 +119,6 @@ impl LanguageServerPool {
             return Err(e.into());
         }
 
-        // Build transformation context for response handling
-        let context = ResponseTransformContext {
-            request_virtual_uri: virtual_uri_string,
-            request_host_uri: host_uri.as_str().to_string(),
-            request_region_start_line: region_start_line,
-        };
-
         // Wait for response via oneshot channel (no Mutex held) with timeout
         let response = handle.wait_for_response(request_id, response_rx).await;
 
@@ -127,8 +126,12 @@ impl LanguageServerPool {
         self.unregister_upstream_request(&upstream_request_id, server_name);
 
         // Transform response to host coordinates and URI
-        // Reuse transform_definition_response_to_host (same Location[] format per LSP spec)
-        // Cross-region virtual URIs are filtered out
-        Ok(transform_definition_response_to_host(response?, &context))
+        // Returns Option<Vec<Location>>, filters cross-region virtual URIs
+        Ok(transform_references_response_to_host(
+            response?,
+            &virtual_uri_string,
+            &host_uri_lsp,
+            region_start_line,
+        ))
     }
 }

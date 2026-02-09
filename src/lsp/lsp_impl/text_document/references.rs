@@ -123,20 +123,7 @@ impl Kakehashi {
             .await;
 
         match response {
-            Ok(json_response) => {
-                // Parse the references response
-                if let Some(result) = json_response.get("result") {
-                    if result.is_null() {
-                        return Ok(None);
-                    }
-
-                    // Parse the result into Vec<Location>
-                    if let Ok(locations) = serde_json::from_value::<Vec<Location>>(result.clone()) {
-                        return Ok(Some(locations));
-                    }
-                }
-                Ok(None)
-            }
+            Ok(locations) => Ok(locations),
             Err(e) => {
                 self.client
                     .log_message(
