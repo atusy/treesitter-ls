@@ -121,7 +121,11 @@ impl Kakehashi {
             .await;
 
         match response {
-            Ok(definition) => Ok(definition),
+            Ok(Some(links)) => {
+                // Wrap normalized Vec<LocationLink> back to GotoDefinitionResponse
+                Ok(Some(GotoDefinitionResponse::Link(links)))
+            }
+            Ok(None) => Ok(None),
             Err(e) => {
                 self.client
                     .log_message(

@@ -11,7 +11,7 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::{GotoDefinitionResponse, Location, LocationLink, Position, Range};
+use tower_lsp_server::ls_types::{Location, LocationLink, Position, Range};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
@@ -41,7 +41,7 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
         upstream_request_id: UpstreamId,
-    ) -> io::Result<Option<GotoDefinitionResponse>> {
+    ) -> io::Result<Option<Vec<LocationLink>>> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(server_name, server_config)
@@ -148,18 +148,19 @@ fn build_definition_request(
 
 /// Parse a JSON-RPC definition response and transform coordinates to host document space.
 ///
-/// Instead of returning a modified JSON envelope, this deserializes the response
-/// into `Option<GotoDefinitionResponse>` with coordinates already transformed.
+/// All response formats (Location, Location[], LocationLink[]) are normalized to
+/// `Vec<LocationLink>` for simpler internal handling. The LSP handler will wrap this
+/// back to GotoDefinitionResponse for the protocol.
 ///
 /// Returns `None` for: null results, missing results, and deserialization failures.
-/// Returns `Some(Array(vec![]))` or `Some(Link(vec![]))` for empty arrays, preserving
-/// the semantic distinction between "searched, found nothing" (empty array) and
-/// "search failed/unsupported" (null).
+/// Returns `Some(vec![])` for empty arrays, preserving the semantic distinction
+/// between "searched, found nothing" (empty array) and "search failed/unsupported" (null).
 ///
-/// The GotoDefinitionResponse enum has three variants:
-/// - `Scalar(Location)` - single location
-/// - `Array(Vec<Location>)` - array of locations (may be empty)
-/// - `Link(Vec<LocationLink>)` - array of location links (may be empty)
+/// # Conversion Strategy
+///
+/// - Single `Location` → convert to `LocationLink` with `targetSelectionRange = targetRange`
+/// - `Location[]` → convert each to `LocationLink`
+/// - `LocationLink[]` → use directly (already in target format)
 ///
 /// # URI Filtering Logic
 ///
@@ -168,8 +169,7 @@ fn build_definition_request(
 /// - Different virtual URI → filter out (cross-region, can't transform)
 ///
 /// When filtering produces an empty array, it is preserved rather than converted to `None`
-/// to maintain compatibility with the previous JSON-based implementation and to provide
-/// better debugging information to clients.
+/// to provide better debugging information to clients.
 ///
 /// # Arguments
 /// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
@@ -181,7 +181,7 @@ fn transform_definition_response_to_host(
     request_virtual_uri: &str,
     request_host_uri: &str,
     region_start_line: u32,
-) -> Option<GotoDefinitionResponse> {
+) -> Option<Vec<LocationLink>> {
     // Extract result from JSON-RPC envelope, taking ownership to avoid clones
     let result = response.get_mut("result").map(serde_json::Value::take)?;
     if result.is_null() {
@@ -189,10 +189,10 @@ fn transform_definition_response_to_host(
     }
 
     // The LSP spec defines GotoDefinitionResponse as: Location | Location[] | LocationLink[]
-    // Inspect structure first to determine which type to deserialize into
+    // Normalize all formats to Vec<LocationLink> for simpler internal handling
 
     if result.is_object() {
-        // Must be a single Location (Scalar variant)
+        // Single Location → convert to LocationLink
         if let Ok(location) = serde_json::from_value::<Location>(result) {
             return transform_location(
                 location,
@@ -200,21 +200,19 @@ fn transform_definition_response_to_host(
                 request_host_uri,
                 region_start_line,
             )
-            .map(GotoDefinitionResponse::Scalar);
+            .map(|loc| vec![location_to_location_link(loc)]);
         }
     } else if result.is_array() {
         // Could be Location[] or LocationLink[]
-        // Inspect the first element to distinguish them
         let arr = result.as_array()?;
         if arr.is_empty() {
             // Preserve empty arrays (semantic: "searched, found nothing")
-            // Return Array variant as the default for empty responses
-            return Some(GotoDefinitionResponse::Array(vec![]));
+            return Some(vec![]);
         }
 
         // Check if first element has "targetUri" to distinguish LocationLink from Location
         if arr.first()?.get("targetUri").is_some() {
-            // Try as LocationLink array (Link variant)
+            // LocationLink[] → use directly
             if let Ok(links) = serde_json::from_value::<Vec<LocationLink>>(result) {
                 let transformed: Vec<LocationLink> = links
                     .into_iter()
@@ -229,12 +227,12 @@ fn transform_definition_response_to_host(
                     .collect();
 
                 // Preserve empty array after filtering
-                return Some(GotoDefinitionResponse::Link(transformed));
+                return Some(transformed);
             }
         } else {
-            // Try as Location array (Array variant)
+            // Location[] → convert each to LocationLink
             if let Ok(locations) = serde_json::from_value::<Vec<Location>>(result) {
-                let transformed: Vec<Location> = locations
+                let transformed: Vec<LocationLink> = locations
                     .into_iter()
                     .filter_map(|location| {
                         transform_location(
@@ -243,17 +241,32 @@ fn transform_definition_response_to_host(
                             request_host_uri,
                             region_start_line,
                         )
+                        .map(location_to_location_link)
                     })
                     .collect();
 
                 // Preserve empty array after filtering
-                return Some(GotoDefinitionResponse::Array(transformed));
+                return Some(transformed);
             }
         }
     }
 
     // Failed to deserialize as any known variant or all items were filtered out
     None
+}
+
+/// Convert a Location to LocationLink format.
+///
+/// This is a lossless conversion - LocationLink is the more feature-rich format.
+/// We set `targetSelectionRange` equal to `targetRange` since Location doesn't
+/// distinguish between the full symbol range and the selection range.
+fn location_to_location_link(location: Location) -> LocationLink {
+    LocationLink {
+        origin_selection_range: None,
+        target_uri: location.uri,
+        target_range: location.range,
+        target_selection_range: location.range, // Use same range for selection
+    }
 }
 
 /// Transform a single Location to host coordinates.
@@ -471,14 +484,13 @@ mod tests {
         );
 
         assert!(transformed.is_some());
-        match transformed.unwrap() {
-            GotoDefinitionResponse::Scalar(location) => {
-                assert_eq!(location.uri.as_str(), host_uri);
-                assert_eq!(location.range.start.line, 3);
-                assert_eq!(location.range.end.line, 3);
-            }
-            _ => panic!("Expected Scalar variant"),
-        }
+        let links = transformed.unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_uri.as_str(), host_uri);
+        assert_eq!(links[0].target_range.start.line, 3);
+        assert_eq!(links[0].target_range.end.line, 3);
+        assert_eq!(links[0].target_selection_range.start.line, 3);
+        assert_eq!(links[0].target_selection_range.end.line, 3);
     }
 
     #[test]
@@ -515,14 +527,10 @@ mod tests {
         );
 
         assert!(transformed.is_some());
-        match transformed.unwrap() {
-            GotoDefinitionResponse::Array(locations) => {
-                assert_eq!(locations.len(), 2);
-                assert_eq!(locations[0].range.start.line, 3);
-                assert_eq!(locations[1].range.start.line, 5);
-            }
-            _ => panic!("Expected Array variant"),
-        }
+        let links = transformed.unwrap();
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].target_range.start.line, 3);
+        assert_eq!(links[1].target_range.start.line, 5);
     }
 
     #[test]
@@ -556,15 +564,11 @@ mod tests {
         );
 
         assert!(transformed.is_some());
-        match transformed.unwrap() {
-            GotoDefinitionResponse::Link(links) => {
-                assert_eq!(links.len(), 1);
-                assert_eq!(links[0].target_uri.as_str(), host_uri);
-                assert_eq!(links[0].target_range.start.line, 3);
-                assert_eq!(links[0].target_selection_range.start.line, 3);
-            }
-            _ => panic!("Expected Link variant"),
-        }
+        let links = transformed.unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_uri.as_str(), host_uri);
+        assert_eq!(links[0].target_range.start.line, 3);
+        assert_eq!(links[0].target_selection_range.start.line, 3);
     }
 
     #[test]
@@ -595,14 +599,10 @@ mod tests {
         );
 
         assert!(transformed.is_some());
-        match transformed.unwrap() {
-            GotoDefinitionResponse::Array(locations) => {
-                assert_eq!(locations.len(), 1);
-                assert_eq!(locations[0].uri.as_str(), real_file_uri);
-                assert_eq!(locations[0].range.start.line, 10); // Unchanged
-            }
-            _ => panic!("Expected Array variant"),
-        }
+        let links = transformed.unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_uri.as_str(), real_file_uri);
+        assert_eq!(links[0].target_range.start.line, 10); // Unchanged
     }
 
     #[test]
@@ -635,15 +635,8 @@ mod tests {
         // Should filter out cross-region virtual URI, resulting in empty array
         // Preserve empty array to distinguish "found nothing" from "failed/null"
         assert!(transformed.is_some());
-        match transformed.unwrap() {
-            GotoDefinitionResponse::Array(locations) => {
-                assert!(
-                    locations.is_empty(),
-                    "Should have empty array after filtering"
-                );
-            }
-            _ => panic!("Expected Array variant with empty vec"),
-        }
+        let links = transformed.unwrap();
+        assert!(links.is_empty(), "Should have empty array after filtering");
     }
 
     #[test]
@@ -689,16 +682,12 @@ mod tests {
         );
 
         assert!(transformed.is_some());
-        match transformed.unwrap() {
-            GotoDefinitionResponse::Array(locations) => {
-                assert_eq!(locations.len(), 2); // Cross-region filtered out
-                assert_eq!(locations[0].uri.as_str(), host_uri);
-                assert_eq!(locations[0].range.start.line, 3); // Transformed
-                assert_eq!(locations[1].uri.as_str(), real_file_uri);
-                assert_eq!(locations[1].range.start.line, 10); // Preserved
-            }
-            _ => panic!("Expected Array variant"),
-        }
+        let links = transformed.unwrap();
+        assert_eq!(links.len(), 2); // Cross-region filtered out
+        assert_eq!(links[0].target_uri.as_str(), host_uri);
+        assert_eq!(links[0].target_range.start.line, 3); // Transformed
+        assert_eq!(links[1].target_uri.as_str(), real_file_uri);
+        assert_eq!(links[1].target_range.start.line, 10); // Preserved
     }
 
     #[test]
@@ -736,15 +725,8 @@ mod tests {
         );
 
         assert!(transformed.is_some());
-        match transformed.unwrap() {
-            GotoDefinitionResponse::Array(locations) => {
-                assert!(
-                    locations.is_empty(),
-                    "Should preserve empty array from server"
-                );
-            }
-            _ => panic!("Expected Array variant with empty vec"),
-        }
+        let links = transformed.unwrap();
+        assert!(links.is_empty(), "Should preserve empty array from server");
     }
 
     #[test]
@@ -773,15 +755,12 @@ mod tests {
         );
 
         assert!(transformed.is_some());
-        match transformed.unwrap() {
-            GotoDefinitionResponse::Scalar(location) => {
-                assert_eq!(
-                    location.range.start.line,
-                    u32::MAX,
-                    "Overflow should saturate at u32::MAX, not panic"
-                );
-            }
-            _ => panic!("Expected Scalar variant"),
-        }
+        let links = transformed.unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            links[0].target_range.start.line,
+            u32::MAX,
+            "Overflow should saturate at u32::MAX, not panic"
+        );
     }
 }
