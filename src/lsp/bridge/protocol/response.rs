@@ -13,29 +13,24 @@
 //! Used when transformation only requires adding a line offset. The response contains
 //! ranges that reference the same virtual document as the request.
 //!
-//! - [`transform_moniker_response_to_host`] - No ranges (passthrough)
-//! - [`transform_document_highlight_response_to_host`] - Ranges in highlight array
-//! - [`transform_document_link_response_to_host`] - Ranges in document links
+//! Examples: moniker (passthrough), document highlight, document link
 //!
 //! ### Context-based transformers: `fn(response, &ResponseTransformContext)`
 //!
-//! Used when responses may contain URIs pointing to different documents. These need
-//! the full request context to distinguish between:
+//! Used when JSON-based responses may contain URIs pointing to different documents.
+//! These need the full request context to distinguish between:
 //! - Real file URIs (preserved as-is)
 //! - Same virtual URI as request (transformed with context)
 //! - Cross-region virtual URIs (filtered out)
 //!
-//! - [`transform_definition_response_to_host`] - Location/LocationLink with URIs
-//! - [`transform_workspace_edit_to_host`] - TextDocumentEdit with URIs
-//! - [`transform_document_symbol_response_to_host`] - SymbolInformation with URIs
+//! Examples: workspace edit, document symbol, inlay hint
 //!
 //! ### Type-safe transformers: `fn(response, request_virtual_uri, host_uri, region_start_line)`
 //!
-//! Modern type-safe transformers that return strongly-typed LSP types instead of JSON.
-//! Used by refactored goto-family and references endpoints.
+//! Type-safe transformers that return strongly-typed LSP types instead of JSON.
+//! Apply the same URI-based filtering logic as context-based transformers.
 //!
-//! - [`transform_goto_response_to_host`] - Returns Option<Vec<LocationLink>> for goto endpoints
-//! - [`transform_references_response_to_host`] - Returns Option<Vec<Location>> for references endpoint
+//! Examples: goto definition/type_definition/implementation/declaration, references
 
 use super::virtual_uri::VirtualDocumentUri;
 use tower_lsp_server::ls_types::{Location, LocationLink, Range, Uri};
