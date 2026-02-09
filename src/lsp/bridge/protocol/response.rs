@@ -2466,6 +2466,36 @@ mod tests {
         assert!(monikers.is_empty());
     }
 
+    #[test]
+    fn moniker_response_ignores_region_start_line() {
+        // Verify that region_start_line parameter has no effect on moniker response
+        // since moniker doesn't contain coordinate data
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "scheme": "test",
+                    "identifier": "test:identifier",
+                    "unique": "project"
+                }
+            ]
+        });
+
+        // Transform with different region_start_line values
+        let transformed1 = transform_moniker_response_to_host(response.clone(), 0);
+        let transformed2 = transform_moniker_response_to_host(response, 1000);
+
+        // Both should produce identical results
+        assert!(transformed1.is_some());
+        assert!(transformed2.is_some());
+        let monikers1 = transformed1.unwrap();
+        let monikers2 = transformed2.unwrap();
+        assert_eq!(monikers1.len(), monikers2.len());
+        assert_eq!(monikers1[0].scheme, monikers2[0].scheme);
+        assert_eq!(monikers1[0].identifier, monikers2[0].identifier);
+    }
+
     // ==========================================================================
     // JSON range transformation edge case tests
     // ==========================================================================
