@@ -1,3 +1,4 @@
+mod bridge_context;
 pub(crate) mod text_document;
 
 use std::collections::HashSet;

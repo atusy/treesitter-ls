@@ -145,4 +145,3 @@ fn build_declaration_request(
         "textDocument/declaration",
     )
 }
-

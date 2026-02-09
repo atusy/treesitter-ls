@@ -145,4 +145,3 @@ fn build_implementation_request(
         "textDocument/implementation",
     )
 }
-

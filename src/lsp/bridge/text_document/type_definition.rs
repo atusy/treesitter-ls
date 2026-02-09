@@ -145,4 +145,3 @@ fn build_type_definition_request(
         "textDocument/typeDefinition",
     )
 }
-

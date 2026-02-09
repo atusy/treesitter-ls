@@ -86,7 +86,6 @@ pub(crate) fn build_bridge_document_highlight_request(
     )
 }
 
-
 /// Build a JSON-RPC rename request for a downstream language server.
 ///
 /// Note: Rename request has an additional `newName` parameter that specifies

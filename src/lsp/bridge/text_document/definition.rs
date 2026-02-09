@@ -150,8 +150,8 @@ fn build_definition_request(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::super::protocol::transform_goto_response_to_host;
+    use super::*;
     use tower_lsp_server::ls_types::Position;
 
     // ==========================================================================
@@ -268,12 +268,8 @@ mod tests {
         let host_uri = test_host_uri();
         let region_start_line = 3;
 
-        let transformed = transform_goto_response_to_host(
-            response,
-            virtual_uri,
-            &host_uri,
-            region_start_line,
-        );
+        let transformed =
+            transform_goto_response_to_host(response, virtual_uri, &host_uri, region_start_line);
 
         assert!(transformed.is_some());
         let links = transformed.unwrap();
@@ -311,12 +307,8 @@ mod tests {
         let host_uri = test_host_uri();
         let region_start_line = 3;
 
-        let transformed = transform_goto_response_to_host(
-            response,
-            virtual_uri,
-            &host_uri,
-            region_start_line,
-        );
+        let transformed =
+            transform_goto_response_to_host(response, virtual_uri, &host_uri, region_start_line);
 
         assert!(transformed.is_some());
         let links = transformed.unwrap();
@@ -348,12 +340,8 @@ mod tests {
         let host_uri = test_host_uri();
         let region_start_line = 3;
 
-        let transformed = transform_goto_response_to_host(
-            response,
-            virtual_uri,
-            &host_uri,
-            region_start_line,
-        );
+        let transformed =
+            transform_goto_response_to_host(response, virtual_uri, &host_uri, region_start_line);
 
         assert!(transformed.is_some());
         let links = transformed.unwrap();
@@ -383,12 +371,8 @@ mod tests {
         let host_uri = test_host_uri();
         let region_start_line = 5;
 
-        let transformed = transform_goto_response_to_host(
-            response,
-            virtual_uri,
-            &host_uri,
-            region_start_line,
-        );
+        let transformed =
+            transform_goto_response_to_host(response, virtual_uri, &host_uri, region_start_line);
 
         assert!(transformed.is_some());
         let links = transformed.unwrap();
@@ -490,12 +474,8 @@ mod tests {
             "result": null
         });
 
-        let transformed = transform_goto_response_to_host(
-            response,
-            "file:///virtual.lua",
-            &test_host_uri(),
-            5,
-        );
+        let transformed =
+            transform_goto_response_to_host(response, "file:///virtual.lua", &test_host_uri(), 5);
 
         assert!(transformed.is_none());
     }
@@ -539,12 +519,8 @@ mod tests {
         let host_uri = test_host_uri();
         let region_start_line = 10;
 
-        let transformed = transform_goto_response_to_host(
-            response,
-            virtual_uri,
-            &host_uri,
-            region_start_line,
-        );
+        let transformed =
+            transform_goto_response_to_host(response, virtual_uri, &host_uri, region_start_line);
 
         assert!(transformed.is_some());
         let links = transformed.unwrap();
