@@ -531,4 +531,63 @@ mod tests {
             "Overflow should saturate at u32::MAX, not panic"
         );
     }
+
+    #[test]
+    fn definition_response_transforms_origin_selection_range_in_location_link() {
+        // originSelectionRange is returned in virtual coordinates by the downstream
+        // server; it must be translated to host coordinates just like target_range
+        // and target_selection_range.
+        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "originSelectionRange": {
+                        "start": { "line": 2, "character": 4 },
+                        "end": { "line": 2, "character": 9 }
+                    },
+                    "targetUri": virtual_uri,
+                    "targetRange": {
+                        "start": { "line": 5, "character": 0 },
+                        "end": { "line": 8, "character": 1 }
+                    },
+                    "targetSelectionRange": {
+                        "start": { "line": 5, "character": 4 },
+                        "end": { "line": 5, "character": 9 }
+                    }
+                }
+            ]
+        });
+        let host_uri = test_host_uri();
+        let region_start_line = 10;
+
+        let transformed =
+            transform_goto_response_to_host(response, virtual_uri, &host_uri, region_start_line);
+
+        assert!(transformed.is_some());
+        let links = transformed.unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_uri, host_uri);
+        // target_range: line 5 + 10 = 15
+        assert_eq!(links[0].target_range.start.line, 15);
+        assert_eq!(links[0].target_range.end.line, 18);
+        // target_selection_range: line 5 + 10 = 15
+        assert_eq!(links[0].target_selection_range.start.line, 15);
+        assert_eq!(links[0].target_selection_range.end.line, 15);
+        // origin_selection_range: line 2 + 10 = 12 (the bug: currently NOT transformed)
+        let origin = links[0]
+            .origin_selection_range
+            .expect("origin_selection_range should be present");
+        assert_eq!(
+            origin.start.line, 12,
+            "origin_selection_range start line should be translated from virtual (2) to host (12)"
+        );
+        assert_eq!(
+            origin.end.line, 12,
+            "origin_selection_range end line should be translated from virtual (2) to host (12)"
+        );
+        assert_eq!(origin.start.character, 4);
+        assert_eq!(origin.end.character, 9);
+    }
 }
