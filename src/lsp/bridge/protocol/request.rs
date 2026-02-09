@@ -66,46 +66,6 @@ pub(crate) fn build_position_based_request(
     })
 }
 
-/// Build a JSON-RPC implementation request for a downstream language server.
-pub(crate) fn build_bridge_implementation_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    host_position: tower_lsp_server::ls_types::Position,
-    injection_language: &str,
-    region_id: &str,
-    region_start_line: u32,
-    request_id: RequestId,
-) -> serde_json::Value {
-    build_position_based_request(
-        host_uri,
-        host_position,
-        injection_language,
-        region_id,
-        region_start_line,
-        request_id,
-        "textDocument/implementation",
-    )
-}
-
-/// Build a JSON-RPC declaration request for a downstream language server.
-pub(crate) fn build_bridge_declaration_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    host_position: tower_lsp_server::ls_types::Position,
-    injection_language: &str,
-    region_id: &str,
-    region_start_line: u32,
-    request_id: RequestId,
-) -> serde_json::Value {
-    build_position_based_request(
-        host_uri,
-        host_position,
-        injection_language,
-        region_id,
-        region_start_line,
-        request_id,
-        "textDocument/declaration",
-    )
-}
-
 /// Build a JSON-RPC document highlight request for a downstream language server.
 pub(crate) fn build_bridge_document_highlight_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
@@ -713,72 +673,6 @@ mod tests {
         let changes = notification["params"]["contentChanges"].as_array().unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0]["text"], content);
-    }
-
-    // ==========================================================================
-    // Implementation request tests
-    // ==========================================================================
-
-    #[test]
-    fn implementation_request_uses_virtual_uri() {
-        let request = build_bridge_implementation_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
-
-        assert_uses_virtual_uri(&request, "lua");
-    }
-
-    #[test]
-    fn implementation_request_translates_position_to_virtual_coordinates() {
-        // Host line 5, region starts at line 3 -> virtual line 2
-        let request = build_bridge_implementation_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
-
-        assert_position_request(&request, "textDocument/implementation", 2);
-    }
-
-    // ==========================================================================
-    // Declaration request tests
-    // ==========================================================================
-
-    #[test]
-    fn declaration_request_uses_virtual_uri() {
-        let request = build_bridge_declaration_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
-
-        assert_uses_virtual_uri(&request, "lua");
-    }
-
-    #[test]
-    fn declaration_request_translates_position_to_virtual_coordinates() {
-        // Host line 5, region starts at line 3 -> virtual line 2
-        let request = build_bridge_declaration_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
-
-        assert_position_request(&request, "textDocument/declaration", 2);
     }
 
     // ==========================================================================

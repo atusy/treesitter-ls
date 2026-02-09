@@ -15,10 +15,7 @@ use tower_lsp_server::ls_types::Position;
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
-use super::super::protocol::{
-    ResponseTransformContext, VirtualDocumentUri, build_bridge_declaration_request,
-    transform_definition_response_to_host,
-};
+use super::super::protocol::{RequestId, VirtualDocumentUri, build_position_based_request};
 
 impl LanguageServerPool {
     /// Send a declaration request and wait for the response.
@@ -55,7 +52,7 @@ impl LanguageServerPool {
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
-        let virtual_uri_string = virtual_uri.to_uri_string();
+        // let virtual_uri_string = virtual_uri.to_uri_string(); // Will be used in Step 2
 
         // Register in the upstream request registry FIRST for cancel lookup.
         // This order matters: if a cancel arrives between pool and router registration,
@@ -75,7 +72,7 @@ impl LanguageServerPool {
             };
 
         // Build declaration request
-        let declaration_request = build_bridge_declaration_request(
+        let declaration_request = build_declaration_request(
             &host_uri_lsp,
             host_position,
             injection_language,
@@ -111,13 +108,6 @@ impl LanguageServerPool {
             return Err(e.into());
         }
 
-        // Build transformation context for response handling
-        let context = ResponseTransformContext {
-            request_virtual_uri: virtual_uri_string,
-            request_host_uri: host_uri.as_str().to_string(),
-            request_region_start_line: region_start_line,
-        };
-
         // Wait for response via oneshot channel (no Mutex held) with timeout
         let response = handle.wait_for_response(request_id, response_rx).await;
 
@@ -125,8 +115,27 @@ impl LanguageServerPool {
         self.unregister_upstream_request(&upstream_request_id, server_name);
 
         // Transform response to host coordinates and URI
-        // Reuse transform_definition_response_to_host (same Location/LocationLink format per LSP spec)
         // Cross-region virtual URIs are filtered out
-        Ok(transform_definition_response_to_host(response?, &context))
+        Ok(response?)
     }
+}
+
+/// Build a JSON-RPC declaration request for a downstream language server.
+fn build_declaration_request(
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: RequestId,
+) -> serde_json::Value {
+    build_position_based_request(
+        host_uri,
+        host_position,
+        injection_language,
+        region_id,
+        region_start_line,
+        request_id,
+        "textDocument/declaration",
+    )
 }
