@@ -238,6 +238,20 @@ impl Kakehashi {
         self.settings_manager.supports_type_definition_link()
     }
 
+    /// Check if the client supports implementation link (LocationLink[]).
+    ///
+    /// Delegates to SettingsManager for capability checking.
+    fn supports_implementation_link(&self) -> bool {
+        self.settings_manager.supports_implementation_link()
+    }
+
+    /// Check if the client supports declaration link (LocationLink[]).
+    ///
+    /// Delegates to SettingsManager for capability checking.
+    fn supports_declaration_link(&self) -> bool {
+        self.settings_manager.supports_declaration_link()
+    }
+
     /// Check if the given search paths include the default data directory.
     fn search_paths_include_default_data_dir(&self, search_paths: &[String]) -> bool {
         self.settings_manager

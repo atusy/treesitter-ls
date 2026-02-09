@@ -1,7 +1,7 @@
 //! Goto implementation method for Kakehashi.
 
 use tower_lsp_server::jsonrpc::{Id, Result};
-use tower_lsp_server::ls_types::MessageType;
+use tower_lsp_server::ls_types::{Location, MessageType};
 use tower_lsp_server::ls_types::request::{GotoImplementationParams, GotoImplementationResponse};
 
 use crate::language::InjectionResolver;
@@ -124,8 +124,18 @@ impl Kakehashi {
         match response {
             Ok(Some(links)) => {
                 // Bridge layer returns normalized Vec<LocationLink>
-                // For now, always return as LocationLink[] (capability checking in Step 3)
-                Ok(Some(GotoImplementationResponse::Link(links)))
+                // Check client capability and adapt response format
+                if self.supports_implementation_link() {
+                    // Client supports LocationLink[] - use directly
+                    Ok(Some(GotoImplementationResponse::Link(links)))
+                } else {
+                    // Client doesn't support LocationLink - convert to Location[]
+                    let locations: Vec<Location> = links
+                        .into_iter()
+                        .map(location_link_to_location)
+                        .collect();
+                    Ok(Some(GotoImplementationResponse::Array(locations)))
+                }
             }
             Ok(None) => Ok(None),
             Err(e) => {
@@ -138,5 +148,16 @@ impl Kakehashi {
                 Ok(None)
             }
         }
+    }
+}
+
+/// Convert LocationLink to Location for clients that don't support linkSupport.
+///
+/// Uses the target selection range (the precise symbol location) rather than
+/// the full target range for better navigation precision.
+fn location_link_to_location(link: tower_lsp_server::ls_types::LocationLink) -> Location {
+    Location {
+        uri: link.target_uri,
+        range: link.target_selection_range, // Use selection range for precision
     }
 }

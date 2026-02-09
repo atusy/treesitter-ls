@@ -228,6 +228,34 @@ impl SettingsManager {
             .and_then(|typedef| typedef.link_support)
             .unwrap_or(false)
     }
+
+    /// Check if client supports LocationLink[] for implementation responses.
+    ///
+    /// Per LSP spec, when linkSupport is true, the server can return LocationLink[]
+    /// which provides richer information. When false or missing, the server should
+    /// return Location[] for compatibility.
+    pub(crate) fn supports_implementation_link(&self) -> bool {
+        self.client_capabilities
+            .get()
+            .and_then(|caps| caps.text_document.as_ref())
+            .and_then(|td| td.implementation.as_ref())
+            .and_then(|impl_cap| impl_cap.link_support)
+            .unwrap_or(false)
+    }
+
+    /// Check if client supports LocationLink[] for declaration responses.
+    ///
+    /// Per LSP spec, when linkSupport is true, the server can return LocationLink[]
+    /// which provides richer information. When false or missing, the server should
+    /// return Location[] for compatibility.
+    pub(crate) fn supports_declaration_link(&self) -> bool {
+        self.client_capabilities
+            .get()
+            .and_then(|caps| caps.text_document.as_ref())
+            .and_then(|td| td.declaration.as_ref())
+            .and_then(|decl| decl.link_support)
+            .unwrap_or(false)
+    }
 }
 
 #[cfg(test)]
