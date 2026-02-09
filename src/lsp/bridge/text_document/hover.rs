@@ -11,13 +11,11 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::{Hover, Position};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
-use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_hover_request, transform_hover_response_to_host,
-};
+use super::super::protocol::{RequestId, VirtualDocumentUri, build_position_based_request};
 
 impl LanguageServerPool {
     /// Send a hover request and wait for the response.
@@ -43,7 +41,7 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
         upstream_request_id: UpstreamId,
-    ) -> io::Result<serde_json::Value> {
+    ) -> io::Result<Option<Hover>> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(server_name, server_config)
@@ -74,7 +72,7 @@ impl LanguageServerPool {
             };
 
         // Build hover request
-        let hover_request = build_bridge_hover_request(
+        let hover_request = build_hover_request(
             &host_uri_lsp,
             host_position,
             injection_language,
@@ -90,7 +88,6 @@ impl LanguageServerPool {
         };
 
         // Send didOpen notification only if document hasn't been opened yet
-        // Uses ConnectionHandleSender wrapper for MessageSender trait
         if let Err(e) = self
             .ensure_document_opened(
                 &mut ConnectionHandleSender(&handle),
@@ -122,5 +119,386 @@ impl LanguageServerPool {
             response?,
             region_start_line,
         ))
+    }
+}
+
+/// Build a JSON-RPC hover request for a downstream language server.
+fn build_hover_request(
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: RequestId,
+) -> serde_json::Value {
+    build_position_based_request(
+        host_uri,
+        host_position,
+        injection_language,
+        region_id,
+        region_start_line,
+        request_id,
+        "textDocument/hover",
+    )
+}
+
+/// Parse a JSON-RPC hover response and transform coordinates to host document space.
+///
+/// Instead of returning a modified JSON envelope, this deserializes the response
+/// into `Option<Hover>` with coordinates already transformed.
+///
+/// Returns `None` for: null results, missing results, and deserialization failures.
+///
+/// # Arguments
+/// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
+/// * `region_start_line` - Line offset to add to hover range if present
+fn transform_hover_response_to_host(
+    response: serde_json::Value,
+    region_start_line: u32,
+) -> Option<Hover> {
+    // Extract result from JSON-RPC envelope
+    let result = response.get("result")?;
+    if result.is_null() {
+        return None;
+    }
+
+    // Deserialize into typed Hover
+    let Ok(mut hover) = serde_json::from_value::<Hover>(result.clone()) else {
+        return None;
+    };
+
+    // Transform range if present
+    if let Some(range) = &mut hover.range {
+        // Uses saturating_add to prevent overflow, consistent with saturating_sub
+        // used elsewhere in the codebase for defensive arithmetic
+        range.start.line = range.start.line.saturating_add(region_start_line);
+        range.end.line = range.end.line.saturating_add(region_start_line);
+    }
+
+    Some(hover)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tower_lsp_server::ls_types::Position;
+    use url::Url;
+
+    // ==========================================================================
+    // Test helpers
+    // ==========================================================================
+
+    /// Standard test request ID used across most tests.
+    fn test_request_id() -> RequestId {
+        RequestId::new(42)
+    }
+
+    /// Standard test host URI used across most tests.
+    fn test_host_uri() -> tower_lsp_server::ls_types::Uri {
+        let url = Url::parse("file:///project/doc.md").unwrap();
+        crate::lsp::lsp_impl::url_to_uri(&url).expect("test URL should convert to URI")
+    }
+
+    /// Standard test position (line 5, character 10).
+    fn test_position() -> Position {
+        Position {
+            line: 5,
+            character: 10,
+        }
+    }
+
+    /// Assert that a request uses a virtual URI with the expected extension.
+    fn assert_uses_virtual_uri(request: &serde_json::Value, extension: &str) {
+        let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
+        // Use url crate for robust parsing (handles query strings with slashes, fragments, etc.)
+        let url = url::Url::parse(uri_str).expect("URI should be parseable");
+        let filename = url
+            .path_segments()
+            .and_then(|mut s| s.next_back())
+            .unwrap_or("");
+        assert!(
+            filename.starts_with("kakehashi-virtual-uri-")
+                && filename.ends_with(&format!(".{}", extension)),
+            "Request should use virtual URI with .{} extension: {}",
+            extension,
+            uri_str
+        );
+    }
+
+    /// Assert that a position-based request has correct structure and translated coordinates.
+    fn assert_position_request(
+        request: &serde_json::Value,
+        expected_method: &str,
+        expected_virtual_line: u64,
+    ) {
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], expected_method);
+        assert_eq!(
+            request["params"]["position"]["line"], expected_virtual_line,
+            "Position line should be translated"
+        );
+        assert_eq!(
+            request["params"]["position"]["character"], 10,
+            "Character should remain unchanged"
+        );
+    }
+
+    // ==========================================================================
+    // Hover request tests
+    // ==========================================================================
+
+    #[test]
+    fn hover_request_uses_virtual_uri() {
+        let request = build_hover_request(
+            &test_host_uri(),
+            test_position(),
+            "lua",
+            "region-0",
+            3,
+            test_request_id(),
+        );
+
+        assert_uses_virtual_uri(&request, "lua");
+    }
+
+    #[test]
+    fn hover_request_translates_position_to_virtual_coordinates() {
+        // Host line 5, region starts at line 3 -> virtual line 2
+        let request = build_hover_request(
+            &test_host_uri(),
+            test_position(),
+            "lua",
+            "region-0",
+            3,
+            test_request_id(),
+        );
+
+        assert_position_request(&request, "textDocument/hover", 2);
+    }
+
+    #[test]
+    fn position_translation_at_region_start_becomes_line_zero() {
+        // When cursor is at the first line of the region, virtual line should be 0
+        let host_position = Position {
+            line: 3, // Same as region_start_line
+            character: 5,
+        };
+
+        let request = build_hover_request(
+            &test_host_uri(),
+            host_position,
+            "lua",
+            "region-0",
+            3,
+            test_request_id(),
+        );
+
+        assert_eq!(
+            request["params"]["position"]["line"], 0,
+            "Position at region start should translate to line 0"
+        );
+    }
+
+    #[test]
+    fn position_translation_with_zero_region_start() {
+        // Region starting at line 0 (e.g., first line of document)
+        let host_position = Position {
+            line: 5,
+            character: 0,
+        };
+
+        let request = build_hover_request(
+            &test_host_uri(),
+            host_position,
+            "lua",
+            "region-0",
+            0,
+            test_request_id(),
+        );
+
+        assert_eq!(
+            request["params"]["position"]["line"], 5,
+            "With region_start_line=0, virtual line equals host line"
+        );
+    }
+
+    #[test]
+    fn position_translation_saturates_on_underflow() {
+        // Simulate race condition: host_position.line (2) < region_start_line (5)
+        // This should NOT panic, instead saturate to line 0
+        let host_position = Position {
+            line: 2, // Less than region_start_line
+            character: 10,
+        };
+
+        let request = build_hover_request(
+            &test_host_uri(),
+            host_position,
+            "lua",
+            "region-0",
+            5, // region_start_line > host_position.line
+            test_request_id(),
+        );
+
+        assert_eq!(
+            request["params"]["position"]["line"], 0,
+            "Underflow should saturate to line 0, not panic"
+        );
+        assert_eq!(
+            request["params"]["position"]["character"], 10,
+            "Character should remain unchanged"
+        );
+    }
+
+    // ==========================================================================
+    // Hover response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn hover_response_transforms_range_to_host_coordinates() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": {
+                    "kind": "markdown",
+                    "value": "docs"
+                },
+                "range": {
+                    "start": { "line": 0, "character": 9 },
+                    "end": { "line": 0, "character": 14 }
+                }
+            }
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let hover = transformed.unwrap();
+        assert!(hover.range.is_some());
+        let range = hover.range.unwrap();
+        assert_eq!(range.start.line, 3);
+        assert_eq!(range.end.line, 3);
+        assert_eq!(range.start.character, 9);
+        assert_eq!(range.end.character, 14);
+    }
+
+    #[test]
+    fn hover_response_without_range_passes_through() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": "Simple hover text"
+            }
+        });
+
+        let transformed = transform_hover_response_to_host(response, 5);
+        assert!(transformed.is_some());
+        let hover = transformed.unwrap();
+        assert!(hover.range.is_none());
+    }
+
+    #[test]
+    fn hover_response_with_null_result_returns_none() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": null
+        });
+
+        let transformed = transform_hover_response_to_host(response, 5);
+        assert!(transformed.is_none());
+    }
+
+    #[test]
+    fn hover_response_transformation_with_zero_region_start() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": { "kind": "markdown", "value": "docs" },
+                "range": {
+                    "start": { "line": 2, "character": 0 },
+                    "end": { "line": 2, "character": 10 }
+                }
+            }
+        });
+        let region_start_line = 0;
+
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let hover = transformed.unwrap();
+        let range = hover.range.unwrap();
+        assert_eq!(
+            range.start.line, 2,
+            "With region_start_line=0, host line equals virtual line"
+        );
+    }
+
+    #[test]
+    fn hover_response_transformation_at_line_zero() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": { "kind": "markdown", "value": "docs" },
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 5 }
+                }
+            }
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let hover = transformed.unwrap();
+        let range = hover.range.unwrap();
+        assert_eq!(
+            range.start.line, 10,
+            "Virtual line 0 should map to region_start_line"
+        );
+        assert_eq!(
+            range.end.line, 10,
+            "Virtual line 0 should map to region_start_line"
+        );
+    }
+
+    #[test]
+    fn hover_response_transformation_saturates_on_overflow() {
+        // Test defensive arithmetic: saturating_add prevents panic on overflow
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "contents": { "kind": "markdown", "value": "docs" },
+                "range": {
+                    "start": { "line": u32::MAX, "character": 0 },
+                    "end": { "line": u32::MAX, "character": 5 }
+                }
+            }
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_hover_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let hover = transformed.unwrap();
+        let range = hover.range.unwrap();
+        assert_eq!(
+            range.start.line,
+            u32::MAX,
+            "Overflow should saturate at u32::MAX, not panic"
+        );
+        assert_eq!(
+            range.end.line,
+            u32::MAX,
+            "Overflow should saturate at u32::MAX, not panic"
+        );
     }
 }

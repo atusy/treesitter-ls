@@ -119,20 +119,7 @@ impl Kakehashi {
             .await;
 
         match response {
-            Ok(json_response) => {
-                // Parse the hover response
-                if let Some(result) = json_response.get("result") {
-                    if result.is_null() {
-                        return Ok(None);
-                    }
-
-                    // Parse the result into a Hover
-                    if let Ok(hover) = serde_json::from_value::<Hover>(result.clone()) {
-                        return Ok(Some(hover));
-                    }
-                }
-                Ok(None)
-            }
+            Ok(hover) => Ok(hover),
             Err(e) => {
                 self.client
                     .log_message(

@@ -11,15 +11,15 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::{CompletionItem, CompletionList, Position, Range};
 use url::Url;
 
 use super::super::pool::{
     ConnectionHandleSender, LanguageServerPool, NotificationSendResult, UpstreamId,
 };
 use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_completion_request, build_bridge_didchange_notification,
-    transform_completion_response_to_host,
+    RequestId, VirtualDocumentUri, build_bridge_didchange_notification,
+    build_position_based_request,
 };
 
 impl LanguageServerPool {
@@ -46,7 +46,7 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
         upstream_request_id: UpstreamId,
-    ) -> io::Result<serde_json::Value> {
+    ) -> io::Result<Option<CompletionList>> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(server_name, server_config)
@@ -77,7 +77,7 @@ impl LanguageServerPool {
             };
 
         // Build completion request
-        let completion_request = build_bridge_completion_request(
+        let completion_request = build_completion_request(
             &host_uri_lsp,
             host_position,
             injection_language,
@@ -96,7 +96,6 @@ impl LanguageServerPool {
         let was_already_opened = self.is_document_opened(&virtual_uri);
 
         // Send didOpen notification only if document hasn't been opened yet
-        // Uses ConnectionHandleSender wrapper for MessageSender trait
         if let Err(e) = self
             .ensure_document_opened(
                 &mut ConnectionHandleSender(&handle),
@@ -161,5 +160,429 @@ impl LanguageServerPool {
             response?,
             region_start_line,
         ))
+    }
+}
+
+/// Build a JSON-RPC completion request for a downstream language server.
+fn build_completion_request(
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: RequestId,
+) -> serde_json::Value {
+    build_position_based_request(
+        host_uri,
+        host_position,
+        injection_language,
+        region_id,
+        region_start_line,
+        request_id,
+        "textDocument/completion",
+    )
+}
+
+/// Parse a JSON-RPC completion response and transform coordinates to host document space.
+///
+/// Normalizes all responses to `CompletionList` format. If the server returns an array,
+/// it's wrapped as `CompletionList { isIncomplete: false, items }`.
+///
+/// Returns `None` for: null results, missing results, and deserialization failures.
+///
+/// # Arguments
+/// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
+/// * `region_start_line` - Line offset to add to completion item ranges
+fn transform_completion_response_to_host(
+    response: serde_json::Value,
+    region_start_line: u32,
+) -> Option<CompletionList> {
+    // Extract result from JSON-RPC envelope
+    let result = response.get("result")?;
+    if result.is_null() {
+        return None;
+    }
+
+    // Try to deserialize as CompletionList first (preferred format)
+    if let Ok(mut list) = serde_json::from_value::<CompletionList>(result.clone()) {
+        // Transform all items in the list
+        for item in &mut list.items {
+            transform_completion_item(item, region_start_line);
+        }
+        return Some(list);
+    }
+
+    // Try to deserialize as array of CompletionItem (legacy format)
+    // Normalize to CompletionList with isIncomplete=false (the default)
+    if let Ok(mut items) = serde_json::from_value::<Vec<CompletionItem>>(result.clone()) {
+        // Transform all items in the array
+        for item in &mut items {
+            transform_completion_item(item, region_start_line);
+        }
+        return Some(CompletionList {
+            is_incomplete: false,
+            items,
+        });
+    }
+
+    // Failed to deserialize
+    None
+}
+
+/// Transform textEdit range in a single completion item to host coordinates.
+///
+/// Handles both TextEdit format and InsertReplaceEdit format. Also transforms
+/// additionalTextEdits if present.
+fn transform_completion_item(item: &mut CompletionItem, region_start_line: u32) {
+    // Transform text_edit if present
+    if let Some(ref mut text_edit) = item.text_edit {
+        match text_edit {
+            tower_lsp_server::ls_types::CompletionTextEdit::Edit(edit) => {
+                transform_range(&mut edit.range, region_start_line);
+            }
+            tower_lsp_server::ls_types::CompletionTextEdit::InsertAndReplace(edit) => {
+                transform_range(&mut edit.insert, region_start_line);
+                transform_range(&mut edit.replace, region_start_line);
+            }
+        }
+    }
+
+    // Transform additional_text_edits if present
+    if let Some(ref mut additional_edits) = item.additional_text_edits {
+        for edit in additional_edits {
+            transform_range(&mut edit.range, region_start_line);
+        }
+    }
+}
+
+/// Transform a range's line numbers from virtual to host coordinates.
+///
+/// Uses saturating_add to prevent overflow for large line numbers, consistent
+/// with saturating_sub used elsewhere in the codebase.
+fn transform_range(range: &mut Range, region_start_line: u32) {
+    // Transform start and end positions
+    range.start.line = range.start.line.saturating_add(region_start_line);
+    range.end.line = range.end.line.saturating_add(region_start_line);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tower_lsp_server::ls_types::Position;
+    use url::Url;
+
+    // ==========================================================================
+    // Test helpers
+    // ==========================================================================
+
+    /// Standard test request ID used across most tests.
+    fn test_request_id() -> RequestId {
+        RequestId::new(42)
+    }
+
+    /// Standard test host URI used across most tests.
+    fn test_host_uri() -> tower_lsp_server::ls_types::Uri {
+        let url = Url::parse("file:///project/doc.md").unwrap();
+        crate::lsp::lsp_impl::url_to_uri(&url).expect("test URL should convert to URI")
+    }
+
+    /// Standard test position (line 5, character 10).
+    fn test_position() -> Position {
+        Position {
+            line: 5,
+            character: 10,
+        }
+    }
+
+    /// Assert that a request uses a virtual URI with the expected extension.
+    fn assert_uses_virtual_uri(request: &serde_json::Value, extension: &str) {
+        let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
+        // Use url crate for robust parsing (handles query strings with slashes, fragments, etc.)
+        let url = url::Url::parse(uri_str).expect("URI should be parseable");
+        let filename = url
+            .path_segments()
+            .and_then(|mut s| s.next_back())
+            .unwrap_or("");
+        assert!(
+            filename.starts_with("kakehashi-virtual-uri-")
+                && filename.ends_with(&format!(".{}", extension)),
+            "Request should use virtual URI with .{} extension: {}",
+            extension,
+            uri_str
+        );
+    }
+
+    /// Assert that a position-based request has correct structure and translated coordinates.
+    fn assert_position_request(
+        request: &serde_json::Value,
+        expected_method: &str,
+        expected_virtual_line: u64,
+    ) {
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], expected_method);
+        assert_eq!(
+            request["params"]["position"]["line"], expected_virtual_line,
+            "Position line should be translated"
+        );
+        assert_eq!(
+            request["params"]["position"]["character"], 10,
+            "Character should remain unchanged"
+        );
+    }
+
+    // ==========================================================================
+    // Completion request tests
+    // ==========================================================================
+
+    #[test]
+    fn completion_request_uses_virtual_uri() {
+        let request = build_completion_request(
+            &test_host_uri(),
+            test_position(),
+            "lua",
+            "region-0",
+            3,
+            test_request_id(),
+        );
+
+        assert_uses_virtual_uri(&request, "lua");
+    }
+
+    #[test]
+    fn completion_request_translates_position_to_virtual_coordinates() {
+        // Host line 5, region starts at line 3 -> virtual line 2
+        let request = build_completion_request(
+            &test_host_uri(),
+            test_position(),
+            "lua",
+            "region-0",
+            3,
+            test_request_id(),
+        );
+
+        assert_position_request(&request, "textDocument/completion", 2);
+    }
+
+    // ==========================================================================
+    // Completion response transformation tests
+    // ==========================================================================
+
+    #[test]
+    fn completion_response_transforms_textedit_ranges() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "isIncomplete": false,
+                "items": [
+                    {
+                        "label": "print",
+                        "kind": 3,
+                        "textEdit": {
+                            "range": {
+                                "start": { "line": 1, "character": 0 },
+                                "end": { "line": 1, "character": 3 }
+                            },
+                            "newText": "print"
+                        }
+                    },
+                    { "label": "pairs", "kind": 3 }
+                ]
+            }
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let list = transformed.unwrap();
+        assert_eq!(list.items.len(), 2);
+
+        // First item should have transformed range
+        let item = &list.items[0];
+        assert_eq!(item.label, "print");
+        if let Some(tower_lsp_server::ls_types::CompletionTextEdit::Edit(ref edit)) = item.text_edit
+        {
+            assert_eq!(edit.range.start.line, 4); // 1 + 3 = 4
+            assert_eq!(edit.range.end.line, 4);
+        } else {
+            panic!("Expected TextEdit");
+        }
+
+        // Second item has no textEdit
+        assert_eq!(list.items[1].label, "pairs");
+        assert!(list.items[1].text_edit.is_none());
+    }
+
+    #[test]
+    fn completion_response_with_null_result_returns_none() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let transformed = transform_completion_response_to_host(response, 3);
+        assert!(transformed.is_none());
+    }
+
+    #[test]
+    fn completion_response_handles_array_format() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "label": "print",
+                "textEdit": {
+                    "range": {
+                        "start": { "line": 0, "character": 0 },
+                        "end": { "line": 0, "character": 2 }
+                    },
+                    "newText": "print"
+                }
+            }]
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let list = transformed.unwrap();
+        // Array format is normalized to CompletionList with isIncomplete=false
+        assert!(!list.is_incomplete);
+        assert_eq!(list.items.len(), 1);
+
+        if let Some(tower_lsp_server::ls_types::CompletionTextEdit::Edit(ref edit)) =
+            list.items[0].text_edit
+        {
+            assert_eq!(edit.range.start.line, 5); // 0 + 5 = 5
+            assert_eq!(edit.range.end.line, 5);
+        } else {
+            panic!("Expected TextEdit");
+        }
+    }
+
+    #[test]
+    fn completion_response_transforms_insert_replace_edit() {
+        // InsertReplaceEdit format used by rust-analyzer, tsserver, etc.
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "isIncomplete": false,
+                "items": [{
+                    "label": "println!",
+                    "textEdit": {
+                        "insert": {
+                            "start": { "line": 2, "character": 0 },
+                            "end": { "line": 2, "character": 3 }
+                        },
+                        "replace": {
+                            "start": { "line": 2, "character": 0 },
+                            "end": { "line": 2, "character": 8 }
+                        },
+                        "newText": "println!"
+                    }
+                }]
+            }
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let list = transformed.unwrap();
+
+        let item = &list.items[0];
+        if let Some(tower_lsp_server::ls_types::CompletionTextEdit::InsertAndReplace(ref edit)) =
+            item.text_edit
+        {
+            // Insert range transformed: line 2 + 10 = 12
+            assert_eq!(edit.insert.start.line, 12);
+            assert_eq!(edit.insert.end.line, 12);
+            // Replace range transformed: line 2 + 10 = 12
+            assert_eq!(edit.replace.start.line, 12);
+            assert_eq!(edit.replace.end.line, 12);
+        } else {
+            panic!("Expected InsertReplaceEdit");
+        }
+    }
+
+    #[test]
+    fn completion_response_without_result_returns_none() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42
+        });
+
+        let transformed = transform_completion_response_to_host(response, 3);
+        assert!(transformed.is_none());
+    }
+
+    #[test]
+    fn completion_response_transforms_additional_text_edits() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "isIncomplete": false,
+                "items": [{
+                    "label": "import",
+                    "additionalTextEdits": [{
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 0 }
+                        },
+                        "newText": "import module\n"
+                    }]
+                }]
+            }
+        });
+        let region_start_line = 5;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let list = transformed.unwrap();
+
+        let item = &list.items[0];
+        assert!(item.additional_text_edits.is_some());
+        let edits = item.additional_text_edits.as_ref().unwrap();
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].range.start.line, 5); // 0 + 5 = 5
+    }
+
+    #[test]
+    fn completion_range_transformation_saturates_on_overflow() {
+        // Test defensive arithmetic: saturating_add prevents panic on overflow
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "label": "test",
+                "textEdit": {
+                    "range": {
+                        "start": { "line": 4294967295u32, "character": 0 },  // u32::MAX
+                        "end": { "line": 4294967295u32, "character": 5 }
+                    },
+                    "newText": "test"
+                }
+            }]
+        });
+        let region_start_line = 10;
+
+        let transformed = transform_completion_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_some());
+        let list = transformed.unwrap();
+        // Array format is normalized to CompletionList with isIncomplete=false
+        assert!(!list.is_incomplete);
+
+        if let Some(tower_lsp_server::ls_types::CompletionTextEdit::Edit(ref edit)) =
+            list.items[0].text_edit
+        {
+            assert_eq!(edit.range.start.line, u32::MAX);
+            assert_eq!(edit.range.end.line, u32::MAX);
+        } else {
+            panic!("Expected TextEdit");
+        }
     }
 }
