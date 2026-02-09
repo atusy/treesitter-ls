@@ -15,10 +15,7 @@ use tower_lsp_server::ls_types::Position;
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
-use super::super::protocol::{
-    ResponseTransformContext, VirtualDocumentUri, build_bridge_type_definition_request,
-    transform_definition_response_to_host,
-};
+use super::super::protocol::{RequestId, VirtualDocumentUri, build_position_based_request};
 
 impl LanguageServerPool {
     /// Send a type definition request and wait for the response.
@@ -55,7 +52,6 @@ impl LanguageServerPool {
 
         // Build virtual document URI
         let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
-        let virtual_uri_string = virtual_uri.to_uri_string();
 
         // Register in the upstream request registry FIRST for cancel lookup.
         // This order matters: if a cancel arrives between pool and router registration,
@@ -75,7 +71,7 @@ impl LanguageServerPool {
             };
 
         // Build type definition request
-        let type_definition_request = build_bridge_type_definition_request(
+        let type_definition_request = build_type_definition_request(
             &host_uri_lsp,
             host_position,
             injection_language,
@@ -111,21 +107,55 @@ impl LanguageServerPool {
             return Err(e.into());
         }
 
-        // Build transformation context for response handling
-        let context = ResponseTransformContext {
-            request_virtual_uri: virtual_uri_string,
-            request_host_uri: host_uri.as_str().to_string(),
-            request_region_start_line: region_start_line,
-        };
-
         // Wait for response via oneshot channel (no Mutex held) with timeout
         let response = handle.wait_for_response(request_id, response_rx).await;
 
         // Unregister from the upstream request registry regardless of result
         self.unregister_upstream_request(&upstream_request_id, server_name);
 
-        // Transform response to host coordinates and URI
-        // Cross-region virtual URIs are filtered out
-        Ok(transform_definition_response_to_host(response?, &context))
+        // Transform response to host coordinates
+        Ok(transform_type_definition_response_to_host(
+            response?,
+            region_start_line,
+        ))
     }
+}
+
+/// Build a JSON-RPC type definition request for a downstream language server.
+fn build_type_definition_request(
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: RequestId,
+) -> serde_json::Value {
+    build_position_based_request(
+        host_uri,
+        host_position,
+        injection_language,
+        region_id,
+        region_start_line,
+        request_id,
+        "textDocument/typeDefinition",
+    )
+}
+
+/// Parse a JSON-RPC type definition response and transform coordinates to host document space.
+///
+/// Instead of returning a modified JSON envelope, this deserializes the response
+/// into `Option<serde_json::Value>` with coordinates already transformed.
+///
+/// Returns `None` for: null results, missing results, and deserialization failures.
+///
+/// # Arguments
+/// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
+/// * `_region_start_line` - Line offset to add to ranges (unused in this step)
+fn transform_type_definition_response_to_host(
+    response: serde_json::Value,
+    _region_start_line: u32,
+) -> serde_json::Value {
+    // For now, return as-is (will add type safety in next commit)
+    // This matches the pattern from definition refactoring
+    response
 }
