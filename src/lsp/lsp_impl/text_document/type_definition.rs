@@ -122,22 +122,12 @@ impl Kakehashi {
             .await;
 
         match response {
-            Ok(json_response) => {
-                // Parse the type definition response
-                if let Some(result) = json_response.get("result") {
-                    if result.is_null() {
-                        return Ok(None);
-                    }
-
-                    // Parse the result into a GotoTypeDefinitionResponse
-                    if let Ok(type_definition) =
-                        serde_json::from_value::<GotoTypeDefinitionResponse>(result.clone())
-                    {
-                        return Ok(Some(type_definition));
-                    }
-                }
-                Ok(None)
+            Ok(Some(links)) => {
+                // Bridge layer returns normalized Vec<LocationLink>
+                // Wrap in GotoTypeDefinitionResponse::Link for protocol compliance
+                Ok(Some(GotoTypeDefinitionResponse::Link(links)))
             }
+            Ok(None) => Ok(None),
             Err(e) => {
                 self.client
                     .log_message(
