@@ -20,7 +20,9 @@
 use arc_swap::ArcSwap;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
-use tower_lsp_server::ls_types::ClientCapabilities;
+use tower_lsp_server::ls_types::{
+    ClientCapabilities, GotoCapability, TextDocumentClientCapabilities,
+};
 
 use crate::config::WorkspaceSettings;
 #[cfg(test)]
@@ -199,62 +201,44 @@ impl SettingsManager {
         search_paths.iter().any(|p| p == default_str.as_ref())
     }
 
-    /// Returns true if client declared textDocument.definition.linkSupport.
-    /// Returns false if initialize() hasn't been called yet (OnceLock is empty).
+    /// Check if client supports LocationLink[] for a specific goto capability.
     ///
     /// Per LSP spec, when linkSupport is true, the server can return LocationLink[]
     /// which provides richer information (origin selection range, target range, and
     /// target selection range). When false or missing, the server should return
     /// Location[] for compatibility.
-    pub(crate) fn supports_definition_link(&self) -> bool {
+    ///
+    /// Returns false if initialize() hasn't been called yet (OnceLock is empty).
+    fn supports_goto_link(
+        &self,
+        get_capability: fn(&TextDocumentClientCapabilities) -> &Option<GotoCapability>,
+    ) -> bool {
         self.client_capabilities
             .get()
             .and_then(|caps| caps.text_document.as_ref())
-            .and_then(|td| td.definition.as_ref())
-            .and_then(|def| def.link_support)
+            .and_then(|td| get_capability(td).as_ref())
+            .and_then(|cap| cap.link_support)
             .unwrap_or(false)
+    }
+
+    /// Returns true if client declared textDocument.definition.linkSupport.
+    pub(crate) fn supports_definition_link(&self) -> bool {
+        self.supports_goto_link(|td| &td.definition)
     }
 
     /// Check if client supports LocationLink[] for type definition responses.
-    ///
-    /// Per LSP spec, when linkSupport is true, the server can return LocationLink[]
-    /// which provides richer information. When false or missing, the server should
-    /// return Location[] for compatibility.
     pub(crate) fn supports_type_definition_link(&self) -> bool {
-        self.client_capabilities
-            .get()
-            .and_then(|caps| caps.text_document.as_ref())
-            .and_then(|td| td.type_definition.as_ref())
-            .and_then(|typedef| typedef.link_support)
-            .unwrap_or(false)
+        self.supports_goto_link(|td| &td.type_definition)
     }
 
     /// Check if client supports LocationLink[] for implementation responses.
-    ///
-    /// Per LSP spec, when linkSupport is true, the server can return LocationLink[]
-    /// which provides richer information. When false or missing, the server should
-    /// return Location[] for compatibility.
     pub(crate) fn supports_implementation_link(&self) -> bool {
-        self.client_capabilities
-            .get()
-            .and_then(|caps| caps.text_document.as_ref())
-            .and_then(|td| td.implementation.as_ref())
-            .and_then(|impl_cap| impl_cap.link_support)
-            .unwrap_or(false)
+        self.supports_goto_link(|td| &td.implementation)
     }
 
     /// Check if client supports LocationLink[] for declaration responses.
-    ///
-    /// Per LSP spec, when linkSupport is true, the server can return LocationLink[]
-    /// which provides richer information. When false or missing, the server should
-    /// return Location[] for compatibility.
     pub(crate) fn supports_declaration_link(&self) -> bool {
-        self.client_capabilities
-            .get()
-            .and_then(|caps| caps.text_document.as_ref())
-            .and_then(|td| td.declaration.as_ref())
-            .and_then(|decl| decl.link_support)
-            .unwrap_or(false)
+        self.supports_goto_link(|td| &td.declaration)
     }
 }
 
