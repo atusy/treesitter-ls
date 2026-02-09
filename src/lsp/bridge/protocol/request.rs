@@ -66,29 +66,6 @@ pub(crate) fn build_position_based_request(
     })
 }
 
-/// Build a JSON-RPC document highlight request for a downstream language server.
-///
-/// This is a thin wrapper around `build_position_based_request` with the method
-/// name "textDocument/documentHighlight". The request builder consolidation is complete.
-pub(crate) fn build_bridge_document_highlight_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    host_position: tower_lsp_server::ls_types::Position,
-    injection_language: &str,
-    region_id: &str,
-    region_start_line: u32,
-    request_id: RequestId,
-) -> serde_json::Value {
-    build_position_based_request(
-        host_uri,
-        host_position,
-        injection_language,
-        region_id,
-        region_start_line,
-        request_id,
-        "textDocument/documentHighlight",
-    )
-}
-
 /// Build a JSON-RPC rename request for a downstream language server.
 ///
 /// Note: Rename request has an additional `newName` parameter that specifies
@@ -336,29 +313,6 @@ pub(crate) fn build_bridge_color_presentation_request(
             }
         }
     })
-}
-
-/// Build a JSON-RPC moniker request for a downstream language server.
-///
-/// This is a thin wrapper around `build_position_based_request` with the method
-/// name "textDocument/moniker". The request builder consolidation is complete.
-pub(crate) fn build_bridge_moniker_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    host_position: tower_lsp_server::ls_types::Position,
-    injection_language: &str,
-    region_id: &str,
-    region_start_line: u32,
-    request_id: RequestId,
-) -> serde_json::Value {
-    build_position_based_request(
-        host_uri,
-        host_position,
-        injection_language,
-        region_id,
-        region_start_line,
-        request_id,
-        "textDocument/moniker",
-    )
 }
 
 /// Build a JSON-RPC document color request for a downstream language server.
@@ -646,39 +600,6 @@ mod tests {
         let changes = notification["params"]["contentChanges"].as_array().unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0]["text"], content);
-    }
-
-    // ==========================================================================
-    // Document highlight request tests
-    // ==========================================================================
-
-    #[test]
-    fn document_highlight_request_uses_virtual_uri() {
-        let request = build_bridge_document_highlight_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
-
-        assert_uses_virtual_uri(&request, "lua");
-    }
-
-    #[test]
-    fn document_highlight_request_translates_position_to_virtual_coordinates() {
-        // Host line 5, region starts at line 3 -> virtual line 2
-        let request = build_bridge_document_highlight_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
-
-        assert_position_request(&request, "textDocument/documentHighlight", 2);
     }
 
     // ==========================================================================
@@ -1134,38 +1055,5 @@ mod tests {
         assert_eq!(request["params"]["color"]["green"], 0.25);
         assert_eq!(request["params"]["color"]["blue"], 0.75);
         assert_eq!(request["params"]["color"]["alpha"], 1.0);
-    }
-
-    // ==========================================================================
-    // Moniker request tests
-    // ==========================================================================
-
-    #[test]
-    fn moniker_request_uses_virtual_uri() {
-        let request = build_bridge_moniker_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
-
-        assert_uses_virtual_uri(&request, "lua");
-    }
-
-    #[test]
-    fn moniker_request_translates_position_to_virtual_coordinates() {
-        // Host line 5, region starts at line 3 -> virtual line 2
-        let request = build_bridge_moniker_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
-
-        assert_position_request(&request, "textDocument/moniker", 2);
     }
 }

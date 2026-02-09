@@ -13,7 +13,7 @@
 //! Used when transformation only requires adding a line offset. The response contains
 //! ranges that reference the same virtual document as the request.
 //!
-//! Examples: moniker (passthrough), document highlight, document link
+//! Examples: document link
 //!
 //! ### Context-based transformers: `fn(response, &ResponseTransformContext)`
 //!
@@ -368,40 +368,6 @@ fn transform_location_uri(
     false
 }
 
-/// Transform a document highlight response from virtual to host document coordinates.
-///
-/// DocumentHighlight responses are arrays of items with range and optional kind.
-/// This function transforms each range's line numbers by adding region_start_line.
-///
-/// # Arguments
-/// * `response` - The JSON-RPC response from the downstream language server
-/// * `region_start_line` - The starting line of the injection region in the host document
-pub(crate) fn transform_document_highlight_response_to_host(
-    response: serde_json::Value,
-    region_start_line: u32,
-) -> Option<Vec<tower_lsp_server::ls_types::DocumentHighlight>> {
-    use tower_lsp_server::ls_types::DocumentHighlight;
-
-    // Get result field
-    let result = response.get("result")?;
-
-    // Null result - return None
-    if result.is_null() {
-        return None;
-    }
-
-    // Parse into typed Vec<DocumentHighlight>
-    let mut highlights: Vec<DocumentHighlight> = serde_json::from_value(result.clone()).ok()?;
-
-    // Transform ranges to host coordinates
-    for highlight in &mut highlights {
-        highlight.range.start.line = highlight.range.start.line.saturating_add(region_start_line);
-        highlight.range.end.line = highlight.range.end.line.saturating_add(region_start_line);
-    }
-
-    Some(highlights)
-}
-
 /// Transform a document link response from virtual to host document coordinates.
 ///
 /// DocumentLink responses are arrays of items with range, target, tooltip, and data fields.
@@ -739,36 +705,6 @@ pub(crate) fn transform_color_presentation_response_to_host(
     response
 }
 
-/// Transform a moniker response from virtual to host document coordinates.
-///
-/// Moniker responses don't contain ranges or positions that need transformation.
-/// This function parses the JSON response into typed Vec<Moniker>, preserving:
-/// - scheme: The moniker scheme (e.g., "tsc", "npm")
-/// - identifier: The unique identifier for the symbol
-/// - unique: Uniqueness level ("document", "project", "scheme", "global")
-/// - kind: Optional moniker kind ("import", "export", "local")
-///
-/// # Arguments
-/// * `response` - The JSON-RPC response from the downstream language server
-/// * `_region_start_line` - The starting line (unused for moniker, kept for API consistency)
-pub(crate) fn transform_moniker_response_to_host(
-    response: serde_json::Value,
-    _region_start_line: u32,
-) -> Option<Vec<tower_lsp_server::ls_types::Moniker>> {
-    // Get result field
-    let result = response.get("result")?;
-
-    // Null result - return None
-    if result.is_null() {
-        return None;
-    }
-
-    // Parse into typed Vec<Moniker>
-    // Moniker doesn't have ranges that need transformation.
-    // scheme, identifier, unique, and kind are all non-coordinate data.
-    serde_json::from_value(result.clone()).ok()
-}
-
 /// Check if a URI string represents a virtual document.
 ///
 /// Delegates to [`VirtualDocumentUri::is_virtual_uri`] which is the single source of truth
@@ -956,102 +892,6 @@ mod tests {
             request_host_uri: host_uri.to_string(),
             request_region_start_line: region_start_line,
         }
-    }
-
-    // ==========================================================================
-    // Document highlight response transformation tests
-    // ==========================================================================
-
-    #[test]
-    fn document_highlight_response_transforms_ranges_to_host_coordinates() {
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": [
-                {
-                    "range": {
-                        "start": { "line": 0, "character": 6 },
-                        "end": { "line": 0, "character": 11 }
-                    },
-                    "kind": 1
-                },
-                {
-                    "range": {
-                        "start": { "line": 2, "character": 0 },
-                        "end": { "line": 2, "character": 5 }
-                    },
-                    "kind": 2
-                },
-                {
-                    "range": {
-                        "start": { "line": 4, "character": 0 },
-                        "end": { "line": 4, "character": 5 }
-                    }
-                }
-            ]
-        });
-        let region_start_line = 3;
-
-        let transformed =
-            transform_document_highlight_response_to_host(response, region_start_line);
-
-        assert!(transformed.is_some());
-        let highlights = transformed.unwrap();
-        assert_eq!(highlights.len(), 3);
-        assert_eq!(highlights[0].range.start.line, 3);
-        assert_eq!(highlights[0].range.end.line, 3);
-        assert!(highlights[0].kind.is_some());
-        assert_eq!(highlights[1].range.start.line, 5);
-        assert_eq!(highlights[1].range.end.line, 5);
-        assert!(highlights[1].kind.is_some());
-        assert_eq!(highlights[2].range.start.line, 7);
-    }
-
-    #[test]
-    fn document_highlight_response_with_null_result_returns_none() {
-        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
-
-        let transformed = transform_document_highlight_response_to_host(response, 5);
-        assert!(transformed.is_none());
-    }
-
-    #[test]
-    fn document_highlight_response_with_empty_array_returns_empty_vec() {
-        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
-
-        let transformed = transform_document_highlight_response_to_host(response, 5);
-        assert!(transformed.is_some());
-        let highlights = transformed.unwrap();
-        assert!(highlights.is_empty());
-    }
-
-    #[test]
-    fn document_highlight_response_preserves_character_coordinates() {
-        // Character coordinates should not be transformed, only line numbers
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": [
-                {
-                    "range": {
-                        "start": { "line": 0, "character": 15 },
-                        "end": { "line": 1, "character": 20 }
-                    }
-                }
-            ]
-        });
-        let region_start_line = 10;
-
-        let transformed =
-            transform_document_highlight_response_to_host(response, region_start_line);
-
-        assert!(transformed.is_some());
-        let highlights = transformed.unwrap();
-        assert_eq!(highlights.len(), 1);
-        assert_eq!(highlights[0].range.start.line, 10); // 0 + 10
-        assert_eq!(highlights[0].range.start.character, 15); // Preserved
-        assert_eq!(highlights[0].range.end.line, 11); // 1 + 10
-        assert_eq!(highlights[0].range.end.character, 20); // Preserved
     }
 
     // ==========================================================================
@@ -2408,92 +2248,6 @@ mod tests {
         let transformed = transform_color_presentation_response_to_host(response.clone(), 5);
         let result = transformed["result"].as_array().unwrap();
         assert!(result.is_empty());
-    }
-
-    // ==========================================================================
-    // Moniker response tests
-    // ==========================================================================
-
-    #[test]
-    fn moniker_response_returns_typed_vec() {
-        // Moniker[] has scheme/identifier/unique/kind - no position/range data
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": [
-                {
-                    "scheme": "tsc",
-                    "identifier": "typescript:foo:bar:Baz",
-                    "unique": "document",
-                    "kind": "export"
-                },
-                {
-                    "scheme": "npm",
-                    "identifier": "package:module:Class.method",
-                    "unique": "scheme",
-                    "kind": "local"
-                }
-            ]
-        });
-        let region_start_line = 5;
-
-        let transformed = transform_moniker_response_to_host(response, region_start_line);
-
-        assert!(transformed.is_some());
-        let monikers = transformed.unwrap();
-        assert_eq!(monikers.len(), 2);
-        assert_eq!(monikers[0].scheme, "tsc");
-        assert_eq!(monikers[0].identifier, "typescript:foo:bar:Baz");
-        assert_eq!(monikers[1].scheme, "npm");
-        assert_eq!(monikers[1].identifier, "package:module:Class.method");
-    }
-
-    #[test]
-    fn moniker_response_with_null_result_returns_none() {
-        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
-
-        let transformed = transform_moniker_response_to_host(response, 5);
-        assert!(transformed.is_none());
-    }
-
-    #[test]
-    fn moniker_response_with_empty_array_returns_empty_vec() {
-        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
-
-        let transformed = transform_moniker_response_to_host(response, 5);
-        assert!(transformed.is_some());
-        let monikers = transformed.unwrap();
-        assert!(monikers.is_empty());
-    }
-
-    #[test]
-    fn moniker_response_ignores_region_start_line() {
-        // Verify that region_start_line parameter has no effect on moniker response
-        // since moniker doesn't contain coordinate data
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": [
-                {
-                    "scheme": "test",
-                    "identifier": "test:identifier",
-                    "unique": "project"
-                }
-            ]
-        });
-
-        // Transform with different region_start_line values
-        let transformed1 = transform_moniker_response_to_host(response.clone(), 0);
-        let transformed2 = transform_moniker_response_to_host(response, 1000);
-
-        // Both should produce identical results
-        assert!(transformed1.is_some());
-        assert!(transformed2.is_some());
-        let monikers1 = transformed1.unwrap();
-        let monikers2 = transformed2.unwrap();
-        assert_eq!(monikers1.len(), monikers2.len());
-        assert_eq!(monikers1[0].scheme, monikers2[0].scheme);
-        assert_eq!(monikers1[0].identifier, monikers2[0].identifier);
     }
 
     // ==========================================================================
