@@ -11,7 +11,7 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::{Location, LocationLink, Position, Range};
+use tower_lsp_server::ls_types::{Location, LocationLink, Position, Range, Uri};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
@@ -120,7 +120,7 @@ impl LanguageServerPool {
         Ok(transform_definition_response_to_host(
             response?,
             &virtual_uri_string,
-            host_uri.as_str(),
+            &host_uri_lsp,
             region_start_line,
         ))
     }
@@ -174,12 +174,12 @@ fn build_definition_request(
 /// # Arguments
 /// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
 /// * `request_virtual_uri` - The virtual URI from the request
-/// * `request_host_uri` - The host URI to use in transformed responses
+/// * `host_uri` - The pre-parsed host URI to use in transformed responses
 /// * `region_start_line` - Line offset to add when transforming to host coordinates
 fn transform_definition_response_to_host(
     mut response: serde_json::Value,
     request_virtual_uri: &str,
-    request_host_uri: &str,
+    host_uri: &Uri,
     region_start_line: u32,
 ) -> Option<Vec<LocationLink>> {
     // Extract result from JSON-RPC envelope, taking ownership to avoid clones
@@ -194,13 +194,8 @@ fn transform_definition_response_to_host(
     if result.is_object() {
         // Single Location → convert to LocationLink
         if let Ok(location) = serde_json::from_value::<Location>(result) {
-            return transform_location(
-                location,
-                request_virtual_uri,
-                request_host_uri,
-                region_start_line,
-            )
-            .map(|loc| vec![location_to_location_link(loc)]);
+            return transform_location(location, request_virtual_uri, host_uri, region_start_line)
+                .map(|loc| vec![location_to_location_link(loc)]);
         }
     } else if result.is_array() {
         // Could be Location[] or LocationLink[]
@@ -220,7 +215,7 @@ fn transform_definition_response_to_host(
                         transform_location_link(
                             link,
                             request_virtual_uri,
-                            request_host_uri,
+                            host_uri,
                             region_start_line,
                         )
                     })
@@ -238,7 +233,7 @@ fn transform_definition_response_to_host(
                         transform_location(
                             location,
                             request_virtual_uri,
-                            request_host_uri,
+                            host_uri,
                             region_start_line,
                         )
                         .map(location_to_location_link)
@@ -281,7 +276,7 @@ fn location_to_location_link(location: Location) -> LocationLink {
 fn transform_location(
     mut location: Location,
     request_virtual_uri: &str,
-    request_host_uri: &str,
+    host_uri: &Uri,
     region_start_line: u32,
 ) -> Option<Location> {
     let uri_str = location.uri.as_str();
@@ -293,15 +288,7 @@ fn transform_location(
 
     // Case 2: Same virtual URI as request → use request's context
     if uri_str == request_virtual_uri {
-        // Parse request_host_uri back to Uri type
-        let Ok(url) = url::Url::parse(request_host_uri) else {
-            return None;
-        };
-        let Ok(host_uri) = crate::lsp::lsp_impl::url_to_uri(&url) else {
-            return None;
-        };
-
-        location.uri = host_uri;
+        location.uri = host_uri.clone();
         transform_range_to_host(&mut location.range, region_start_line);
         return Some(location);
     }
@@ -318,7 +305,7 @@ fn transform_location(
 fn transform_location_link(
     mut link: LocationLink,
     request_virtual_uri: &str,
-    request_host_uri: &str,
+    host_uri: &Uri,
     region_start_line: u32,
 ) -> Option<LocationLink> {
     let uri_str = link.target_uri.as_str();
@@ -330,15 +317,7 @@ fn transform_location_link(
 
     // Case 2: Same virtual URI as request → use request's context
     if uri_str == request_virtual_uri {
-        // Parse request_host_uri back to Uri type
-        let Ok(url) = url::Url::parse(request_host_uri) else {
-            return None;
-        };
-        let Ok(host_uri) = crate::lsp::lsp_impl::url_to_uri(&url) else {
-            return None;
-        };
-
-        link.target_uri = host_uri;
+        link.target_uri = host_uri.clone();
         transform_range_to_host(&mut link.target_range, region_start_line);
         transform_range_to_host(&mut link.target_selection_range, region_start_line);
         return Some(link);
@@ -473,20 +452,20 @@ mod tests {
                 }
             }
         });
-        let host_uri = "file:///project/doc.md";
+        let host_uri = test_host_uri();
         let region_start_line = 3;
 
         let transformed = transform_definition_response_to_host(
             response,
             virtual_uri,
-            host_uri,
+            &host_uri,
             region_start_line,
         );
 
         assert!(transformed.is_some());
         let links = transformed.unwrap();
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].target_uri.as_str(), host_uri);
+        assert_eq!(links[0].target_uri, host_uri);
         assert_eq!(links[0].target_range.start.line, 3);
         assert_eq!(links[0].target_range.end.line, 3);
         assert_eq!(links[0].target_selection_range.start.line, 3);
@@ -516,13 +495,13 @@ mod tests {
                 }
             ]
         });
-        let host_uri = "file:///project/doc.md";
+        let host_uri = test_host_uri();
         let region_start_line = 3;
 
         let transformed = transform_definition_response_to_host(
             response,
             virtual_uri,
-            host_uri,
+            &host_uri,
             region_start_line,
         );
 
@@ -553,20 +532,20 @@ mod tests {
                 }
             ]
         });
-        let host_uri = "file:///project/doc.md";
+        let host_uri = test_host_uri();
         let region_start_line = 3;
 
         let transformed = transform_definition_response_to_host(
             response,
             virtual_uri,
-            host_uri,
+            &host_uri,
             region_start_line,
         );
 
         assert!(transformed.is_some());
         let links = transformed.unwrap();
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].target_uri.as_str(), host_uri);
+        assert_eq!(links[0].target_uri, host_uri);
         assert_eq!(links[0].target_range.start.line, 3);
         assert_eq!(links[0].target_selection_range.start.line, 3);
     }
@@ -588,13 +567,13 @@ mod tests {
                 }
             ]
         });
-        let host_uri = "file:///project/doc.md";
+        let host_uri = test_host_uri();
         let region_start_line = 5;
 
         let transformed = transform_definition_response_to_host(
             response,
             virtual_uri,
-            host_uri,
+            &host_uri,
             region_start_line,
         );
 
@@ -622,13 +601,13 @@ mod tests {
                 }
             ]
         });
-        let host_uri = "file:///project/doc.md";
+        let host_uri = test_host_uri();
         let region_start_line = 5;
 
         let transformed = transform_definition_response_to_host(
             response,
             request_virtual_uri,
-            host_uri,
+            &host_uri,
             region_start_line,
         );
 
@@ -671,20 +650,20 @@ mod tests {
                 }
             ]
         });
-        let host_uri = "file:///project/doc.md";
+        let host_uri = test_host_uri();
         let region_start_line = 3;
 
         let transformed = transform_definition_response_to_host(
             response,
             request_virtual_uri,
-            host_uri,
+            &host_uri,
             region_start_line,
         );
 
         assert!(transformed.is_some());
         let links = transformed.unwrap();
         assert_eq!(links.len(), 2); // Cross-region filtered out
-        assert_eq!(links[0].target_uri.as_str(), host_uri);
+        assert_eq!(links[0].target_uri, host_uri);
         assert_eq!(links[0].target_range.start.line, 3); // Transformed
         assert_eq!(links[1].target_uri.as_str(), real_file_uri);
         assert_eq!(links[1].target_range.start.line, 10); // Preserved
@@ -701,7 +680,7 @@ mod tests {
         let transformed = transform_definition_response_to_host(
             response,
             "file:///virtual.lua",
-            "file:///host.md",
+            &test_host_uri(),
             5,
         );
 
@@ -720,7 +699,7 @@ mod tests {
         let transformed = transform_definition_response_to_host(
             response,
             "file:///project/kakehashi-virtual-uri-region-0.lua",
-            "file:///project/doc.md",
+            &test_host_uri(),
             5,
         );
 
@@ -744,13 +723,13 @@ mod tests {
                 }
             }
         });
-        let host_uri = "file:///project/doc.md";
+        let host_uri = test_host_uri();
         let region_start_line = 10;
 
         let transformed = transform_definition_response_to_host(
             response,
             virtual_uri,
-            host_uri,
+            &host_uri,
             region_start_line,
         );
 
