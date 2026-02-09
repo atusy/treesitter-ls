@@ -13,23 +13,27 @@
 //! Used when transformation only requires adding a line offset. The response contains
 //! ranges that reference the same virtual document as the request.
 //!
-//! - [`transform_moniker_response_to_host`] - No ranges (passthrough)
-//! - [`transform_document_highlight_response_to_host`] - Ranges in highlight array
-//! - [`transform_document_link_response_to_host`] - Ranges in document links
+//! Examples: moniker (passthrough), document highlight, document link
 //!
 //! ### Context-based transformers: `fn(response, &ResponseTransformContext)`
 //!
-//! Used when responses may contain URIs pointing to different documents. These need
-//! the full request context to distinguish between:
+//! Used when JSON-based responses may contain URIs pointing to different documents.
+//! These need the full request context to distinguish between:
 //! - Real file URIs (preserved as-is)
 //! - Same virtual URI as request (transformed with context)
 //! - Cross-region virtual URIs (filtered out)
 //!
-//! - [`transform_definition_response_to_host`] - Location/LocationLink with URIs
-//! - [`transform_workspace_edit_to_host`] - TextDocumentEdit with URIs
-//! - [`transform_document_symbol_response_to_host`] - SymbolInformation with URIs
+//! Examples: workspace edit, document symbol, inlay hint
+//!
+//! ### Type-safe transformers: `fn(response, request_virtual_uri, host_uri, region_start_line)`
+//!
+//! Type-safe transformers that return strongly-typed LSP types instead of JSON.
+//! Apply the same URI-based filtering logic as context-based transformers.
+//!
+//! Examples: goto definition/type_definition/implementation/declaration, references
 
 use super::virtual_uri::VirtualDocumentUri;
+use tower_lsp_server::ls_types::{Location, LocationLink, Range, Uri};
 
 /// Transform a range's line numbers from virtual to host coordinates.
 ///
@@ -51,6 +55,317 @@ fn transform_range(range: &mut serde_json::Value, region_start_line: u32) {
     {
         *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
     }
+}
+
+// =============================================================================
+// Type-safe goto-family transformers
+// =============================================================================
+
+/// Transform goto-family responses to typed Vec<LocationLink> format.
+///
+/// This function handles all goto-style endpoints (definition, type_definition,
+/// implementation, declaration) that return Location | Location[] | LocationLink[].
+///
+/// All response variants are normalized to Vec<LocationLink> for internal consistency,
+/// with proper URI filtering and coordinate transformation.
+///
+/// # URI Filtering Logic
+///
+/// - Real file URIs → keep as-is (cross-file jumps)
+/// - Same virtual URI as request → transform coordinates
+/// - Different virtual URI → filter out (cross-region, can't transform safely)
+///
+/// Empty arrays after filtering are preserved to distinguish "searched, found nothing"
+/// from "search failed" (None).
+///
+/// # Arguments
+/// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
+/// * `request_virtual_uri` - The virtual URI from the request
+/// * `host_uri` - The pre-parsed host URI to use in transformed responses
+/// * `region_start_line` - Line offset to add when transforming to host coordinates
+pub(crate) fn transform_goto_response_to_host(
+    mut response: serde_json::Value,
+    request_virtual_uri: &str,
+    host_uri: &Uri,
+    region_start_line: u32,
+) -> Option<Vec<LocationLink>> {
+    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    let result = response.get_mut("result").map(serde_json::Value::take)?;
+    if result.is_null() {
+        return None;
+    }
+
+    // The LSP spec defines GotoDefinitionResponse as: Location | Location[] | LocationLink[]
+    // Normalize all formats to Vec<LocationLink> for simpler internal handling
+
+    if result.is_object() {
+        // Single Location → convert to LocationLink
+        if let Ok(location) = serde_json::from_value::<Location>(result) {
+            return transform_location_for_goto(
+                location,
+                request_virtual_uri,
+                host_uri,
+                region_start_line,
+            )
+            .map(|loc| vec![location_to_location_link(loc)]);
+        }
+    } else if result.is_array() {
+        // Could be Location[] or LocationLink[]
+        let arr = result.as_array()?;
+        if arr.is_empty() {
+            // Preserve empty arrays (semantic: "searched, found nothing")
+            return Some(vec![]);
+        }
+
+        // Check if first element has "targetUri" to distinguish LocationLink from Location
+        if arr.first()?.get("targetUri").is_some() {
+            // LocationLink[] → use directly
+            if let Ok(links) = serde_json::from_value::<Vec<LocationLink>>(result) {
+                let transformed: Vec<LocationLink> = links
+                    .into_iter()
+                    .filter_map(|link| {
+                        transform_location_link_for_goto(
+                            link,
+                            request_virtual_uri,
+                            host_uri,
+                            region_start_line,
+                        )
+                    })
+                    .collect();
+
+                // Preserve empty array after filtering
+                return Some(transformed);
+            }
+        } else {
+            // Location[] → convert each to LocationLink
+            if let Ok(locations) = serde_json::from_value::<Vec<Location>>(result) {
+                let transformed: Vec<LocationLink> = locations
+                    .into_iter()
+                    .filter_map(|location| {
+                        transform_location_for_goto(
+                            location,
+                            request_virtual_uri,
+                            host_uri,
+                            region_start_line,
+                        )
+                        .map(location_to_location_link)
+                    })
+                    .collect();
+
+                // Preserve empty array after filtering
+                return Some(transformed);
+            }
+        }
+    }
+
+    // Failed to deserialize as any known variant
+    None
+}
+
+/// Convert a Location to LocationLink format.
+///
+/// This is a lossless conversion - LocationLink is the more feature-rich format.
+/// We set `targetSelectionRange` equal to `targetRange` since Location doesn't
+/// distinguish between the full symbol range and the selection range.
+pub(crate) fn location_to_location_link(location: Location) -> LocationLink {
+    LocationLink {
+        origin_selection_range: None,
+        target_uri: location.uri,
+        target_range: location.range,
+        target_selection_range: location.range, // Use same range for selection
+    }
+}
+
+/// Convert a LocationLink to Location for clients that don't support linkSupport.
+///
+/// Uses `target_selection_range` (the symbol name) rather than `target_range`
+/// (the whole definition) for more precise navigation to the symbol itself.
+pub(crate) fn location_link_to_location(link: LocationLink) -> Location {
+    Location {
+        uri: link.target_uri,
+        range: link.target_selection_range,
+    }
+}
+
+/// Transform a single Location to host coordinates for goto endpoints.
+///
+/// Returns `None` if the location should be filtered out (cross-region virtual URI).
+///
+/// # URI Filtering Logic
+///
+/// 1. Real file URI → preserve as-is (cross-file jump to real file) - KEEP
+/// 2. Same virtual URI as request → transform using request's context - KEEP
+/// 3. Different virtual URI → cross-region jump - FILTER OUT
+fn transform_location_for_goto(
+    mut location: Location,
+    request_virtual_uri: &str,
+    host_uri: &Uri,
+    region_start_line: u32,
+) -> Option<Location> {
+    let uri_str = location.uri.as_str();
+
+    // Case 1: NOT a virtual URI (real file reference) → preserve as-is
+    if !VirtualDocumentUri::is_virtual_uri(uri_str) {
+        return Some(location);
+    }
+
+    // Case 2: Same virtual URI as request → use request's context
+    if uri_str == request_virtual_uri {
+        location.uri = host_uri.clone();
+        transform_range_for_goto(&mut location.range, region_start_line);
+        return Some(location);
+    }
+
+    // Case 3: Different virtual URI (cross-region) → filter out
+    None
+}
+
+/// Transform a single LocationLink to host coordinates for goto endpoints.
+///
+/// Returns `None` if the location should be filtered out (cross-region virtual URI).
+///
+/// All ranges (targetRange, targetSelectionRange, originSelectionRange) are in virtual
+/// coordinates from the downstream server and need the region_start_line offset applied.
+fn transform_location_link_for_goto(
+    mut link: LocationLink,
+    request_virtual_uri: &str,
+    host_uri: &Uri,
+    region_start_line: u32,
+) -> Option<LocationLink> {
+    let uri_str = link.target_uri.as_str();
+
+    // Case 1: NOT a virtual URI (real file reference) → preserve as-is
+    if !VirtualDocumentUri::is_virtual_uri(uri_str) {
+        return Some(link);
+    }
+
+    // Case 2: Same virtual URI as request → use request's context
+    if uri_str == request_virtual_uri {
+        link.target_uri = host_uri.clone();
+        transform_range_for_goto(&mut link.target_range, region_start_line);
+        transform_range_for_goto(&mut link.target_selection_range, region_start_line);
+        if let Some(ref mut origin_range) = link.origin_selection_range {
+            transform_range_for_goto(origin_range, region_start_line);
+        }
+        return Some(link);
+    }
+
+    // Case 3: Different virtual URI (cross-region) → filter out
+    None
+}
+
+/// Transform a range from virtual to host coordinates for goto endpoints.
+///
+/// Uses `saturating_add` to prevent overflow, consistent with `saturating_sub`
+/// used elsewhere in the codebase for defensive arithmetic.
+fn transform_range_for_goto(range: &mut Range, region_start_line: u32) {
+    range.start.line = range.start.line.saturating_add(region_start_line);
+    range.end.line = range.end.line.saturating_add(region_start_line);
+}
+
+/// Transform references response to typed Vec<Location> format.
+///
+/// This function handles the references endpoint response which returns
+/// Location[] | null according to the LSP spec.
+///
+/// # URI Filtering Logic
+///
+/// Same as goto endpoints:
+/// - Real file URIs → keep as-is (cross-file jumps)
+/// - Same virtual URI as request → transform coordinates
+/// - Different virtual URI → filter out (cross-region, can't transform safely)
+///
+/// Empty arrays after filtering are preserved to distinguish "searched, found nothing"
+/// from "search failed" (None).
+///
+/// # Arguments
+/// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
+/// * `request_virtual_uri` - The virtual URI from the request
+/// * `host_uri` - The pre-parsed host URI to use in transformed responses
+/// * `region_start_line` - Line offset to add when transforming to host coordinates
+pub(crate) fn transform_references_response_to_host(
+    mut response: serde_json::Value,
+    request_virtual_uri: &str,
+    host_uri: &Uri,
+    region_start_line: u32,
+) -> Option<Vec<Location>> {
+    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    let result = response.get_mut("result").map(serde_json::Value::take)?;
+    if result.is_null() {
+        return None;
+    }
+
+    // The LSP spec defines ReferenceResponse as: Location[] | null
+    // References only returns arrays of Location (simpler than goto endpoints)
+
+    if result.is_array() {
+        let arr = result.as_array()?;
+        if arr.is_empty() {
+            // Preserve empty arrays (semantic: "searched, found nothing")
+            return Some(vec![]);
+        }
+
+        // Location[] → transform each location
+        if let Ok(locations) = serde_json::from_value::<Vec<Location>>(result) {
+            let transformed: Vec<Location> = locations
+                .into_iter()
+                .filter_map(|location| {
+                    transform_location_for_goto(
+                        location,
+                        request_virtual_uri,
+                        host_uri,
+                        region_start_line,
+                    )
+                })
+                .collect();
+
+            // Preserve empty array after filtering
+            return Some(transformed);
+        }
+    }
+
+    // Failed to deserialize as Location[]
+    None
+}
+
+// =============================================================================
+// JSON-based transformers (legacy, used by non-refactored endpoints)
+// =============================================================================
+
+/// Transform a Location's uri and range based on URI type.
+///
+/// This is a JSON-based helper used by document_symbol and inlay_hint transformers.
+///
+/// Returns `true` if the item should be kept, `false` if it should be filtered out.
+///
+/// Handles three cases:
+/// 1. Real file URI (not virtual): preserved as-is
+/// 2. Same virtual URI as request: URI replaced with host URI, range transformed
+/// 3. Different virtual URI (cross-region): filtered out
+fn transform_location_uri(
+    item: &mut serde_json::Value,
+    uri_str: &str,
+    uri_field: &str,
+    range_field: &str,
+    context: &ResponseTransformContext,
+) -> bool {
+    // Case 1: NOT a virtual URI (real file reference) → preserve as-is
+    if !is_virtual_uri(uri_str) {
+        return true;
+    }
+
+    // Case 2: Same virtual URI as request → use request's context
+    if uri_str == context.request_virtual_uri {
+        item[uri_field] = serde_json::json!(&context.request_host_uri);
+        if let Some(range) = item.get_mut(range_field) {
+            transform_range(range, context.request_region_start_line);
+        }
+        return true;
+    }
+
+    // Case 3: Different virtual URI (cross-region) → filter out
+    // We cannot reliably transform these because region_start_line may be stale
+    false
 }
 
 /// Transform a document highlight response from virtual to host document coordinates.
@@ -211,7 +526,7 @@ fn transform_document_symbol_item(
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
         {
-            // Use the same URI transformation logic as definition responses
+            // Use the shared context-based URI transformation logic
             return transform_location_uri(location, &uri_str, "uri", "range", context);
         }
     }
@@ -229,7 +544,7 @@ fn transform_document_symbol_item(
 /// - textEdits: Optional array of TextEdit (needs transformation, handled separately)
 ///
 /// When label is an array of InlayHintLabelPart, each part may have a location field
-/// that needs URI and range transformation following the same pattern as definition responses.
+/// that needs URI and range transformation following the same context-based pattern.
 ///
 /// This function handles three cases for each location URI:
 /// 1. **Real file URI** (not a virtual URI): Preserved as-is with original coordinates
@@ -288,7 +603,7 @@ fn transform_inlay_hint_item(item: &mut serde_json::Value, context: &ResponseTra
     // Transform label parts if label is an array (InlayHintLabelPart[])
     // Per LSP 3.17: label can be string | InlayHintLabelPart[]
     // InlayHintLabelPart has optional location: { uri, range }
-    // Cross-region parts are filtered out, same as definition response handling
+    // Cross-region parts are filtered out, same as other context-based responses
     if let Some(label) = item.get_mut("label")
         && let Some(label_parts) = label.as_array_mut()
     {
@@ -457,161 +772,19 @@ pub(crate) fn is_virtual_uri(uri: &str) -> bool {
     VirtualDocumentUri::is_virtual_uri(uri)
 }
 
-/// Context for transforming definition responses to host coordinates.
+/// Context for transforming JSON-based responses to host coordinates.
 ///
-/// Contains information about the original request to enable proper coordinate
-/// transformation for responses that may reference different virtual documents.
+/// Used by context-based transformers (e.g., workspace edit, document symbol,
+/// inlay hint) that need the full request context to distinguish between real
+/// file URIs, same-region virtual URIs, and cross-region virtual URIs.
 #[derive(Debug, Clone)]
 pub(crate) struct ResponseTransformContext {
     /// The virtual URI string we sent in the request
-    pub request_virtual_uri: String,
+    pub(crate) request_virtual_uri: String,
     /// The host URI string for the request
-    pub request_host_uri: String,
+    pub(crate) request_host_uri: String,
     /// The region start line for the request's injection region
-    pub request_region_start_line: u32,
-}
-
-/// Transform a definition response from virtual to host document coordinates.
-///
-/// Definition responses can be in multiple formats per LSP spec:
-/// - null (no definition found)
-/// - Location (single location with uri + range)
-/// - Location[] (array of locations)
-/// - LocationLink[] (array of location links with target ranges)
-///
-/// This function handles three cases for each URI in the response:
-/// 1. **Real file URI** (not a virtual URI): Preserved as-is with original coordinates
-/// 2. **Same virtual URI as request**: Transformed using request's context
-/// 3. **Different virtual URI** (cross-region): Filtered out from results
-///
-/// Cross-region virtual URIs are filtered because we cannot reliably map their
-/// coordinates back to the host document (the region_start_line may be stale
-/// after host document edits).
-///
-/// # Arguments
-/// * `response` - The JSON-RPC response from the downstream language server
-/// * `context` - The transformation context with request information
-pub(crate) fn transform_definition_response_to_host(
-    mut response: serde_json::Value,
-    context: &ResponseTransformContext,
-) -> serde_json::Value {
-    // Get mutable reference to result
-    let Some(result) = response.get_mut("result") else {
-        return response;
-    };
-
-    // Null result - pass through unchanged
-    if result.is_null() {
-        return response;
-    }
-
-    // Array format: Location[] or LocationLink[]
-    if let Some(arr) = result.as_array_mut() {
-        // Filter out cross-region virtual URIs, transform the rest
-        arr.retain_mut(|item| transform_definition_item(item, context));
-    } else if result.is_object() {
-        // Single Location or LocationLink
-        if !transform_definition_item(result, context) {
-            // Item was filtered - return null result
-            response["result"] = serde_json::Value::Null;
-        }
-    }
-
-    response
-}
-
-/// Transform a single Location or LocationLink item to host coordinates.
-///
-/// Returns `true` if the item should be kept, `false` if it should be filtered out.
-///
-/// Handles three cases:
-/// 1. Real file URI → preserve as-is (cross-file jump to real file) - KEEP
-/// 2. Same virtual URI as request → transform using request's context - KEEP
-/// 3. Different virtual URI → cross-region jump - FILTER OUT
-fn transform_definition_item(
-    item: &mut serde_json::Value,
-    context: &ResponseTransformContext,
-) -> bool {
-    // Handle Location format (has uri + range)
-    if let Some(uri_str) = item
-        .get("uri")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-    {
-        return transform_location_uri(item, &uri_str, "uri", "range", context);
-    }
-
-    // Handle LocationLink format (has targetUri + targetRange + targetSelectionRange)
-    if let Some(target_uri_str) = item
-        .get("targetUri")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-    {
-        return transform_location_link_target(item, &target_uri_str, context);
-    }
-    // Note: originSelectionRange stays in host coordinates (it's already correct)
-
-    // Unknown format - keep it
-    true
-}
-
-/// Transform a Location's uri and range based on URI type.
-///
-/// Returns `true` if the item should be kept, `false` if it should be filtered out.
-fn transform_location_uri(
-    item: &mut serde_json::Value,
-    uri_str: &str,
-    uri_field: &str,
-    range_field: &str,
-    context: &ResponseTransformContext,
-) -> bool {
-    // Case 1: NOT a virtual URI (real file reference) → preserve as-is
-    if !is_virtual_uri(uri_str) {
-        return true;
-    }
-
-    // Case 2: Same virtual URI as request → use request's context
-    if uri_str == context.request_virtual_uri {
-        item[uri_field] = serde_json::json!(&context.request_host_uri);
-        if let Some(range) = item.get_mut(range_field) {
-            transform_range(range, context.request_region_start_line);
-        }
-        return true;
-    }
-
-    // Case 3: Different virtual URI (cross-region) → filter out
-    // We cannot reliably transform these because region_start_line may be stale
-    false
-}
-
-/// Transform a LocationLink's targetUri and associated ranges.
-///
-/// Returns `true` if the item should be kept, `false` if it should be filtered out.
-fn transform_location_link_target(
-    item: &mut serde_json::Value,
-    target_uri_str: &str,
-    context: &ResponseTransformContext,
-) -> bool {
-    // Case 1: NOT a virtual URI (real file reference) → preserve as-is
-    if !is_virtual_uri(target_uri_str) {
-        return true;
-    }
-
-    // Case 2: Same virtual URI as request → use request's context
-    if target_uri_str == context.request_virtual_uri {
-        item["targetUri"] = serde_json::json!(&context.request_host_uri);
-        if let Some(range) = item.get_mut("targetRange") {
-            transform_range(range, context.request_region_start_line);
-        }
-        if let Some(range) = item.get_mut("targetSelectionRange") {
-            transform_range(range, context.request_region_start_line);
-        }
-        return true;
-    }
-
-    // Case 3: Different virtual URI (cross-region) → filter out
-    // We cannot reliably transform these because region_start_line may be stale
-    false
+    pub(crate) request_region_start_line: u32,
 }
 
 /// Transform a WorkspaceEdit response from virtual to host document coordinates.
@@ -768,10 +941,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    // ==========================================================================
-    // Definition response transformation tests
-    // ==========================================================================
-
     fn test_context(
         virtual_uri: &str,
         host_uri: &str,
@@ -782,389 +951,6 @@ mod tests {
             request_host_uri: host_uri.to_string(),
             request_region_start_line: region_start_line,
         }
-    }
-
-    #[test]
-    fn definition_response_transforms_location_array_ranges() {
-        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": [
-                {
-                    "uri": virtual_uri,
-                    "range": {
-                        "start": { "line": 0, "character": 9 },
-                        "end": { "line": 0, "character": 14 }
-                    }
-                },
-                {
-                    "uri": virtual_uri,
-                    "range": {
-                        "start": { "line": 2, "character": 0 },
-                        "end": { "line": 2, "character": 10 }
-                    }
-                }
-            ]
-        });
-        let host_uri = "file:///project/doc.md";
-        let context = test_context(virtual_uri, host_uri, 3);
-        let transformed = transform_definition_response_to_host(response, &context);
-
-        let result = transformed["result"].as_array().unwrap();
-        assert_eq!(result[0]["range"]["start"]["line"], 3);
-        assert_eq!(result[0]["range"]["end"]["line"], 3);
-        assert_eq!(result[1]["range"]["start"]["line"], 5);
-        assert_eq!(result[1]["range"]["end"]["line"], 5);
-        assert_eq!(result[0]["uri"], host_uri);
-        assert_eq!(result[1]["uri"], host_uri);
-    }
-
-    #[test]
-    fn definition_response_transforms_single_location() {
-        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": {
-                "uri": virtual_uri,
-                "range": {
-                    "start": { "line": 1, "character": 5 },
-                    "end": { "line": 1, "character": 15 }
-                }
-            }
-        });
-        let host_uri = "file:///project/doc.md";
-        let context = test_context(virtual_uri, host_uri, 3);
-        let transformed = transform_definition_response_to_host(response, &context);
-
-        assert_eq!(transformed["result"]["range"]["start"]["line"], 4);
-        assert_eq!(transformed["result"]["range"]["end"]["line"], 4);
-        assert_eq!(transformed["result"]["uri"], host_uri);
-    }
-
-    #[test]
-    fn definition_response_transforms_location_link_array() {
-        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": [{
-                "originSelectionRange": {
-                    "start": { "line": 5, "character": 0 },
-                    "end": { "line": 5, "character": 10 }
-                },
-                "targetUri": virtual_uri,
-                "targetRange": {
-                    "start": { "line": 0, "character": 0 },
-                    "end": { "line": 2, "character": 3 }
-                },
-                "targetSelectionRange": {
-                    "start": { "line": 0, "character": 9 },
-                    "end": { "line": 0, "character": 14 }
-                }
-            }]
-        });
-        let host_uri = "file:///project/doc.md";
-        let context = test_context(virtual_uri, host_uri, 3);
-        let transformed = transform_definition_response_to_host(response, &context);
-
-        let result = transformed["result"].as_array().unwrap();
-        // originSelectionRange NOT transformed (in host coordinates)
-        assert_eq!(result[0]["originSelectionRange"]["start"]["line"], 5);
-        // targetRange transformed
-        assert_eq!(result[0]["targetRange"]["start"]["line"], 3);
-        assert_eq!(result[0]["targetRange"]["end"]["line"], 5);
-        // targetSelectionRange transformed
-        assert_eq!(result[0]["targetSelectionRange"]["start"]["line"], 3);
-        assert_eq!(result[0]["targetUri"], host_uri);
-    }
-
-    #[test]
-    fn definition_response_with_null_result_passes_through() {
-        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
-        let context = test_context(
-            "file:///project/kakehashi-virtual-uri-region-0.lua",
-            "file:///project/doc.md",
-            3,
-        );
-
-        let transformed = transform_definition_response_to_host(response.clone(), &context);
-        assert_eq!(transformed, response);
-    }
-
-    #[test]
-    fn definition_response_transforms_location_uri_to_host_uri() {
-        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": [{
-                "uri": virtual_uri,
-                "range": {
-                    "start": { "line": 0, "character": 9 },
-                    "end": { "line": 0, "character": 14 }
-                }
-            }]
-        });
-        let host_uri = "file:///project/doc.md";
-        let context = test_context(virtual_uri, host_uri, 3);
-        let transformed = transform_definition_response_to_host(response, &context);
-
-        let result = transformed["result"].as_array().unwrap();
-        assert_eq!(result[0]["uri"], host_uri);
-        assert_eq!(result[0]["range"]["start"]["line"], 3);
-    }
-
-    #[test]
-    fn definition_response_transforms_location_link_target_uri_to_host_uri() {
-        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": [{
-                "originSelectionRange": {
-                    "start": { "line": 5, "character": 0 },
-                    "end": { "line": 5, "character": 10 }
-                },
-                "targetUri": virtual_uri,
-                "targetRange": {
-                    "start": { "line": 0, "character": 0 },
-                    "end": { "line": 2, "character": 3 }
-                },
-                "targetSelectionRange": {
-                    "start": { "line": 0, "character": 9 },
-                    "end": { "line": 0, "character": 14 }
-                }
-            }]
-        });
-        let host_uri = "file:///project/doc.md";
-        let context = test_context(virtual_uri, host_uri, 3);
-        let transformed = transform_definition_response_to_host(response, &context);
-
-        let result = transformed["result"].as_array().unwrap();
-        assert_eq!(result[0]["targetUri"], host_uri);
-        assert_eq!(result[0]["targetRange"]["start"]["line"], 3);
-        assert_eq!(result[0]["targetSelectionRange"]["start"]["line"], 3);
-    }
-
-    // ==========================================================================
-    // Cross-document transformation tests (is_virtual_uri tests are in virtual_uri.rs)
-    // ==========================================================================
-
-    #[test]
-    fn definition_response_preserves_real_file_uri() {
-        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
-        let real_file_uri = "file:///real/path/utils.lua";
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": [{
-                "uri": real_file_uri,
-                "range": { "start": { "line": 10, "character": 0 }, "end": { "line": 10, "character": 5 } }
-            }]
-        });
-
-        let host_uri = "file:///doc.md";
-        let context = test_context(virtual_uri, host_uri, 5);
-        let transformed = transform_definition_response_to_host(response, &context);
-
-        assert_eq!(transformed["result"][0]["uri"], real_file_uri);
-        assert_eq!(transformed["result"][0]["range"]["start"]["line"], 10);
-    }
-
-    #[test]
-    fn definition_response_filters_out_different_region_virtual_uri() {
-        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
-        let different_virtual_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": [{
-                "uri": different_virtual_uri,
-                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 10 } }
-            }]
-        });
-
-        let host_uri = "file:///doc.md";
-        let context = test_context(request_virtual_uri, host_uri, 5);
-
-        let transformed = transform_definition_response_to_host(response, &context);
-
-        let result = transformed["result"].as_array().unwrap();
-        assert!(
-            result.is_empty(),
-            "Cross-region virtual URI should be filtered out"
-        );
-    }
-
-    #[test]
-    fn definition_response_mixed_array_filters_only_cross_region() {
-        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
-        let cross_region_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
-        let real_file_uri = "file:///real/utils.lua";
-
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": [
-                {
-                    "uri": real_file_uri,
-                    "range": { "start": { "line": 10, "character": 0 }, "end": { "line": 10, "character": 5 } }
-                },
-                {
-                    "uri": request_virtual_uri,
-                    "range": { "start": { "line": 2, "character": 0 }, "end": { "line": 2, "character": 8 } }
-                },
-                {
-                    "uri": cross_region_uri,
-                    "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 3 } }
-                }
-            ]
-        });
-
-        let host_uri = "file:///doc.md";
-        let context = test_context(request_virtual_uri, host_uri, 5);
-
-        let transformed = transform_definition_response_to_host(response, &context);
-
-        let result = transformed["result"].as_array().unwrap();
-        assert_eq!(
-            result.len(),
-            2,
-            "Should have 2 items (cross-region filtered out)"
-        );
-        assert_eq!(result[0]["uri"], real_file_uri);
-        assert_eq!(result[0]["range"]["start"]["line"], 10);
-        assert_eq!(result[1]["uri"], host_uri);
-        assert_eq!(result[1]["range"]["start"]["line"], 7);
-    }
-
-    #[test]
-    fn definition_response_single_location_filtered_becomes_null() {
-        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
-        let cross_region_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
-
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": {
-                "uri": cross_region_uri,
-                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 5 } }
-            }
-        });
-
-        let host_uri = "file:///doc.md";
-        let context = test_context(request_virtual_uri, host_uri, 5);
-
-        let transformed = transform_definition_response_to_host(response, &context);
-
-        assert!(transformed["result"].is_null());
-    }
-
-    #[test]
-    fn definition_response_single_location_link_filtered_becomes_null() {
-        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
-        let cross_region_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
-
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": {
-                "originSelectionRange": {
-                    "start": { "line": 5, "character": 0 },
-                    "end": { "line": 5, "character": 10 }
-                },
-                "targetUri": cross_region_uri,
-                "targetRange": {
-                    "start": { "line": 0, "character": 0 },
-                    "end": { "line": 2, "character": 0 }
-                },
-                "targetSelectionRange": {
-                    "start": { "line": 0, "character": 6 },
-                    "end": { "line": 0, "character": 12 }
-                }
-            }
-        });
-
-        let host_uri = "file:///doc.md";
-        let context = test_context(request_virtual_uri, host_uri, 5);
-
-        let transformed = transform_definition_response_to_host(response, &context);
-
-        assert!(transformed["result"].is_null());
-    }
-
-    #[test]
-    fn definition_response_single_location_link_same_region_transforms() {
-        let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
-
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": {
-                "originSelectionRange": {
-                    "start": { "line": 5, "character": 0 },
-                    "end": { "line": 5, "character": 10 }
-                },
-                "targetUri": virtual_uri,
-                "targetRange": {
-                    "start": { "line": 0, "character": 0 },
-                    "end": { "line": 2, "character": 0 }
-                },
-                "targetSelectionRange": {
-                    "start": { "line": 0, "character": 6 },
-                    "end": { "line": 0, "character": 12 }
-                }
-            }
-        });
-
-        let host_uri = "file:///doc.md";
-        let context = test_context(virtual_uri, host_uri, 10);
-
-        let transformed = transform_definition_response_to_host(response, &context);
-
-        let result = &transformed["result"];
-        assert!(result.is_object());
-        assert_eq!(result["targetUri"], host_uri);
-        assert_eq!(result["targetRange"]["start"]["line"], 10);
-        assert_eq!(result["targetSelectionRange"]["start"]["line"], 10);
-        assert_eq!(result["originSelectionRange"]["start"]["line"], 5);
-    }
-
-    #[test]
-    fn definition_response_location_link_array_filters_cross_region() {
-        let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
-        let cross_region_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
-
-        let response = json!({
-            "jsonrpc": "2.0",
-            "id": 42,
-            "result": [
-                {
-                    "originSelectionRange": { "start": { "line": 1, "character": 0 }, "end": { "line": 1, "character": 5 } },
-                    "targetUri": request_virtual_uri,
-                    "targetRange": { "start": { "line": 0, "character": 0 }, "end": { "line": 1, "character": 0 } },
-                    "targetSelectionRange": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 3 } }
-                },
-                {
-                    "originSelectionRange": { "start": { "line": 2, "character": 0 }, "end": { "line": 2, "character": 5 } },
-                    "targetUri": cross_region_uri,
-                    "targetRange": { "start": { "line": 5, "character": 0 }, "end": { "line": 6, "character": 0 } },
-                    "targetSelectionRange": { "start": { "line": 5, "character": 0 }, "end": { "line": 5, "character": 3 } }
-                }
-            ]
-        });
-
-        let host_uri = "file:///doc.md";
-        let context = test_context(request_virtual_uri, host_uri, 3);
-
-        let transformed = transform_definition_response_to_host(response, &context);
-
-        let result = transformed["result"].as_array().unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0]["targetUri"], host_uri);
-        assert_eq!(result[0]["targetRange"]["start"]["line"], 3);
     }
 
     // ==========================================================================

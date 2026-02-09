@@ -11,13 +11,12 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::{LocationLink, Position};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
 use super::super::protocol::{
-    ResponseTransformContext, VirtualDocumentUri, build_bridge_implementation_request,
-    transform_definition_response_to_host,
+    RequestId, VirtualDocumentUri, build_position_based_request, transform_goto_response_to_host,
 };
 
 impl LanguageServerPool {
@@ -43,7 +42,7 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
         upstream_request_id: UpstreamId,
-    ) -> io::Result<serde_json::Value> {
+    ) -> io::Result<Option<Vec<LocationLink>>> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(server_name, server_config)
@@ -75,7 +74,7 @@ impl LanguageServerPool {
             };
 
         // Build implementation request
-        let implementation_request = build_bridge_implementation_request(
+        let implementation_request = build_implementation_request(
             &host_uri_lsp,
             host_position,
             injection_language,
@@ -111,21 +110,38 @@ impl LanguageServerPool {
             return Err(e.into());
         }
 
-        // Build transformation context for response handling
-        let context = ResponseTransformContext {
-            request_virtual_uri: virtual_uri_string,
-            request_host_uri: host_uri.as_str().to_string(),
-            request_region_start_line: region_start_line,
-        };
-
         // Wait for response via oneshot channel (no Mutex held) with timeout
         let response = handle.wait_for_response(request_id, response_rx).await;
 
         // Unregister from the upstream request registry regardless of result
         self.unregister_upstream_request(&upstream_request_id, server_name);
 
-        // Transform response to host coordinates and URI
-        // Cross-region virtual URIs are filtered out
-        Ok(transform_definition_response_to_host(response?, &context))
+        // Transform response to host coordinates
+        Ok(transform_goto_response_to_host(
+            response?,
+            &virtual_uri_string,
+            &host_uri_lsp,
+            region_start_line,
+        ))
     }
+}
+
+/// Build a JSON-RPC implementation request for a downstream language server.
+fn build_implementation_request(
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: RequestId,
+) -> serde_json::Value {
+    build_position_based_request(
+        host_uri,
+        host_position,
+        injection_language,
+        region_id,
+        region_start_line,
+        request_id,
+        "textDocument/implementation",
+    )
 }

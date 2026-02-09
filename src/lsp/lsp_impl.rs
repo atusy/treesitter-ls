@@ -1,3 +1,4 @@
+mod bridge_context;
 pub(crate) mod text_document;
 
 use std::collections::HashSet;
@@ -229,6 +230,27 @@ impl Kakehashi {
     /// Delegates to SettingsManager for capability checking.
     fn supports_definition_link(&self) -> bool {
         self.settings_manager.supports_definition_link()
+    }
+
+    /// Check if the client supports type definition link (LocationLink[]).
+    ///
+    /// Delegates to SettingsManager for capability checking.
+    fn supports_type_definition_link(&self) -> bool {
+        self.settings_manager.supports_type_definition_link()
+    }
+
+    /// Check if the client supports implementation link (LocationLink[]).
+    ///
+    /// Delegates to SettingsManager for capability checking.
+    fn supports_implementation_link(&self) -> bool {
+        self.settings_manager.supports_implementation_link()
+    }
+
+    /// Check if the client supports declaration link (LocationLink[]).
+    ///
+    /// Delegates to SettingsManager for capability checking.
+    fn supports_declaration_link(&self) -> bool {
+        self.settings_manager.supports_declaration_link()
     }
 
     /// Check if the given search paths include the default data directory.

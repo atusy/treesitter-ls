@@ -20,7 +20,9 @@
 use arc_swap::ArcSwap;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
-use tower_lsp_server::ls_types::ClientCapabilities;
+use tower_lsp_server::ls_types::{
+    ClientCapabilities, GotoCapability, TextDocumentClientCapabilities,
+};
 
 use crate::config::WorkspaceSettings;
 #[cfg(test)]
@@ -199,20 +201,44 @@ impl SettingsManager {
         search_paths.iter().any(|p| p == default_str.as_ref())
     }
 
-    /// Returns true if client declared textDocument.definition.linkSupport.
-    /// Returns false if initialize() hasn't been called yet (OnceLock is empty).
+    /// Check if client supports LocationLink[] for a specific goto capability.
     ///
     /// Per LSP spec, when linkSupport is true, the server can return LocationLink[]
     /// which provides richer information (origin selection range, target range, and
     /// target selection range). When false or missing, the server should return
     /// Location[] for compatibility.
-    pub(crate) fn supports_definition_link(&self) -> bool {
+    ///
+    /// Returns false if initialize() hasn't been called yet (OnceLock is empty).
+    fn supports_goto_link(
+        &self,
+        get_capability: fn(&TextDocumentClientCapabilities) -> &Option<GotoCapability>,
+    ) -> bool {
         self.client_capabilities
             .get()
             .and_then(|caps| caps.text_document.as_ref())
-            .and_then(|td| td.definition.as_ref())
-            .and_then(|def| def.link_support)
+            .and_then(|td| get_capability(td).as_ref())
+            .and_then(|cap| cap.link_support)
             .unwrap_or(false)
+    }
+
+    /// Returns true if client declared textDocument.definition.linkSupport.
+    pub(crate) fn supports_definition_link(&self) -> bool {
+        self.supports_goto_link(|td| &td.definition)
+    }
+
+    /// Check if client supports LocationLink[] for type definition responses.
+    pub(crate) fn supports_type_definition_link(&self) -> bool {
+        self.supports_goto_link(|td| &td.type_definition)
+    }
+
+    /// Check if client supports LocationLink[] for implementation responses.
+    pub(crate) fn supports_implementation_link(&self) -> bool {
+        self.supports_goto_link(|td| &td.implementation)
+    }
+
+    /// Check if client supports LocationLink[] for declaration responses.
+    pub(crate) fn supports_declaration_link(&self) -> bool {
+        self.supports_goto_link(|td| &td.declaration)
     }
 }
 
@@ -358,5 +384,102 @@ mod tests {
         let manager = SettingsManager::new();
         // Should return false (safe default - use Location[] for compatibility)
         assert!(!manager.supports_definition_link());
+    }
+
+    #[test]
+    fn test_supports_type_definition_link_before_init() {
+        // Before initialize() is called, capabilities are not set
+        let manager = SettingsManager::new();
+        // Should return false (safe default - use Location[] for compatibility)
+        assert!(!manager.supports_type_definition_link());
+    }
+
+    #[test]
+    fn test_supports_implementation_link_before_init() {
+        // Before initialize() is called, capabilities are not set
+        let manager = SettingsManager::new();
+        // Should return false (safe default - use Location[] for compatibility)
+        assert!(!manager.supports_implementation_link());
+    }
+
+    #[test]
+    fn test_supports_declaration_link_before_init() {
+        // Before initialize() is called, capabilities are not set
+        let manager = SettingsManager::new();
+        // Should return false (safe default - use Location[] for compatibility)
+        assert!(!manager.supports_declaration_link());
+    }
+
+    /// Parameterized tests for supports_*_link() capability checking.
+    ///
+    /// Each test case varies:
+    /// - `text_document`: Whether text_document field is Some
+    /// - `goto_cap`: Whether the specific goto capability is Some (requires text_document)
+    /// - `link_support`: The actual link_support value (requires goto_cap)
+    /// - `expected`: The expected result
+    ///
+    /// All four goto link methods (definition, type_definition, implementation,
+    /// declaration) use the same GotoCapability struct, so one parameterized test
+    /// covers all four by calling each method.
+    #[rstest]
+    #[case::link_support_true(true, true, Some(true), true)]
+    #[case::link_support_false(true, true, Some(false), false)]
+    #[case::link_support_none(true, true, None, false)]
+    #[case::goto_cap_none(true, false, None, false)]
+    #[case::text_document_none(false, false, None, false)]
+    fn test_supports_goto_link(
+        #[case] text_document: bool,
+        #[case] goto_cap: bool,
+        #[case] link_support: Option<bool>,
+        #[case] expected: bool,
+    ) {
+        use tower_lsp_server::ls_types::{GotoCapability, TextDocumentClientCapabilities};
+
+        let goto = if goto_cap {
+            Some(GotoCapability {
+                dynamic_registration: None,
+                link_support,
+            })
+        } else {
+            None
+        };
+
+        let manager = SettingsManager::new();
+        let caps = ClientCapabilities {
+            text_document: if text_document {
+                Some(TextDocumentClientCapabilities {
+                    definition: goto.clone(),
+                    type_definition: goto.clone(),
+                    implementation: goto.clone(),
+                    declaration: goto,
+                    ..Default::default()
+                })
+            } else {
+                None
+            },
+            ..Default::default()
+        };
+        manager.set_capabilities(caps);
+
+        assert_eq!(
+            manager.supports_definition_link(),
+            expected,
+            "supports_definition_link"
+        );
+        assert_eq!(
+            manager.supports_type_definition_link(),
+            expected,
+            "supports_type_definition_link"
+        );
+        assert_eq!(
+            manager.supports_implementation_link(),
+            expected,
+            "supports_implementation_link"
+        );
+        assert_eq!(
+            manager.supports_declaration_link(),
+            expected,
+            "supports_declaration_link"
+        );
     }
 }
