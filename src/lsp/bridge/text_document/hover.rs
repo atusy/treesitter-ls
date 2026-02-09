@@ -470,6 +470,32 @@ mod tests {
     }
 
     #[test]
+    fn hover_response_with_no_result_key_returns_none() {
+        // JSON-RPC error response has no "result" key
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "error": { "code": -32600, "message": "Invalid Request" }
+        });
+
+        let transformed = transform_hover_response_to_host(response, 5);
+        assert!(transformed.is_none());
+    }
+
+    #[test]
+    fn hover_response_with_malformed_result_returns_none() {
+        // Result is a string instead of a Hover object
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": "not_a_hover_object"
+        });
+
+        let transformed = transform_hover_response_to_host(response, 5);
+        assert!(transformed.is_none());
+    }
+
+    #[test]
     fn hover_response_transformation_saturates_on_overflow() {
         // Test defensive arithmetic: saturating_add prevents panic on overflow
         let response = serde_json::json!({
