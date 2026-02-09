@@ -198,6 +198,22 @@ impl SettingsManager {
         let default_str = default_dir.to_string_lossy();
         search_paths.iter().any(|p| p == default_str.as_ref())
     }
+
+    /// Returns true if client declared textDocument.definition.linkSupport.
+    /// Returns false if initialize() hasn't been called yet (OnceLock is empty).
+    ///
+    /// Per LSP spec, when linkSupport is true, the server can return LocationLink[]
+    /// which provides richer information (origin selection range, target range, and
+    /// target selection range). When false or missing, the server should return
+    /// Location[] for compatibility.
+    pub(crate) fn supports_definition_link(&self) -> bool {
+        self.client_capabilities
+            .get()
+            .and_then(|caps| caps.text_document.as_ref())
+            .and_then(|td| td.definition.as_ref())
+            .and_then(|def| def.link_support)
+            .unwrap_or(false)
+    }
 }
 
 #[cfg(test)]
@@ -334,5 +350,13 @@ mod tests {
         let manager = SettingsManager::new();
         // Should return false (safe default)
         assert!(!manager.supports_semantic_tokens_refresh());
+    }
+
+    #[test]
+    fn test_supports_definition_link_before_init() {
+        // Before initialize() is called, capabilities are not set
+        let manager = SettingsManager::new();
+        // Should return false (safe default - use Location[] for compatibility)
+        assert!(!manager.supports_definition_link());
     }
 }

@@ -1,7 +1,9 @@
 //! Goto definition method for Kakehashi.
 
 use tower_lsp_server::jsonrpc::{Id, Result};
-use tower_lsp_server::ls_types::{GotoDefinitionParams, GotoDefinitionResponse, MessageType};
+use tower_lsp_server::ls_types::{
+    GotoDefinitionParams, GotoDefinitionResponse, Location, LocationLink, MessageType,
+};
 
 use crate::language::InjectionResolver;
 use crate::lsp::bridge::UpstreamId;
@@ -9,6 +11,17 @@ use crate::lsp::get_current_request_id;
 use crate::text::PositionMapper;
 
 use super::super::{Kakehashi, uri_to_url};
+
+/// Convert LocationLink to Location for clients that don't support link format.
+///
+/// Uses `target_selection_range` (the symbol name) rather than `target_range`
+/// (the whole definition) for more precise navigation to the symbol itself.
+fn location_link_to_location(link: LocationLink) -> Location {
+    Location {
+        uri: link.target_uri,
+        range: link.target_selection_range,
+    }
+}
 
 impl Kakehashi {
     pub(crate) async fn goto_definition_impl(
@@ -121,22 +134,16 @@ impl Kakehashi {
             .await;
 
         match response {
-            Ok(json_response) => {
-                // Parse the definition response
-                if let Some(result) = json_response.get("result") {
-                    if result.is_null() {
-                        return Ok(None);
-                    }
-
-                    // Parse the result into a GotoDefinitionResponse
-                    if let Ok(definition) =
-                        serde_json::from_value::<GotoDefinitionResponse>(result.clone())
-                    {
-                        return Ok(Some(definition));
-                    }
+            Ok(Some(links)) => {
+                if self.supports_definition_link() {
+                    Ok(Some(GotoDefinitionResponse::Link(links)))
+                } else {
+                    let locations: Vec<Location> =
+                        links.into_iter().map(location_link_to_location).collect();
+                    Ok(Some(GotoDefinitionResponse::Array(locations)))
                 }
-                Ok(None)
             }
+            Ok(None) => Ok(None),
             Err(e) => {
                 self.client
                     .log_message(
