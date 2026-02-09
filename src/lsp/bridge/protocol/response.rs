@@ -224,7 +224,8 @@ fn transform_location_for_goto(
 ///
 /// Returns `None` if the location should be filtered out (cross-region virtual URI).
 ///
-/// Note: originSelectionRange stays in host coordinates (it's already correct).
+/// All ranges (targetRange, targetSelectionRange, originSelectionRange) are in virtual
+/// coordinates from the downstream server and need the region_start_line offset applied.
 fn transform_location_link_for_goto(
     mut link: LocationLink,
     request_virtual_uri: &str,
@@ -243,6 +244,9 @@ fn transform_location_link_for_goto(
         link.target_uri = host_uri.clone();
         transform_range_for_goto(&mut link.target_range, region_start_line);
         transform_range_for_goto(&mut link.target_selection_range, region_start_line);
+        if let Some(ref mut origin_range) = link.origin_selection_range {
+            transform_range_for_goto(origin_range, region_start_line);
+        }
         return Some(link);
     }
 
