@@ -16,7 +16,7 @@ use std::io;
 use log::warn;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::DocumentSymbolResponse;
+use tower_lsp_server::ls_types::{DocumentSymbol, DocumentSymbolResponse, SymbolInformation};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
@@ -212,41 +212,42 @@ fn transform_document_symbol_response_to_host(
 
 /// Transform a SymbolInformation[] response to typed format.
 ///
-/// Filters cross-region virtual URIs, transforms same-region URIs to host,
-/// and preserves real file URIs unchanged.
+/// Deserializes into typed structs first, then filters cross-region virtual URIs,
+/// transforms same-region URIs to host, and preserves real file URIs unchanged.
 fn transform_symbol_information_response(
-    mut result: serde_json::Value,
+    result: serde_json::Value,
     request_virtual_uri: &str,
     request_host_uri: &str,
     region_start_line: u32,
 ) -> Option<DocumentSymbolResponse> {
-    let items = result.as_array_mut()?;
+    let mut symbols: Vec<SymbolInformation> = serde_json::from_value(result).ok()?;
 
-    // Filter and transform SymbolInformation items using JSON manipulation
-    // before deserializing to typed format
-    items.retain_mut(|item| {
-        let Some(location) = item.get_mut("location") else {
-            return true;
-        };
-        let Some(uri_str) = location
-            .get("uri")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-        else {
-            return true;
-        };
+    // Parse host URI once for reuse across all matching items
+    let host_uri: tower_lsp_server::ls_types::Uri = request_host_uri.parse().ok()?;
+
+    symbols.retain_mut(|symbol| {
+        let is_virtual = VirtualDocumentUri::is_virtual_uri(symbol.location.uri.as_str());
 
         // Case 1: Real file URI → preserve as-is
-        if !VirtualDocumentUri::is_virtual_uri(&uri_str) {
+        if !is_virtual {
             return true;
         }
 
         // Case 2: Same virtual URI → transform to host coordinates
-        if uri_str == request_virtual_uri {
-            location["uri"] = serde_json::json!(request_host_uri);
-            if let Some(range) = location.get_mut("range") {
-                transform_json_range(range, region_start_line);
-            }
+        if symbol.location.uri.as_str() == request_virtual_uri {
+            symbol.location.uri = host_uri.clone();
+            symbol.location.range.start.line = symbol
+                .location
+                .range
+                .start
+                .line
+                .saturating_add(region_start_line);
+            symbol.location.range.end.line = symbol
+                .location
+                .range
+                .end
+                .line
+                .saturating_add(region_start_line);
             return true;
         }
 
@@ -254,69 +255,45 @@ fn transform_symbol_information_response(
         false
     });
 
-    let symbols: Vec<tower_lsp_server::ls_types::SymbolInformation> =
-        serde_json::from_value(result).ok()?;
     Some(DocumentSymbolResponse::Flat(symbols))
 }
 
 /// Transform a DocumentSymbol[] response to typed format.
 ///
-/// Recursively transforms range and selectionRange in all items and their children.
+/// Deserializes into typed structs first, then recursively transforms range
+/// and selectionRange in all items and their children.
 fn transform_document_symbol_nested_response(
-    mut result: serde_json::Value,
+    result: serde_json::Value,
     region_start_line: u32,
 ) -> Option<DocumentSymbolResponse> {
-    if let Some(items) = result.as_array_mut() {
-        for item in items.iter_mut() {
-            transform_document_symbol_item(item, region_start_line);
-        }
+    let mut symbols: Vec<DocumentSymbol> = serde_json::from_value(result).ok()?;
+    for symbol in &mut symbols {
+        transform_document_symbol_ranges(symbol, region_start_line);
     }
-
-    let symbols: Vec<tower_lsp_server::ls_types::DocumentSymbol> =
-        serde_json::from_value(result).ok()?;
     Some(DocumentSymbolResponse::Nested(symbols))
 }
 
-/// Recursively transform a single DocumentSymbol item's ranges.
-fn transform_document_symbol_item(item: &mut serde_json::Value, region_start_line: u32) {
-    if let Some(range) = item.get_mut("range")
-        && range.is_object()
-    {
-        transform_json_range(range, region_start_line);
-    }
-
-    if let Some(selection_range) = item.get_mut("selectionRange")
-        && selection_range.is_object()
-    {
-        transform_json_range(selection_range, region_start_line);
-    }
-
-    // Recursively transform children
-    if let Some(children) = item.get_mut("children")
-        && let Some(children_arr) = children.as_array_mut()
-    {
-        for child in children_arr.iter_mut() {
-            transform_document_symbol_item(child, region_start_line);
-        }
-    }
-}
-
-/// Transform a JSON range's line numbers from virtual to host coordinates.
+/// Recursively transform a single DocumentSymbol's ranges from virtual to host coordinates.
 ///
 /// Uses saturating_add to prevent overflow for large line numbers.
-fn transform_json_range(range: &mut serde_json::Value, region_start_line: u32) {
-    if let Some(start) = range.get_mut("start")
-        && let Some(line) = start.get_mut("line")
-        && let Some(line_num) = line.as_u64()
-    {
-        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
-    }
+fn transform_document_symbol_ranges(symbol: &mut DocumentSymbol, region_start_line: u32) {
+    symbol.range.start.line = symbol.range.start.line.saturating_add(region_start_line);
+    symbol.range.end.line = symbol.range.end.line.saturating_add(region_start_line);
+    symbol.selection_range.start.line = symbol
+        .selection_range
+        .start
+        .line
+        .saturating_add(region_start_line);
+    symbol.selection_range.end.line = symbol
+        .selection_range
+        .end
+        .line
+        .saturating_add(region_start_line);
 
-    if let Some(end) = range.get_mut("end")
-        && let Some(line) = end.get_mut("line")
-        && let Some(line_num) = line.as_u64()
-    {
-        *line = serde_json::json!(line_num.saturating_add(region_start_line as u64));
+    if let Some(children) = &mut symbol.children {
+        for child in children {
+            transform_document_symbol_ranges(child, region_start_line);
+        }
     }
 }
 
@@ -772,12 +749,7 @@ mod tests {
     }
 
     #[test]
-    fn document_symbol_response_near_max_line_returns_none_on_overflow() {
-        // Unlike document_color (which uses typed u32 saturating_add and saturates at
-        // u32::MAX), document_symbol transforms ranges at the JSON level using u64
-        // arithmetic. When u32::MAX + offset produces a u64 value exceeding u32::MAX,
-        // the subsequent deserialization into DocumentSymbol (which has u32 line fields)
-        // fails, causing the function to return None.
+    fn document_symbol_response_transformation_saturates_on_overflow() {
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -799,9 +771,17 @@ mod tests {
 
         let transformed =
             transform_document_symbol_response_to_host(response, "unused", "unused", 10);
-        assert!(
-            transformed.is_none(),
-            "u64 overflow past u32::MAX causes deserialization failure, returning None"
-        );
+        let result = transformed.unwrap();
+        match result {
+            DocumentSymbolResponse::Nested(symbols) => {
+                assert_eq!(symbols.len(), 1);
+                assert_eq!(
+                    symbols[0].range.start.line,
+                    u32::MAX,
+                    "Overflow should saturate at u32::MAX, not panic"
+                );
+            }
+            _ => panic!("Expected Nested variant"),
+        }
     }
 }
