@@ -211,12 +211,12 @@ fn build_diagnostic_request(
 /// * `region_start_line` - Line offset to add to diagnostic ranges
 /// * `host_uri` - The host document URI; only related info matching this URI gets transformed
 fn transform_diagnostic_response_to_host(
-    response: serde_json::Value,
+    mut response: serde_json::Value,
     region_start_line: u32,
     host_uri: &str,
 ) -> Vec<Diagnostic> {
-    // Extract result from JSON-RPC envelope
-    let Some(result) = response.get("result") else {
+    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    let Some(mut result) = response.get_mut("result").map(serde_json::Value::take) else {
         return Vec::new();
     };
     if result.is_null() {
@@ -237,11 +237,11 @@ fn transform_diagnostic_response_to_host(
         }
     }
 
-    // Deserialize items
-    let Some(items) = result.get("items") else {
+    // Deserialize items, taking ownership to avoid clones
+    let Some(items) = result.get_mut("items").map(serde_json::Value::take) else {
         return Vec::new();
     };
-    let Ok(mut diagnostics) = serde_json::from_value::<Vec<Diagnostic>>(items.clone()) else {
+    let Ok(mut diagnostics) = serde_json::from_value::<Vec<Diagnostic>>(items) else {
         return Vec::new();
     };
 
