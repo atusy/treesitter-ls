@@ -14,6 +14,8 @@
 
 use std::io;
 
+use log::warn;
+
 use crate::config::settings::BridgeServerConfig;
 use tower_lsp_server::ls_types::{InlayHint, InlayHintLabel, Range, Uri};
 use url::Url;
@@ -213,7 +215,9 @@ fn transform_inlay_hint_response_to_host(
     host_uri: &Uri,
     region_start_line: u32,
 ) -> Option<Vec<InlayHint>> {
-    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    if let Some(error) = response.get("error") {
+        warn!(target: "kakehashi::bridge", "Downstream server returned error for textDocument/inlayHint: {}", error);
+    }
     let result = response.get_mut("result").map(serde_json::Value::take)?;
 
     if result.is_null() {

@@ -32,6 +32,8 @@
 //!
 //! Examples: goto definition/type_definition/implementation/declaration, references
 
+use log::warn;
+
 use super::virtual_uri::VirtualDocumentUri;
 use tower_lsp_server::ls_types::{Location, LocationLink, Range, Uri};
 
@@ -89,7 +91,9 @@ pub(crate) fn transform_goto_response_to_host(
     host_uri: &Uri,
     region_start_line: u32,
 ) -> Option<Vec<LocationLink>> {
-    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    if let Some(error) = response.get("error") {
+        warn!(target: "kakehashi::bridge", "Downstream server returned error for goto request: {}", error);
+    }
     let result = response.get_mut("result").map(serde_json::Value::take)?;
     if result.is_null() {
         return None;
@@ -289,7 +293,9 @@ pub(crate) fn transform_references_response_to_host(
     host_uri: &Uri,
     region_start_line: u32,
 ) -> Option<Vec<Location>> {
-    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    if let Some(error) = response.get("error") {
+        warn!(target: "kakehashi::bridge", "Downstream server returned error for textDocument/references: {}", error);
+    }
     let result = response.get_mut("result").map(serde_json::Value::take)?;
     if result.is_null() {
         return None;
@@ -395,7 +401,9 @@ pub(crate) fn transform_document_symbol_response_to_host(
     mut response: serde_json::Value,
     context: &ResponseTransformContext,
 ) -> serde_json::Value {
-    // Get mutable reference to result
+    if let Some(error) = response.get("error") {
+        warn!(target: "kakehashi::bridge", "Downstream server returned error for textDocument/documentSymbol: {}", error);
+    }
     let Some(result) = response.get_mut("result") else {
         return response;
     };
@@ -474,7 +482,9 @@ pub(crate) fn transform_document_color_response_to_host(
     mut response: serde_json::Value,
     region_start_line: u32,
 ) -> serde_json::Value {
-    // Get mutable reference to result
+    if let Some(error) = response.get("error") {
+        warn!(target: "kakehashi::bridge", "Downstream server returned error for textDocument/documentColor: {}", error);
+    }
     let Some(result) = response.get_mut("result") else {
         return response;
     };
@@ -515,7 +525,9 @@ pub(crate) fn transform_color_presentation_response_to_host(
     mut response: serde_json::Value,
     region_start_line: u32,
 ) -> serde_json::Value {
-    // Get mutable reference to result
+    if let Some(error) = response.get("error") {
+        warn!(target: "kakehashi::bridge", "Downstream server returned error for textDocument/colorPresentation: {}", error);
+    }
     let Some(result) = response.get_mut("result") else {
         return response;
     };

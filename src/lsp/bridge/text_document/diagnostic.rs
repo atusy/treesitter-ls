@@ -16,6 +16,8 @@
 use std::io;
 use std::time::Duration;
 
+use log::warn;
+
 use crate::config::settings::BridgeServerConfig;
 use tower_lsp_server::ls_types::Diagnostic;
 use url::Url;
@@ -215,7 +217,9 @@ fn transform_diagnostic_response_to_host(
     region_start_line: u32,
     host_uri: &str,
 ) -> Vec<Diagnostic> {
-    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    if let Some(error) = response.get("error") {
+        warn!(target: "kakehashi::bridge", "Downstream server returned error for textDocument/diagnostic: {}", error);
+    }
     let Some(mut result) = response.get_mut("result").map(serde_json::Value::take) else {
         return Vec::new();
     };

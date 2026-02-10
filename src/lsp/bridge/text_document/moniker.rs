@@ -10,6 +10,8 @@
 
 use std::io;
 
+use log::warn;
+
 use crate::config::settings::BridgeServerConfig;
 use tower_lsp_server::ls_types::{Moniker, Position};
 use url::Url;
@@ -146,7 +148,9 @@ fn build_moniker_request(
 /// # Arguments
 /// * `response` - The JSON-RPC response from the downstream language server
 fn transform_moniker_response_to_host(mut response: serde_json::Value) -> Option<Vec<Moniker>> {
-    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    if let Some(error) = response.get("error") {
+        warn!(target: "kakehashi::bridge", "Downstream server returned error for textDocument/moniker: {}", error);
+    }
     let result = response.get_mut("result").map(serde_json::Value::take)?;
 
     if result.is_null() {

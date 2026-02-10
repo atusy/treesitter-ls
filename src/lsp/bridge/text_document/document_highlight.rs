@@ -10,6 +10,8 @@
 
 use std::io;
 
+use log::warn;
+
 use crate::config::settings::BridgeServerConfig;
 use tower_lsp_server::ls_types::{DocumentHighlight, Position};
 use url::Url;
@@ -156,7 +158,9 @@ fn transform_document_highlight_response_to_host(
     mut response: serde_json::Value,
     region_start_line: u32,
 ) -> Option<Vec<DocumentHighlight>> {
-    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    if let Some(error) = response.get("error") {
+        warn!(target: "kakehashi::bridge", "Downstream server returned error for textDocument/documentHighlight: {}", error);
+    }
     let result = response.get_mut("result").map(serde_json::Value::take)?;
 
     if result.is_null() {

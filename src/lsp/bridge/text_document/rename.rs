@@ -10,6 +10,7 @@
 
 use std::io;
 
+use log::warn;
 use std::collections::HashMap;
 
 use crate::config::settings::BridgeServerConfig;
@@ -190,7 +191,9 @@ fn transform_workspace_edit_response_to_host(
     host_uri: &Uri,
     region_start_line: u32,
 ) -> Option<WorkspaceEdit> {
-    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    if let Some(error) = response.get("error") {
+        warn!(target: "kakehashi::bridge", "Downstream server returned error for textDocument/rename: {}", error);
+    }
     let result = response.get_mut("result").map(serde_json::Value::take)?;
 
     if result.is_null() {
