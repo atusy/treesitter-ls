@@ -299,7 +299,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn transforms_range_to_host_coordinates() {
+    fn diagnostic_response_transforms_range_to_host_coordinates() {
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -342,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn transforms_related_information_for_same_host() {
+    fn diagnostic_response_transforms_related_information_for_same_host() {
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -387,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn preserves_related_info_for_different_file() {
+    fn diagnostic_response_preserves_related_info_for_different_file() {
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -433,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_kind_returns_empty() {
+    fn diagnostic_response_unchanged_kind_returns_empty() {
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -448,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn null_result_returns_empty() {
+    fn diagnostic_response_null_result_returns_empty() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
 
         let diagnostics = transform_diagnostic_response_to_host(response, 5, "unused");
@@ -456,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_result_returns_empty() {
+    fn diagnostic_response_missing_result_returns_empty() {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "error": { "code": -32603, "message": "internal error" } });
 
         let diagnostics = transform_diagnostic_response_to_host(response, 5, "unused");
@@ -464,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_items_returns_empty() {
+    fn diagnostic_response_malformed_items_returns_empty() {
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -479,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_items_returns_empty() {
+    fn diagnostic_response_empty_items_returns_empty() {
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -494,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn filters_related_info_with_virtual_uris() {
+    fn diagnostic_response_filters_related_info_with_virtual_uris() {
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -547,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn filters_all_related_info_with_virtual_uris() {
+    fn diagnostic_response_filters_all_related_info_with_virtual_uris() {
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -600,7 +600,7 @@ mod tests {
     }
 
     #[test]
-    fn request_uses_virtual_uri() {
+    fn diagnostic_request_uses_virtual_uri() {
         let request = build_diagnostic_request(
             &test_host_uri(),
             "lua",
@@ -623,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn request_has_correct_method_and_structure() {
+    fn diagnostic_request_has_correct_method_and_structure() {
         let request = build_diagnostic_request(
             &test_host_uri(),
             "lua",
@@ -648,7 +648,7 @@ mod tests {
     }
 
     #[test]
-    fn request_includes_previous_result_id_when_provided() {
+    fn diagnostic_request_includes_previous_result_id_when_provided() {
         let request = build_diagnostic_request(
             &test_host_uri(),
             "lua",
@@ -661,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn near_max_line_saturates() {
+    fn diagnostic_response_near_max_line_saturates() {
         // u32::MAX because lsp_types::Position.line is u32
         let response = json!({
             "jsonrpc": "2.0",
