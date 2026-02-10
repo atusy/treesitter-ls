@@ -20,8 +20,7 @@ use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
 use super::super::protocol::{
-    ResponseTransformContext, VirtualDocumentUri, build_bridge_inlay_hint_request,
-    transform_inlay_hint_response_to_host,
+    RequestId, ResponseTransformContext, VirtualDocumentUri, transform_inlay_hint_response_to_host,
 };
 
 impl LanguageServerPool {
@@ -83,7 +82,7 @@ impl LanguageServerPool {
 
         // Build inlay hint request
         // Note: request builder transforms host_range to virtual coordinates
-        let request = build_bridge_inlay_hint_request(
+        let request = build_inlay_hint_request(
             &host_uri_lsp,
             host_range,
             injection_language,
@@ -135,4 +134,61 @@ impl LanguageServerPool {
         // Transform response positions and textEdits to host coordinates
         Ok(transform_inlay_hint_response_to_host(response?, &context))
     }
+}
+
+/// Build a JSON-RPC inlay hint request for a downstream language server.
+///
+/// Unlike position-based requests (hover, definition, etc.), InlayHintParams
+/// has a range field that specifies the visible document range for which
+/// inlay hints should be computed. This range needs to be translated from
+/// host to virtual coordinates.
+///
+/// # Defensive Arithmetic
+///
+/// Uses `saturating_sub` for line translation to prevent panic on underflow during
+/// race conditions when document edits invalidate region data.
+fn build_inlay_hint_request(
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_range: Range,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    request_id: RequestId,
+) -> serde_json::Value {
+    // Create virtual document URI
+    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
+
+    // Translate range from host to virtual coordinates
+    // Uses saturating_sub to prevent panic on race conditions
+    let virtual_range = Range {
+        start: tower_lsp_server::ls_types::Position {
+            line: host_range.start.line.saturating_sub(region_start_line),
+            character: host_range.start.character,
+        },
+        end: tower_lsp_server::ls_types::Position {
+            line: host_range.end.line.saturating_sub(region_start_line),
+            character: host_range.end.character,
+        },
+    };
+
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id.as_i64(),
+        "method": "textDocument/inlayHint",
+        "params": {
+            "textDocument": {
+                "uri": virtual_uri.to_uri_string()
+            },
+            "range": {
+                "start": {
+                    "line": virtual_range.start.line,
+                    "character": virtual_range.start.character
+                },
+                "end": {
+                    "line": virtual_range.end.line,
+                    "character": virtual_range.end.character
+                }
+            }
+        }
+    })
 }
