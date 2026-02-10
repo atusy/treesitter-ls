@@ -553,6 +553,32 @@ mod tests {
     }
 
     #[test]
+    fn completion_response_with_malformed_result_returns_none() {
+        // Result is a string instead of a CompletionList or CompletionItem array
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": "not_a_completion_response"
+        });
+
+        let transformed = transform_completion_response_to_host(response, 3);
+        assert!(transformed.is_none());
+    }
+
+    #[test]
+    fn completion_response_error_response_returns_none() {
+        // JSON-RPC error response has no "result" key
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "error": { "code": -32600, "message": "Invalid Request" }
+        });
+
+        let transformed = transform_completion_response_to_host(response, 3);
+        assert!(transformed.is_none());
+    }
+
+    #[test]
     fn completion_range_transformation_saturates_on_overflow() {
         // Test defensive arithmetic: saturating_add prevents panic on overflow
         let response = json!({

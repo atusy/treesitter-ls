@@ -392,6 +392,36 @@ mod tests {
     }
 
     #[test]
+    fn signature_help_response_with_malformed_result_returns_none() {
+        // Result is a string instead of a SignatureHelp object
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": "not_a_signature_help_object"
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_signature_help_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_none(), "Malformed result should return None");
+    }
+
+    #[test]
+    fn signature_help_response_error_response_returns_none() {
+        // JSON-RPC error response has no "result" key
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "error": { "code": -32600, "message": "Invalid Request" }
+        });
+        let region_start_line = 3;
+
+        let transformed = transform_signature_help_response_to_host(response, region_start_line);
+
+        assert!(transformed.is_none(), "Error response should return None");
+    }
+
+    #[test]
     fn signature_help_response_with_minimal_data() {
         // SignatureHelp with only required fields
         let response = serde_json::json!({
