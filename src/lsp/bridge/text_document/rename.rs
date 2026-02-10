@@ -246,7 +246,7 @@ fn transform_changes_map(
                     edit.range.start.line = edit.range.start.line.saturating_add(region_start_line);
                     edit.range.end.line = edit.range.end.line.saturating_add(region_start_line);
                 }
-                changes.insert(host_uri.clone(), edits);
+                changes.entry(host_uri.clone()).or_default().extend(edits);
             }
             continue;
         }
@@ -558,6 +558,52 @@ mod tests {
             .expect("Real file URI should be preserved");
         // Range NOT transformed for real file
         assert_eq!(edits[0].range.start.line, 50);
+    }
+
+    #[test]
+    fn workspace_edit_changes_merges_virtual_and_real_uri_edits() {
+        let virtual_uri = make_virtual_uri_string();
+        let host_uri = make_host_uri();
+
+        // Downstream server returns edits under both the host URI (real file)
+        // and the virtual URI. The virtual-URI edits get re-keyed to host URI,
+        // so they must be merged with—not overwrite—the existing host-URI edits.
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "changes": {
+                    host_uri.to_string(): [{
+                        "range": {
+                            "start": { "line": 100, "character": 0 },
+                            "end": { "line": 100, "character": 5 }
+                        },
+                        "newText": "fromReal"
+                    }],
+                    virtual_uri.clone(): [{
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 5 }
+                        },
+                        "newText": "fromVirtual"
+                    }]
+                }
+            }
+        });
+
+        let edit = transform_workspace_edit_response_to_host(response, &virtual_uri, &host_uri, 10)
+            .unwrap();
+
+        let changes = edit.changes.unwrap();
+        let edits = changes.get(&host_uri).expect("Should have host URI key");
+        // Both edits should be present: the real-file edit and the transformed virtual edit
+        assert_eq!(edits.len(), 2, "Real and virtual edits should be merged");
+        // Real-file edit: range untouched
+        assert_eq!(edits[0].range.start.line, 100);
+        assert_eq!(edits[0].new_text, "fromReal");
+        // Virtual edit: range transformed (0 + 10 = 10)
+        assert_eq!(edits[1].range.start.line, 10);
+        assert_eq!(edits[1].new_text, "fromVirtual");
     }
 
     #[test]
