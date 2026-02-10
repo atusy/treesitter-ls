@@ -153,17 +153,17 @@ fn build_hover_request(
 /// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
 /// * `region_start_line` - Line offset to add to hover range if present
 fn transform_hover_response_to_host(
-    response: serde_json::Value,
+    mut response: serde_json::Value,
     region_start_line: u32,
 ) -> Option<Hover> {
-    // Extract result from JSON-RPC envelope
-    let result = response.get("result")?;
+    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    let result = response.get_mut("result").map(serde_json::Value::take)?;
     if result.is_null() {
         return None;
     }
 
     // Deserialize into typed Hover
-    let Ok(mut hover) = serde_json::from_value::<Hover>(result.clone()) else {
+    let Ok(mut hover) = serde_json::from_value::<Hover>(result) else {
         return None;
     };
 
@@ -467,6 +467,32 @@ mod tests {
             range.end.line, 10,
             "Virtual line 0 should map to region_start_line"
         );
+    }
+
+    #[test]
+    fn hover_response_with_no_result_key_returns_none() {
+        // JSON-RPC error response has no "result" key
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "error": { "code": -32600, "message": "Invalid Request" }
+        });
+
+        let transformed = transform_hover_response_to_host(response, 5);
+        assert!(transformed.is_none());
+    }
+
+    #[test]
+    fn hover_response_with_malformed_result_returns_none() {
+        // Result is a string instead of a Hover object
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": "not_a_hover_object"
+        });
+
+        let transformed = transform_hover_response_to_host(response, 5);
+        assert!(transformed.is_none());
     }
 
     #[test]
