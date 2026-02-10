@@ -145,3 +145,71 @@ fn build_declaration_request(
         "textDocument/declaration",
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn declaration_request_uses_virtual_uri() {
+        use tower_lsp_server::ls_types::{Position, Uri};
+        use url::Url;
+
+        let host_uri: Uri =
+            crate::lsp::lsp_impl::url_to_uri(&Url::parse("file:///project/doc.md").unwrap())
+                .unwrap();
+        let position = Position {
+            line: 5,
+            character: 10,
+        };
+        let request = build_declaration_request(
+            &host_uri,
+            position,
+            "lua",
+            "region-0",
+            3,
+            RequestId::new(42),
+        );
+
+        let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
+        assert!(
+            VirtualDocumentUri::is_virtual_uri(uri_str),
+            "Request should use a virtual URI: {}",
+            uri_str
+        );
+        assert!(
+            uri_str.ends_with(".lua"),
+            "Virtual URI should have .lua extension: {}",
+            uri_str
+        );
+    }
+
+    #[test]
+    fn declaration_request_translates_position_to_virtual_coordinates() {
+        use tower_lsp_server::ls_types::{Position, Uri};
+        use url::Url;
+
+        let host_uri: Uri =
+            crate::lsp::lsp_impl::url_to_uri(&Url::parse("file:///project/doc.md").unwrap())
+                .unwrap();
+        // Host line 5, region starts at line 3 -> virtual line 2
+        let position = Position {
+            line: 5,
+            character: 10,
+        };
+        let request = build_declaration_request(
+            &host_uri,
+            position,
+            "lua",
+            "region-0",
+            3,
+            RequestId::new(42),
+        );
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], "textDocument/declaration");
+        assert_eq!(request["params"]["position"]["line"], 2);
+        assert_eq!(request["params"]["position"]["character"], 10);
+    }
+}

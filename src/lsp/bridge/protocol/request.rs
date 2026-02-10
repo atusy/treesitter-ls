@@ -66,37 +66,6 @@ pub(crate) fn build_position_based_request(
     })
 }
 
-/// Build a JSON-RPC rename request for a downstream language server.
-///
-/// Note: Rename request has an additional `newName` parameter that specifies
-/// the new name for the symbol being renamed.
-pub(crate) fn build_bridge_rename_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    host_position: tower_lsp_server::ls_types::Position,
-    injection_language: &str,
-    region_id: &str,
-    region_start_line: u32,
-    new_name: &str,
-    request_id: RequestId,
-) -> serde_json::Value {
-    let mut request = build_position_based_request(
-        host_uri,
-        host_position,
-        injection_language,
-        region_id,
-        region_start_line,
-        request_id,
-        "textDocument/rename",
-    );
-
-    // Add the newName parameter required by rename request
-    if let Some(params) = request.get_mut("params") {
-        params["newName"] = serde_json::json!(new_name);
-    }
-
-    request
-}
-
 /// Build a whole-document JSON-RPC request for a downstream language server.
 ///
 /// This is the core helper for building LSP requests that operate on an entire
@@ -111,7 +80,7 @@ pub(crate) fn build_bridge_rename_request(
 /// * `region_id` - The unique region ID for this injection
 /// * `request_id` - The JSON-RPC request ID
 /// * `method` - The LSP method name (e.g., "textDocument/documentLink")
-fn build_whole_document_request(
+pub(crate) fn build_whole_document_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
     injection_language: &str,
     region_id: &str,
@@ -130,32 +99,6 @@ fn build_whole_document_request(
             }
         }
     })
-}
-
-/// Build a JSON-RPC document link request for a downstream language server.
-///
-/// Unlike position-based requests (hover, definition, etc.), DocumentLinkParams
-/// only has a textDocument field - no position. The request asks for all links
-/// in the entire document.
-///
-/// # Arguments
-/// * `host_uri` - The URI of the host document
-/// * `injection_language` - The injection language (e.g., "lua")
-/// * `region_id` - The unique region ID for this injection
-/// * `request_id` - The JSON-RPC request ID
-pub(crate) fn build_bridge_document_link_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    injection_language: &str,
-    region_id: &str,
-    request_id: RequestId,
-) -> serde_json::Value {
-    build_whole_document_request(
-        host_uri,
-        injection_language,
-        region_id,
-        request_id,
-        "textDocument/documentLink",
-    )
 }
 
 /// Build a JSON-RPC document symbol request for a downstream language server.
@@ -181,71 +124,6 @@ pub(crate) fn build_bridge_document_symbol_request(
         request_id,
         "textDocument/documentSymbol",
     )
-}
-
-/// Build a JSON-RPC inlay hint request for a downstream language server.
-///
-/// Unlike position-based requests (hover, definition, etc.), InlayHintParams
-/// has a range field that specifies the visible document range for which
-/// inlay hints should be computed. This range needs to be translated from
-/// host to virtual coordinates.
-///
-/// # Arguments
-/// * `host_uri` - The URI of the host document
-/// * `host_range` - The range in the host document
-/// * `injection_language` - The injection language (e.g., "lua")
-/// * `region_id` - The unique region ID for this injection
-/// * `region_start_line` - The starting line of the injection region in the host document
-/// * `request_id` - The JSON-RPC request ID
-///
-/// # Defensive Arithmetic
-///
-/// Uses `saturating_sub` for line translation to prevent panic on underflow during
-/// race conditions when document edits invalidate region data.
-pub(crate) fn build_bridge_inlay_hint_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    host_range: tower_lsp_server::ls_types::Range,
-    injection_language: &str,
-    region_id: &str,
-    region_start_line: u32,
-    request_id: RequestId,
-) -> serde_json::Value {
-    // Create virtual document URI
-    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-
-    // Translate range from host to virtual coordinates
-    // Uses saturating_sub to prevent panic on race conditions
-    let virtual_range = tower_lsp_server::ls_types::Range {
-        start: tower_lsp_server::ls_types::Position {
-            line: host_range.start.line.saturating_sub(region_start_line),
-            character: host_range.start.character,
-        },
-        end: tower_lsp_server::ls_types::Position {
-            line: host_range.end.line.saturating_sub(region_start_line),
-            character: host_range.end.character,
-        },
-    };
-
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": request_id.as_i64(),
-        "method": "textDocument/inlayHint",
-        "params": {
-            "textDocument": {
-                "uri": virtual_uri.to_uri_string()
-            },
-            "range": {
-                "start": {
-                    "line": virtual_range.start.line,
-                    "character": virtual_range.start.character
-                },
-                "end": {
-                    "line": virtual_range.end.line,
-                    "character": virtual_range.end.character
-                }
-            }
-        }
-    })
 }
 
 /// Build a JSON-RPC color presentation request for a downstream language server.
@@ -483,45 +361,9 @@ mod tests {
     // ==========================================================================
     // Underflow regression tests (saturating_sub)
     // ==========================================================================
-    // These tests verify that position translation doesn't panic when
-    // host_position.line < region_start_line, which can occur during race
+    // These tests verify that range translation doesn't panic when
+    // host range lines < region_start_line, which can occur during race
     // conditions when document edits invalidate region data.
-
-    #[test]
-    fn range_translation_saturates_on_underflow_for_inlay_hint() {
-        use tower_lsp_server::ls_types::Range;
-
-        // Simulate race condition: range lines < region_start_line
-        let host_range = Range {
-            start: Position {
-                line: 1, // Less than region_start_line
-                character: 0,
-            },
-            end: Position {
-                line: 3, // Less than region_start_line
-                character: 20,
-            },
-        };
-
-        let request = build_bridge_inlay_hint_request(
-            &test_host_uri(),
-            host_range,
-            "lua",
-            "region-0",
-            5, // region_start_line > both range lines
-            test_request_id(),
-        );
-
-        let range = &request["params"]["range"];
-        assert_eq!(
-            range["start"]["line"], 0,
-            "Start line underflow should saturate to 0"
-        );
-        assert_eq!(
-            range["end"]["line"], 0,
-            "End line underflow should saturate to 0"
-        );
-    }
 
     #[test]
     #[cfg(feature = "experimental")]
@@ -603,113 +445,6 @@ mod tests {
     }
 
     // ==========================================================================
-    // Rename request tests
-    // ==========================================================================
-
-    #[test]
-    fn rename_request_uses_virtual_uri() {
-        let request = build_bridge_rename_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            "newName",
-            test_request_id(),
-        );
-
-        assert_uses_virtual_uri(&request, "lua");
-    }
-
-    #[test]
-    fn rename_request_translates_position_to_virtual_coordinates() {
-        // Host line 5, region starts at line 3 -> virtual line 2
-        let request = build_bridge_rename_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            "newName",
-            test_request_id(),
-        );
-
-        assert_position_request(&request, "textDocument/rename", 2);
-    }
-
-    #[test]
-    fn rename_request_includes_new_name() {
-        let request = build_bridge_rename_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            "renamedVariable",
-            test_request_id(),
-        );
-
-        assert_eq!(
-            request["params"]["newName"], "renamedVariable",
-            "Request should include newName parameter"
-        );
-    }
-
-    // ==========================================================================
-    // Document link request tests
-    // ==========================================================================
-
-    #[test]
-    fn document_link_request_uses_virtual_uri() {
-        let request = build_bridge_document_link_request(
-            &test_host_uri(),
-            "lua",
-            "region-0",
-            test_request_id(),
-        );
-
-        assert_uses_virtual_uri(&request, "lua");
-    }
-
-    #[test]
-    fn document_link_request_has_correct_method_and_structure() {
-        let request = build_bridge_document_link_request(
-            &test_host_uri(),
-            "lua",
-            "region-0",
-            RequestId::new(123),
-        );
-
-        assert_eq!(request["jsonrpc"], "2.0");
-        assert_eq!(request["id"], 123);
-        assert_eq!(request["method"], "textDocument/documentLink");
-        // DocumentLink request has no position parameter
-        assert!(
-            request["params"].get("position").is_none(),
-            "DocumentLink request should not have position parameter"
-        );
-    }
-
-    #[test]
-    fn document_link_request_different_languages_produce_different_extensions() {
-        let lua_request = build_bridge_document_link_request(
-            &test_host_uri(),
-            "lua",
-            "region-0",
-            RequestId::new(1),
-        );
-        let python_request = build_bridge_document_link_request(
-            &test_host_uri(),
-            "python",
-            "region-0",
-            RequestId::new(1),
-        );
-
-        assert_uses_virtual_uri(&lua_request, "lua");
-        assert_uses_virtual_uri(&python_request, "py");
-    }
-
-    // ==========================================================================
     // Document symbol request tests
     // ==========================================================================
 
@@ -741,152 +476,6 @@ mod tests {
         assert!(
             request["params"].get("position").is_none(),
             "DocumentSymbol request should not have position parameter"
-        );
-    }
-
-    // ==========================================================================
-    // Inlay hint request tests
-    // ==========================================================================
-
-    #[test]
-    fn inlay_hint_request_uses_virtual_uri() {
-        use tower_lsp_server::ls_types::Range;
-
-        let host_range = Range {
-            start: Position {
-                line: 5,
-                character: 0,
-            },
-            end: Position {
-                line: 10,
-                character: 20,
-            },
-        };
-        let request = build_bridge_inlay_hint_request(
-            &test_host_uri(),
-            host_range,
-            "lua",
-            "region-0",
-            3, // region_start_line
-            test_request_id(),
-        );
-
-        assert_uses_virtual_uri(&request, "lua");
-    }
-
-    #[test]
-    fn inlay_hint_request_has_correct_method_and_structure() {
-        use tower_lsp_server::ls_types::Range;
-
-        let host_range = Range {
-            start: Position {
-                line: 5,
-                character: 0,
-            },
-            end: Position {
-                line: 10,
-                character: 20,
-            },
-        };
-        let request = build_bridge_inlay_hint_request(
-            &test_host_uri(),
-            host_range,
-            "lua",
-            "region-0",
-            3,
-            RequestId::new(123),
-        );
-
-        assert_eq!(request["jsonrpc"], "2.0");
-        assert_eq!(request["id"], 123);
-        assert_eq!(request["method"], "textDocument/inlayHint");
-        // InlayHint request has range, not position
-        assert!(
-            request["params"].get("range").is_some(),
-            "InlayHint request should have range parameter"
-        );
-        assert!(
-            request["params"].get("position").is_none(),
-            "InlayHint request should not have position parameter"
-        );
-    }
-
-    #[test]
-    fn inlay_hint_request_transforms_range_to_virtual_coordinates() {
-        use tower_lsp_server::ls_types::Range;
-
-        // Host range: lines 5-10, region starts at line 3
-        // Virtual range should be: lines 2-7 (5-3=2, 10-3=7)
-        let host_range = Range {
-            start: Position {
-                line: 5,
-                character: 0,
-            },
-            end: Position {
-                line: 10,
-                character: 20,
-            },
-        };
-        let request = build_bridge_inlay_hint_request(
-            &test_host_uri(),
-            host_range,
-            "lua",
-            "region-0",
-            3, // region_start_line
-            test_request_id(),
-        );
-
-        let range = &request["params"]["range"];
-        assert_eq!(
-            range["start"]["line"], 2,
-            "Start line should be translated from 5 to 2 (5-3)"
-        );
-        assert_eq!(
-            range["start"]["character"], 0,
-            "Start character should remain unchanged"
-        );
-        assert_eq!(
-            range["end"]["line"], 7,
-            "End line should be translated from 10 to 7 (10-3)"
-        );
-        assert_eq!(
-            range["end"]["character"], 20,
-            "End character should remain unchanged"
-        );
-    }
-
-    #[test]
-    fn inlay_hint_request_at_region_start_becomes_line_zero() {
-        use tower_lsp_server::ls_types::Range;
-
-        // When range starts at region_start_line, virtual start should be 0
-        let host_range = Range {
-            start: Position {
-                line: 3,
-                character: 5,
-            },
-            end: Position {
-                line: 5,
-                character: 10,
-            },
-        };
-        let request = build_bridge_inlay_hint_request(
-            &test_host_uri(),
-            host_range,
-            "lua",
-            "region-0",
-            3, // region_start_line
-            test_request_id(),
-        );
-
-        let range = &request["params"]["range"];
-        assert_eq!(
-            range["start"]["line"], 0,
-            "Range starting at region_start_line should translate to line 0"
-        );
-        assert_eq!(
-            range["end"]["line"], 2,
-            "End line should be translated from 5 to 2 (5-3)"
         );
     }
 

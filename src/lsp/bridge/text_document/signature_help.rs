@@ -10,6 +10,8 @@
 
 use std::io;
 
+use log::warn;
+
 use crate::config::settings::BridgeServerConfig;
 use tower_lsp_server::ls_types::{Position, SignatureHelp};
 use url::Url;
@@ -56,7 +58,9 @@ fn transform_signature_help_response_to_host(
 ) -> Option<SignatureHelp> {
     // SignatureHelp doesn't have ranges that need transformation.
     // activeSignature and activeParameter are indices, not coordinates.
-    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    if let Some(error) = response.get("error") {
+        warn!(target: "kakehashi::bridge", "Downstream server returned error for textDocument/signatureHelp: {}", error);
+    }
     let result = response.get_mut("result").map(serde_json::Value::take)?;
 
     if result.is_null() {
