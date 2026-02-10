@@ -194,39 +194,39 @@ fn build_completion_request(
 /// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
 /// * `region_start_line` - Line offset to add to completion item ranges
 fn transform_completion_response_to_host(
-    response: serde_json::Value,
+    mut response: serde_json::Value,
     region_start_line: u32,
 ) -> Option<CompletionList> {
-    // Extract result from JSON-RPC envelope
-    let result = response.get("result")?;
+    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    let result = response.get_mut("result").map(serde_json::Value::take)?;
     if result.is_null() {
         return None;
     }
 
-    // Try to deserialize as CompletionList first (preferred format)
-    if let Ok(mut list) = serde_json::from_value::<CompletionList>(result.clone()) {
-        // Transform all items in the list
-        for item in &mut list.items {
-            transform_completion_item(item, region_start_line);
-        }
-        return Some(list);
-    }
-
-    // Try to deserialize as array of CompletionItem (legacy format)
-    // Normalize to CompletionList with isIncomplete=false (the default)
-    if let Ok(mut items) = serde_json::from_value::<Vec<CompletionItem>>(result.clone()) {
-        // Transform all items in the array
-        for item in &mut items {
-            transform_completion_item(item, region_start_line);
-        }
-        return Some(CompletionList {
+    // Determine format and deserialize into a unified CompletionList
+    let mut list = if result.is_array() {
+        // Legacy format: array of CompletionItem. Normalize to CompletionList.
+        let Ok(items) = serde_json::from_value::<Vec<CompletionItem>>(result) else {
+            return None;
+        };
+        CompletionList {
             is_incomplete: false,
             items,
-        });
+        }
+    } else {
+        // Preferred format: CompletionList object
+        let Ok(list) = serde_json::from_value::<CompletionList>(result) else {
+            return None;
+        };
+        list
+    };
+
+    // Transform all items in the list
+    for item in &mut list.items {
+        transform_completion_item(item, region_start_line);
     }
 
-    // Failed to deserialize
-    None
+    Some(list)
 }
 
 /// Transform textEdit range in a single completion item to host coordinates.
@@ -548,6 +548,32 @@ mod tests {
         let edits = item.additional_text_edits.as_ref().unwrap();
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].range.start.line, 5); // 0 + 5 = 5
+    }
+
+    #[test]
+    fn completion_response_with_malformed_result_returns_none() {
+        // Result is a string instead of a CompletionList or CompletionItem array
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": "not_a_completion_response"
+        });
+
+        let transformed = transform_completion_response_to_host(response, 3);
+        assert!(transformed.is_none());
+    }
+
+    #[test]
+    fn completion_response_error_response_returns_none() {
+        // JSON-RPC error response has no "result" key
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "error": { "code": -32600, "message": "Invalid Request" }
+        });
+
+        let transformed = transform_completion_response_to_host(response, 3);
+        assert!(transformed.is_none());
     }
 
     #[test]
