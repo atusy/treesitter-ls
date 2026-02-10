@@ -668,6 +668,113 @@ mod tests {
     }
 
     #[test]
+    fn workspace_edit_changes_transformation_saturates_on_overflow() {
+        // Test defensive arithmetic: saturating_add prevents panic on overflow
+        let virtual_uri = make_virtual_uri_string();
+        let host_uri = make_host_uri();
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "changes": {
+                    virtual_uri.clone(): [
+                        {
+                            "range": {
+                                "start": { "line": u32::MAX, "character": 0 },
+                                "end": { "line": u32::MAX, "character": 5 }
+                            },
+                            "newText": "newName"
+                        }
+                    ]
+                }
+            }
+        });
+        let region_start_line = 10;
+
+        let edit = transform_workspace_edit_response_to_host(
+            response,
+            &virtual_uri,
+            &host_uri,
+            region_start_line,
+        )
+        .unwrap();
+
+        let changes = edit.changes.unwrap();
+        let edits = changes.get(&host_uri).expect("Should have host URI key");
+        assert_eq!(edits.len(), 1);
+        assert_eq!(
+            edits[0].range.start.line,
+            u32::MAX,
+            "Overflow should saturate at u32::MAX, not panic"
+        );
+        assert_eq!(
+            edits[0].range.end.line,
+            u32::MAX,
+            "Overflow should saturate at u32::MAX, not panic"
+        );
+    }
+
+    #[test]
+    fn workspace_edit_document_changes_transformation_saturates_on_overflow() {
+        // Test defensive arithmetic: saturating_add prevents panic on overflow
+        let virtual_uri = make_virtual_uri_string();
+        let host_uri = make_host_uri();
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "documentChanges": [
+                    {
+                        "textDocument": { "uri": virtual_uri, "version": 1 },
+                        "edits": [
+                            {
+                                "range": {
+                                    "start": { "line": u32::MAX, "character": 0 },
+                                    "end": { "line": u32::MAX, "character": 5 }
+                                },
+                                "newText": "newName"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        let region_start_line = 10;
+
+        let edit = transform_workspace_edit_response_to_host(
+            response,
+            &virtual_uri,
+            &host_uri,
+            region_start_line,
+        )
+        .unwrap();
+
+        match edit.document_changes.unwrap() {
+            DocumentChanges::Edits(edits) => {
+                assert_eq!(edits.len(), 1);
+                match &edits[0].edits[0] {
+                    OneOf::Left(text_edit) => {
+                        assert_eq!(
+                            text_edit.range.start.line,
+                            u32::MAX,
+                            "Overflow should saturate at u32::MAX, not panic"
+                        );
+                        assert_eq!(
+                            text_edit.range.end.line,
+                            u32::MAX,
+                            "Overflow should saturate at u32::MAX, not panic"
+                        );
+                    }
+                    OneOf::Right(_) => panic!("Expected Left(TextEdit)"),
+                }
+            }
+            DocumentChanges::Operations(_) => panic!("Expected Edits variant"),
+        }
+    }
+
+    #[test]
     fn workspace_edit_empty_changes_returns_empty() {
         let virtual_uri = make_virtual_uri_string();
         let host_uri = make_host_uri();

@@ -661,6 +661,54 @@ mod tests {
     }
 
     #[test]
+    fn inlay_hint_response_transformation_saturates_on_overflow() {
+        // Test defensive arithmetic: saturating_add prevents panic on overflow
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [{
+                "position": { "line": u32::MAX, "character": 10 },
+                "label": "hint",
+                "textEdits": [{
+                    "range": {
+                        "start": { "line": u32::MAX, "character": 0 },
+                        "end": { "line": u32::MAX, "character": 5 }
+                    },
+                    "newText": "edit"
+                }]
+            }]
+        });
+        let region_start_line = 10;
+
+        let hints = transform_inlay_hint_response_to_host(
+            response,
+            &make_virtual_uri_string(),
+            &make_host_uri(),
+            region_start_line,
+        );
+
+        assert!(hints.is_some());
+        let hints = hints.unwrap();
+        assert_eq!(hints.len(), 1);
+        assert_eq!(
+            hints[0].position.line,
+            u32::MAX,
+            "Position line overflow should saturate at u32::MAX, not panic"
+        );
+        let edits = hints[0].text_edits.as_ref().unwrap();
+        assert_eq!(
+            edits[0].range.start.line,
+            u32::MAX,
+            "TextEdit start line overflow should saturate at u32::MAX, not panic"
+        );
+        assert_eq!(
+            edits[0].range.end.line,
+            u32::MAX,
+            "TextEdit end line overflow should saturate at u32::MAX, not panic"
+        );
+    }
+
+    #[test]
     fn inlay_hint_label_parts_without_location_preserved() {
         let virtual_uri = make_virtual_uri_string();
         let host_uri = make_host_uri();
