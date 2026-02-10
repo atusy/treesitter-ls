@@ -59,7 +59,6 @@ fn transform_signature_help_response_to_host(
     // Extract result from JSON-RPC envelope, taking ownership to avoid clones
     let result = response.get_mut("result").map(serde_json::Value::take)?;
 
-    // If result is null, return None
     if result.is_null() {
         return None;
     }

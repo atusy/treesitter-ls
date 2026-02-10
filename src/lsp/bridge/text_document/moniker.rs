@@ -149,7 +149,6 @@ fn transform_moniker_response_to_host(mut response: serde_json::Value) -> Option
     // Extract result from JSON-RPC envelope, taking ownership to avoid clones
     let result = response.get_mut("result").map(serde_json::Value::take)?;
 
-    // Null result - return None
     if result.is_null() {
         return None;
     }
