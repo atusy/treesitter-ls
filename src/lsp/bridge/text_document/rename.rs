@@ -10,15 +10,17 @@
 
 use std::io;
 
+use std::collections::HashMap;
+
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::{
+    DocumentChangeOperation, DocumentChanges, OneOf, Position, TextDocumentEdit, TextEdit, Uri,
+    WorkspaceEdit,
+};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
-use super::super::protocol::{
-    RequestId, ResponseTransformContext, VirtualDocumentUri, build_position_based_request,
-    transform_workspace_edit_to_host,
-};
+use super::super::protocol::{RequestId, VirtualDocumentUri, build_position_based_request};
 
 impl LanguageServerPool {
     /// Send a rename request and wait for the response.
@@ -44,7 +46,7 @@ impl LanguageServerPool {
         virtual_content: &str,
         new_name: &str,
         upstream_request_id: UpstreamId,
-    ) -> io::Result<serde_json::Value> {
+    ) -> io::Result<Option<WorkspaceEdit>> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(server_name, server_config)
@@ -113,13 +115,6 @@ impl LanguageServerPool {
             return Err(e.into());
         }
 
-        // Build transformation context for response handling
-        let context = ResponseTransformContext {
-            request_virtual_uri: virtual_uri_string,
-            request_host_uri: host_uri.as_str().to_string(),
-            request_region_start_line: region_start_line,
-        };
-
         // Wait for response via oneshot channel (no Mutex held) with timeout
         let response = handle.wait_for_response(request_id, response_rx).await;
 
@@ -128,7 +123,12 @@ impl LanguageServerPool {
 
         // Transform WorkspaceEdit response to host coordinates and URI
         // Cross-region virtual URIs are filtered out
-        Ok(transform_workspace_edit_to_host(response?, &context))
+        Ok(transform_workspace_edit_response_to_host(
+            response?,
+            &virtual_uri_string,
+            &host_uri_lsp,
+            region_start_line,
+        ))
     }
 }
 
@@ -166,4 +166,173 @@ fn build_rename_request(
     }
 
     request
+}
+
+/// Transform a WorkspaceEdit response from virtual to host document coordinates.
+///
+/// WorkspaceEdit can have two formats per LSP spec:
+/// 1. `changes: { [uri: string]: TextEdit[] }` - A map from URI to text edits
+/// 2. `documentChanges: (TextDocumentEdit | CreateFile | RenameFile | DeleteFile)[]`
+///
+/// This function handles three cases for each URI in the response:
+/// 1. **Real file URI** (not a virtual URI): Preserved as-is with original coordinates
+/// 2. **Same virtual URI as request**: Transformed using request's context
+/// 3. **Different virtual URI** (cross-region): Filtered out from results
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `request_virtual_uri` - The virtual URI from the request
+/// * `host_uri` - The pre-parsed host URI to use in transformed responses
+/// * `region_start_line` - Line offset to add when transforming to host coordinates
+fn transform_workspace_edit_response_to_host(
+    mut response: serde_json::Value,
+    request_virtual_uri: &str,
+    host_uri: &Uri,
+    region_start_line: u32,
+) -> Option<WorkspaceEdit> {
+    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    let result = response.get_mut("result").map(serde_json::Value::take)?;
+
+    if result.is_null() {
+        return None;
+    }
+
+    // Parse into typed WorkspaceEdit
+    let mut edit: WorkspaceEdit = serde_json::from_value(result).ok()?;
+
+    // Transform changes map: { [uri: string]: TextEdit[] }
+    if let Some(changes) = &mut edit.changes {
+        transform_changes_map(changes, request_virtual_uri, host_uri, region_start_line);
+    }
+
+    // Transform documentChanges array
+    if let Some(doc_changes) = &mut edit.document_changes {
+        transform_document_changes(
+            doc_changes,
+            request_virtual_uri,
+            host_uri,
+            region_start_line,
+        );
+    }
+
+    Some(edit)
+}
+
+/// Transform the `changes` map in a WorkspaceEdit.
+///
+/// Re-keys virtual URIs to host URI and transforms TextEdit ranges.
+/// Cross-region virtual URIs are removed entirely.
+fn transform_changes_map(
+    changes: &mut HashMap<Uri, Vec<TextEdit>>,
+    request_virtual_uri: &str,
+    host_uri: &Uri,
+    region_start_line: u32,
+) {
+    // Collect keys to process (can't modify HashMap keys in-place)
+    let keys: Vec<Uri> = changes.keys().cloned().collect();
+
+    for key in keys {
+        let uri_str = key.as_str();
+
+        // Case 1: Real file URI → keep as-is
+        if !VirtualDocumentUri::is_virtual_uri(uri_str) {
+            continue;
+        }
+
+        // Case 2: Same virtual URI → transform ranges, re-key to host URI
+        if uri_str == request_virtual_uri {
+            if let Some(mut edits) = changes.remove(&key) {
+                for edit in &mut edits {
+                    edit.range.start.line = edit.range.start.line.saturating_add(region_start_line);
+                    edit.range.end.line = edit.range.end.line.saturating_add(region_start_line);
+                }
+                changes.insert(host_uri.clone(), edits);
+            }
+            continue;
+        }
+
+        // Case 3: Different virtual URI (cross-region) → filter out
+        changes.remove(&key);
+    }
+}
+
+/// Transform the `documentChanges` array in a WorkspaceEdit.
+///
+/// Handles both `Edits(Vec<TextDocumentEdit>)` and
+/// `Operations(Vec<DocumentChangeOperation>)` variants.
+/// File operations (CreateFile, RenameFile, DeleteFile) are preserved as-is.
+fn transform_document_changes(
+    doc_changes: &mut DocumentChanges,
+    request_virtual_uri: &str,
+    host_uri: &Uri,
+    region_start_line: u32,
+) {
+    match doc_changes {
+        DocumentChanges::Edits(edits) => {
+            edits.retain_mut(|edit| {
+                transform_text_document_edit(edit, request_virtual_uri, host_uri, region_start_line)
+            });
+        }
+        DocumentChanges::Operations(ops) => {
+            ops.retain_mut(|op| match op {
+                DocumentChangeOperation::Edit(edit) => transform_text_document_edit(
+                    edit,
+                    request_virtual_uri,
+                    host_uri,
+                    region_start_line,
+                ),
+                DocumentChangeOperation::Op(_) => true, // File operations preserved
+            });
+        }
+    }
+}
+
+/// Transform a single TextDocumentEdit's URI and edit ranges.
+///
+/// Returns `true` if the edit should be kept, `false` if it should be filtered out.
+fn transform_text_document_edit(
+    edit: &mut TextDocumentEdit,
+    request_virtual_uri: &str,
+    host_uri: &Uri,
+    region_start_line: u32,
+) -> bool {
+    let uri_str = edit.text_document.uri.as_str();
+
+    // Case 1: Real file URI → keep as-is
+    if !VirtualDocumentUri::is_virtual_uri(uri_str) {
+        return true;
+    }
+
+    // Case 2: Same virtual URI → transform
+    if uri_str == request_virtual_uri {
+        edit.text_document.uri = host_uri.clone();
+        for one_of in &mut edit.edits {
+            match one_of {
+                OneOf::Left(text_edit) => {
+                    text_edit.range.start.line =
+                        text_edit.range.start.line.saturating_add(region_start_line);
+                    text_edit.range.end.line =
+                        text_edit.range.end.line.saturating_add(region_start_line);
+                }
+                OneOf::Right(annotated_edit) => {
+                    annotated_edit.text_edit.range.start.line = annotated_edit
+                        .text_edit
+                        .range
+                        .start
+                        .line
+                        .saturating_add(region_start_line);
+                    annotated_edit.text_edit.range.end.line = annotated_edit
+                        .text_edit
+                        .range
+                        .end
+                        .line
+                        .saturating_add(region_start_line);
+                }
+            }
+        }
+        return true;
+    }
+
+    // Case 3: Cross-region → filter out
+    false
 }

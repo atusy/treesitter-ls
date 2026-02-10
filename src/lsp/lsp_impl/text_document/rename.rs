@@ -120,22 +120,7 @@ impl Kakehashi {
             .await;
 
         match response {
-            Ok(json_response) => {
-                // Parse the rename response (WorkspaceEdit)
-                if let Some(result) = json_response.get("result") {
-                    if result.is_null() {
-                        return Ok(None);
-                    }
-
-                    // Parse the result into WorkspaceEdit
-                    if let Ok(workspace_edit) =
-                        serde_json::from_value::<WorkspaceEdit>(result.clone())
-                    {
-                        return Ok(Some(workspace_edit));
-                    }
-                }
-                Ok(None)
-            }
+            Ok(workspace_edit) => Ok(workspace_edit),
             Err(e) => {
                 self.client
                     .log_message(
