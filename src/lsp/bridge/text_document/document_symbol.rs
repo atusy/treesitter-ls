@@ -193,8 +193,9 @@ fn transform_document_symbol_response_to_host(
         return Some(DocumentSymbolResponse::Nested(vec![]));
     }
 
-    // Detect format: DocumentSymbol has "range" + "selectionRange",
-    // SymbolInformation has "location"
+    // Detect format by checking only the first element: the LSP spec defines
+    // the response as either DocumentSymbol[] OR SymbolInformation[], never mixed.
+    // SymbolInformation has "location"; DocumentSymbol has "range" + "selectionRange".
     if items.first().and_then(|i| i.get("location")).is_some() {
         // SymbolInformation[] format
         transform_symbol_information_response(
