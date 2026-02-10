@@ -313,8 +313,7 @@ fn transform_text_document_edit(
             };
             text_edit.range.start.line =
                 text_edit.range.start.line.saturating_add(region_start_line);
-            text_edit.range.end.line =
-                text_edit.range.end.line.saturating_add(region_start_line);
+            text_edit.range.end.line = text_edit.range.end.line.saturating_add(region_start_line);
         }
         return true;
     }
