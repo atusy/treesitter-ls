@@ -307,28 +307,14 @@ fn transform_text_document_edit(
     if uri_str == request_virtual_uri {
         edit.text_document.uri = host_uri.clone();
         for one_of in &mut edit.edits {
-            match one_of {
-                OneOf::Left(text_edit) => {
-                    text_edit.range.start.line =
-                        text_edit.range.start.line.saturating_add(region_start_line);
-                    text_edit.range.end.line =
-                        text_edit.range.end.line.saturating_add(region_start_line);
-                }
-                OneOf::Right(annotated_edit) => {
-                    annotated_edit.text_edit.range.start.line = annotated_edit
-                        .text_edit
-                        .range
-                        .start
-                        .line
-                        .saturating_add(region_start_line);
-                    annotated_edit.text_edit.range.end.line = annotated_edit
-                        .text_edit
-                        .range
-                        .end
-                        .line
-                        .saturating_add(region_start_line);
-                }
-            }
+            let text_edit = match one_of {
+                OneOf::Left(text_edit) => text_edit,
+                OneOf::Right(annotated_edit) => &mut annotated_edit.text_edit,
+            };
+            text_edit.range.start.line =
+                text_edit.range.start.line.saturating_add(region_start_line);
+            text_edit.range.end.line =
+                text_edit.range.end.line.saturating_add(region_start_line);
         }
         return true;
     }
