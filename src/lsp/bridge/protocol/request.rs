@@ -66,37 +66,6 @@ pub(crate) fn build_position_based_request(
     })
 }
 
-/// Build a JSON-RPC rename request for a downstream language server.
-///
-/// Note: Rename request has an additional `newName` parameter that specifies
-/// the new name for the symbol being renamed.
-pub(crate) fn build_bridge_rename_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    host_position: tower_lsp_server::ls_types::Position,
-    injection_language: &str,
-    region_id: &str,
-    region_start_line: u32,
-    new_name: &str,
-    request_id: RequestId,
-) -> serde_json::Value {
-    let mut request = build_position_based_request(
-        host_uri,
-        host_position,
-        injection_language,
-        region_id,
-        region_start_line,
-        request_id,
-        "textDocument/rename",
-    );
-
-    // Add the newName parameter required by rename request
-    if let Some(params) = request.get_mut("params") {
-        params["newName"] = serde_json::json!(new_name);
-    }
-
-    request
-}
-
 /// Build a whole-document JSON-RPC request for a downstream language server.
 ///
 /// This is the core helper for building LSP requests that operate on an entire
@@ -473,59 +442,6 @@ mod tests {
         let changes = notification["params"]["contentChanges"].as_array().unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0]["text"], content);
-    }
-
-    // ==========================================================================
-    // Rename request tests
-    // ==========================================================================
-
-    #[test]
-    fn rename_request_uses_virtual_uri() {
-        let request = build_bridge_rename_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            "newName",
-            test_request_id(),
-        );
-
-        assert_uses_virtual_uri(&request, "lua");
-    }
-
-    #[test]
-    fn rename_request_translates_position_to_virtual_coordinates() {
-        // Host line 5, region starts at line 3 -> virtual line 2
-        let request = build_bridge_rename_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            "newName",
-            test_request_id(),
-        );
-
-        assert_position_request(&request, "textDocument/rename", 2);
-    }
-
-    #[test]
-    fn rename_request_includes_new_name() {
-        let request = build_bridge_rename_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            "renamedVariable",
-            test_request_id(),
-        );
-
-        assert_eq!(
-            request["params"]["newName"], "renamedVariable",
-            "Request should include newName parameter"
-        );
     }
 
     // ==========================================================================

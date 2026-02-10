@@ -16,7 +16,7 @@ use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
 use super::super::protocol::{
-    ResponseTransformContext, VirtualDocumentUri, build_bridge_rename_request,
+    RequestId, ResponseTransformContext, VirtualDocumentUri, build_position_based_request,
     transform_workspace_edit_to_host,
 };
 
@@ -76,7 +76,7 @@ impl LanguageServerPool {
             };
 
         // Build rename request
-        let rename_request = build_bridge_rename_request(
+        let rename_request = build_rename_request(
             &host_uri_lsp,
             host_position,
             injection_language,
@@ -130,4 +130,40 @@ impl LanguageServerPool {
         // Cross-region virtual URIs are filtered out
         Ok(transform_workspace_edit_to_host(response?, &context))
     }
+}
+
+/// Build a JSON-RPC rename request for a downstream language server.
+///
+/// Rename extends the position-based request pattern with an additional
+/// `newName` parameter that specifies the new name for the symbol.
+///
+/// # Coordinate Translation
+///
+/// Uses `build_position_based_request` to handle host→virtual position
+/// translation, then adds the `newName` field to params.
+fn build_rename_request(
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_position: tower_lsp_server::ls_types::Position,
+    injection_language: &str,
+    region_id: &str,
+    region_start_line: u32,
+    new_name: &str,
+    request_id: RequestId,
+) -> serde_json::Value {
+    let mut request = build_position_based_request(
+        host_uri,
+        host_position,
+        injection_language,
+        region_id,
+        region_start_line,
+        request_id,
+        "textDocument/rename",
+    );
+
+    // Add the newName parameter required by rename request
+    if let Some(params) = request.get_mut("params") {
+        params["newName"] = serde_json::json!(new_name);
+    }
+
+    request
 }
