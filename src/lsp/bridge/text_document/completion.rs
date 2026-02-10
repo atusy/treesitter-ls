@@ -203,32 +203,30 @@ fn transform_completion_response_to_host(
         return None;
     }
 
-    // Determine format by checking if result is an array (legacy) or object (CompletionList)
-    let is_array = result.is_array();
-
-    if is_array {
-        // Legacy format: array of CompletionItem
-        // Normalize to CompletionList with isIncomplete=false (the default)
-        let Ok(mut items) = serde_json::from_value::<Vec<CompletionItem>>(result) else {
+    // Determine format and deserialize into a unified CompletionList
+    let mut list = if result.is_array() {
+        // Legacy format: array of CompletionItem. Normalize to CompletionList.
+        let Ok(items) = serde_json::from_value::<Vec<CompletionItem>>(result) else {
             return None;
         };
-        for item in &mut items {
-            transform_completion_item(item, region_start_line);
-        }
-        Some(CompletionList {
+        CompletionList {
             is_incomplete: false,
             items,
-        })
+        }
     } else {
         // Preferred format: CompletionList object
-        let Ok(mut list) = serde_json::from_value::<CompletionList>(result) else {
+        let Ok(list) = serde_json::from_value::<CompletionList>(result) else {
             return None;
         };
-        for item in &mut list.items {
-            transform_completion_item(item, region_start_line);
-        }
-        Some(list)
+        list
+    };
+
+    // Transform all items in the list
+    for item in &mut list.items {
+        transform_completion_item(item, region_start_line);
     }
+
+    Some(list)
 }
 
 /// Transform textEdit range in a single completion item to host coordinates.
