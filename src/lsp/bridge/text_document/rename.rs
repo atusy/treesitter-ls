@@ -336,3 +336,353 @@ fn transform_text_document_edit(
     // Case 3: Cross-region → filter out
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ==========================================================================
+    // Rename request builder tests
+    // ==========================================================================
+
+    #[test]
+    fn rename_request_uses_virtual_uri() {
+        use url::Url;
+
+        let host_uri: Uri =
+            crate::lsp::lsp_impl::url_to_uri(&Url::parse("file:///project/doc.md").unwrap())
+                .unwrap();
+        let host_position = Position {
+            line: 5,
+            character: 10,
+        };
+        let request = build_rename_request(
+            &host_uri,
+            host_position,
+            "lua",
+            "region-0",
+            3,
+            "newName",
+            RequestId::new(1),
+        );
+
+        let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
+        assert!(
+            VirtualDocumentUri::is_virtual_uri(uri_str),
+            "Request should use a virtual URI: {}",
+            uri_str
+        );
+        assert!(
+            uri_str.ends_with(".lua"),
+            "Virtual URI should have .lua extension: {}",
+            uri_str
+        );
+    }
+
+    #[test]
+    fn rename_request_translates_position_and_includes_new_name() {
+        use url::Url;
+
+        let host_uri: Uri =
+            crate::lsp::lsp_impl::url_to_uri(&Url::parse("file:///project/doc.md").unwrap())
+                .unwrap();
+        let host_position = Position {
+            line: 5,
+            character: 10,
+        };
+        let request = build_rename_request(
+            &host_uri,
+            host_position,
+            "lua",
+            "region-0",
+            3,
+            "renamedVariable",
+            RequestId::new(42),
+        );
+
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["id"], 42);
+        assert_eq!(request["method"], "textDocument/rename");
+        // Position translated: line 5 - 3 = 2
+        assert_eq!(request["params"]["position"]["line"], 2);
+        assert_eq!(request["params"]["position"]["character"], 10);
+        // newName included
+        assert_eq!(request["params"]["newName"], "renamedVariable");
+    }
+
+    // ==========================================================================
+    // Rename response transformation tests
+    // ==========================================================================
+
+    fn make_host_uri() -> Uri {
+        use url::Url;
+        crate::lsp::lsp_impl::url_to_uri(&Url::parse("file:///test.md").unwrap()).unwrap()
+    }
+
+    fn make_virtual_uri_string() -> String {
+        let host_uri = make_host_uri();
+        VirtualDocumentUri::new(&host_uri, "lua", "region-0").to_uri_string()
+    }
+
+    #[test]
+    fn workspace_edit_with_null_result_returns_none() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
+
+        let result = transform_workspace_edit_response_to_host(
+            response,
+            &make_virtual_uri_string(),
+            &make_host_uri(),
+            5,
+        );
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn workspace_edit_without_result_returns_none() {
+        let response = json!({ "jsonrpc": "2.0", "id": 42 });
+
+        let result = transform_workspace_edit_response_to_host(
+            response,
+            &make_virtual_uri_string(),
+            &make_host_uri(),
+            5,
+        );
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn workspace_edit_changes_transforms_ranges_and_rekeys_uri() {
+        let virtual_uri = make_virtual_uri_string();
+        let host_uri = make_host_uri();
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "changes": {
+                    virtual_uri.clone(): [
+                        {
+                            "range": {
+                                "start": { "line": 0, "character": 5 },
+                                "end": { "line": 0, "character": 10 }
+                            },
+                            "newText": "newName"
+                        },
+                        {
+                            "range": {
+                                "start": { "line": 3, "character": 0 },
+                                "end": { "line": 3, "character": 7 }
+                            },
+                            "newText": "newName"
+                        }
+                    ]
+                }
+            }
+        });
+
+        let edit = transform_workspace_edit_response_to_host(response, &virtual_uri, &host_uri, 10)
+            .unwrap();
+
+        let changes = edit.changes.unwrap();
+        // Virtual URI key should be replaced with host URI
+        assert!(!changes.contains_key(&virtual_uri.as_str().parse::<Uri>().unwrap()));
+        let edits = changes.get(&host_uri).expect("Should have host URI key");
+        assert_eq!(edits.len(), 2);
+        // Ranges transformed: line 0 + 10 = 10, line 3 + 10 = 13
+        assert_eq!(edits[0].range.start.line, 10);
+        assert_eq!(edits[0].range.end.line, 10);
+        assert_eq!(edits[1].range.start.line, 13);
+        assert_eq!(edits[1].range.end.line, 13);
+    }
+
+    #[test]
+    fn workspace_edit_changes_cross_region_filtered_out() {
+        let virtual_uri = make_virtual_uri_string();
+        let host_uri = make_host_uri();
+        let cross_region_uri =
+            VirtualDocumentUri::new(&host_uri, "lua", "region-1").to_uri_string();
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "changes": {
+                    virtual_uri.clone(): [{
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 5 }
+                        },
+                        "newText": "kept"
+                    }],
+                    cross_region_uri: [{
+                        "range": {
+                            "start": { "line": 0, "character": 0 },
+                            "end": { "line": 0, "character": 5 }
+                        },
+                        "newText": "filtered"
+                    }]
+                }
+            }
+        });
+
+        let edit = transform_workspace_edit_response_to_host(response, &virtual_uri, &host_uri, 5)
+            .unwrap();
+
+        let changes = edit.changes.unwrap();
+        assert_eq!(
+            changes.len(),
+            1,
+            "Cross-region entry should be filtered out"
+        );
+        assert!(changes.contains_key(&host_uri));
+    }
+
+    #[test]
+    fn workspace_edit_changes_real_file_uri_preserved() {
+        let virtual_uri = make_virtual_uri_string();
+        let host_uri = make_host_uri();
+        let real_file_uri = "file:///usr/local/lib/types.lua";
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "changes": {
+                    real_file_uri: [{
+                        "range": {
+                            "start": { "line": 50, "character": 0 },
+                            "end": { "line": 50, "character": 5 }
+                        },
+                        "newText": "newName"
+                    }]
+                }
+            }
+        });
+
+        let edit = transform_workspace_edit_response_to_host(response, &virtual_uri, &host_uri, 10)
+            .unwrap();
+
+        let changes = edit.changes.unwrap();
+        let real_uri: Uri = real_file_uri.parse().unwrap();
+        let edits = changes
+            .get(&real_uri)
+            .expect("Real file URI should be preserved");
+        // Range NOT transformed for real file
+        assert_eq!(edits[0].range.start.line, 50);
+    }
+
+    #[test]
+    fn workspace_edit_document_changes_transforms_edits_variant() {
+        let virtual_uri = make_virtual_uri_string();
+        let host_uri = make_host_uri();
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "documentChanges": [
+                    {
+                        "textDocument": { "uri": virtual_uri, "version": 1 },
+                        "edits": [
+                            {
+                                "range": {
+                                    "start": { "line": 2, "character": 0 },
+                                    "end": { "line": 2, "character": 5 }
+                                },
+                                "newText": "newName"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        let edit = transform_workspace_edit_response_to_host(response, &virtual_uri, &host_uri, 10)
+            .unwrap();
+
+        let doc_changes = edit.document_changes.unwrap();
+        match doc_changes {
+            DocumentChanges::Edits(edits) => {
+                assert_eq!(edits.len(), 1);
+                assert_eq!(edits[0].text_document.uri, host_uri);
+                match &edits[0].edits[0] {
+                    OneOf::Left(text_edit) => {
+                        assert_eq!(text_edit.range.start.line, 12); // 2 + 10
+                    }
+                    OneOf::Right(_) => panic!("Expected Left(TextEdit)"),
+                }
+            }
+            DocumentChanges::Operations(_) => panic!("Expected Edits variant"),
+        }
+    }
+
+    #[test]
+    fn workspace_edit_document_changes_cross_region_filtered() {
+        let virtual_uri = make_virtual_uri_string();
+        let host_uri = make_host_uri();
+        let cross_region_uri =
+            VirtualDocumentUri::new(&host_uri, "lua", "region-1").to_uri_string();
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "documentChanges": [
+                    {
+                        "textDocument": { "uri": virtual_uri, "version": 1 },
+                        "edits": [{
+                            "range": {
+                                "start": { "line": 0, "character": 0 },
+                                "end": { "line": 0, "character": 5 }
+                            },
+                            "newText": "kept"
+                        }]
+                    },
+                    {
+                        "textDocument": { "uri": cross_region_uri, "version": 1 },
+                        "edits": [{
+                            "range": {
+                                "start": { "line": 0, "character": 0 },
+                                "end": { "line": 0, "character": 5 }
+                            },
+                            "newText": "filtered"
+                        }]
+                    }
+                ]
+            }
+        });
+
+        let edit = transform_workspace_edit_response_to_host(response, &virtual_uri, &host_uri, 5)
+            .unwrap();
+
+        match edit.document_changes.unwrap() {
+            DocumentChanges::Edits(edits) => {
+                assert_eq!(edits.len(), 1, "Cross-region edit should be filtered out");
+                assert_eq!(edits[0].text_document.uri, host_uri);
+            }
+            DocumentChanges::Operations(_) => panic!("Expected Edits variant"),
+        }
+    }
+
+    #[test]
+    fn workspace_edit_empty_changes_returns_empty() {
+        let virtual_uri = make_virtual_uri_string();
+        let host_uri = make_host_uri();
+
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "changes": {}
+            }
+        });
+
+        let edit = transform_workspace_edit_response_to_host(response, &virtual_uri, &host_uri, 5)
+            .unwrap();
+
+        assert!(edit.changes.unwrap().is_empty());
+    }
+}
