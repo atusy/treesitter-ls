@@ -464,6 +464,21 @@ mod tests {
     }
 
     #[test]
+    fn malformed_items_returns_empty() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": {
+                "kind": "full",
+                "items": "not_an_array"
+            }
+        });
+
+        let diagnostics = transform_diagnostic_response_to_host(response, 5, "unused");
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
     fn empty_items_returns_empty() {
         let response = json!({
             "jsonrpc": "2.0",
