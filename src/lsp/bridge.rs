@@ -272,17 +272,21 @@ mod tests {
             )
             .await;
 
-        let json_response = response.expect("Document link request should succeed");
-        assert_eq!(json_response["jsonrpc"], "2.0");
-        assert!(json_response.get("id").is_some());
-        // Result can be null, empty array, array of DocumentLink, or error
+        // Result is now typed: Option<Vec<DocumentLink>>
         // lua-ls may or may not return links depending on configuration
-        // The important thing is the request succeeded and we got a valid JSON-RPC response
-        assert!(
-            json_response.get("result").is_some() || json_response.get("error").is_some(),
-            "Document link response should have result or error field: {:?}",
-            json_response
-        );
+        // The important thing is the request succeeded
+        let result = response.expect("Document link request should succeed");
+        // Result can be None (null) or Some(vec) - both are valid
+        if let Some(links) = result {
+            // If links were returned, they should be properly typed DocumentLink items
+            for link in &links {
+                // Each link must have a valid range
+                assert!(
+                    link.range.start.line >= 3,
+                    "Links should be in host coordinates (region_start_line=3)"
+                );
+            }
+        }
     }
 
     /// Unit test: Different languages using the same server_name share a single connection.

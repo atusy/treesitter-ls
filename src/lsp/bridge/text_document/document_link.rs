@@ -14,13 +14,11 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
+use tower_lsp_server::ls_types::DocumentLink;
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
-use super::super::protocol::{
-    RequestId, VirtualDocumentUri, build_whole_document_request,
-    transform_document_link_response_to_host,
-};
+use super::super::protocol::{RequestId, VirtualDocumentUri, build_whole_document_request};
 
 impl LanguageServerPool {
     /// Send a document link request and wait for the response.
@@ -47,7 +45,7 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
         upstream_request_id: UpstreamId,
-    ) -> io::Result<serde_json::Value> {
+    ) -> io::Result<Option<Vec<DocumentLink>>> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(server_name, server_config)
@@ -141,4 +139,35 @@ fn build_document_link_request(
         request_id,
         "textDocument/documentLink",
     )
+}
+
+/// Transform a document link response from virtual to host document coordinates.
+///
+/// DocumentLink responses are arrays of items with range, target, tooltip, and data fields.
+/// Only the range needs transformation - target, tooltip, and data are preserved unchanged.
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `region_start_line` - The starting line of the injection region in the host document
+fn transform_document_link_response_to_host(
+    mut response: serde_json::Value,
+    region_start_line: u32,
+) -> Option<Vec<DocumentLink>> {
+    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    let result = response.get_mut("result").map(serde_json::Value::take)?;
+
+    if result.is_null() {
+        return None;
+    }
+
+    // Parse into typed Vec<DocumentLink>
+    let mut links: Vec<DocumentLink> = serde_json::from_value(result).ok()?;
+
+    // Transform ranges to host coordinates
+    for link in &mut links {
+        link.range.start.line = link.range.start.line.saturating_add(region_start_line);
+        link.range.end.line = link.range.end.line.saturating_add(region_start_line);
+    }
+
+    Some(links)
 }

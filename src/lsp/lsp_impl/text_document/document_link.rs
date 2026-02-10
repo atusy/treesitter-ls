@@ -106,21 +106,10 @@ impl Kakehashi {
                 .await;
 
             match response {
-                Ok(json_response) => {
-                    // Parse the document link response
-                    if let Some(result) = json_response.get("result") {
-                        if result.is_null() {
-                            continue;
-                        }
-
-                        // Parse the result into Vec<DocumentLink>
-                        if let Ok(links) =
-                            serde_json::from_value::<Vec<DocumentLink>>(result.clone())
-                        {
-                            all_links.extend(links);
-                        }
-                    }
+                Ok(Some(links)) => {
+                    all_links.extend(links);
                 }
+                Ok(None) => {}
                 Err(e) => {
                     self.client
                         .log_message(
