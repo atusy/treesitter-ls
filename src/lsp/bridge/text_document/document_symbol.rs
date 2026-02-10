@@ -769,4 +769,38 @@ mod tests {
             transform_document_symbol_response_to_host(response, "unused", "unused", 5);
         assert!(transformed.is_none());
     }
+
+    #[test]
+    fn document_symbol_response_near_max_line_returns_none_on_overflow() {
+        // Unlike document_color (which uses typed u32 saturating_add and saturates at
+        // u32::MAX), document_symbol transforms ranges at the JSON level using u64
+        // arithmetic. When u32::MAX + offset produces a u64 value exceeding u32::MAX,
+        // the subsequent deserialization into DocumentSymbol (which has u32 line fields)
+        // fails, causing the function to return None.
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "result": [
+                {
+                    "name": "overflowSymbol",
+                    "kind": 12,
+                    "range": {
+                        "start": { "line": u32::MAX, "character": 0 },
+                        "end": { "line": u32::MAX, "character": 5 }
+                    },
+                    "selectionRange": {
+                        "start": { "line": u32::MAX, "character": 0 },
+                        "end": { "line": u32::MAX, "character": 5 }
+                    }
+                }
+            ]
+        });
+
+        let transformed =
+            transform_document_symbol_response_to_host(response, "unused", "unused", 10);
+        assert!(
+            transformed.is_none(),
+            "u64 overflow past u32::MAX causes deserialization failure, returning None"
+        );
+    }
 }
