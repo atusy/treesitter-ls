@@ -106,20 +106,8 @@ impl Kakehashi {
                 .await;
 
             match response {
-                Ok(json_response) => {
-                    // Parse the document color response
-                    if let Some(result) = json_response.get("result") {
-                        if result.is_null() {
-                            continue;
-                        }
-
-                        // Parse the result into Vec<ColorInformation>
-                        if let Ok(colors) =
-                            serde_json::from_value::<Vec<ColorInformation>>(result.clone())
-                        {
-                            all_colors.extend(colors);
-                        }
-                    }
+                Ok(colors) => {
+                    all_colors.extend(colors);
                 }
                 Err(e) => {
                     self.client
