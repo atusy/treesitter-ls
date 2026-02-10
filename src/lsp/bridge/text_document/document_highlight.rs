@@ -203,14 +203,14 @@ mod tests {
         );
 
         let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
-        let url = url::Url::parse(uri_str).expect("URI should be parseable");
-        let filename = url
-            .path_segments()
-            .and_then(|mut s| s.next_back())
-            .unwrap_or("");
         assert!(
-            filename.starts_with("kakehashi-virtual-uri-") && filename.ends_with(".lua"),
-            "Request should use virtual URI with .lua extension: {}",
+            VirtualDocumentUri::is_virtual_uri(uri_str),
+            "Request should use a virtual URI: {}",
+            uri_str
+        );
+        assert!(
+            uri_str.ends_with(".lua"),
+            "Virtual URI should have .lua extension: {}",
             uri_str
         );
     }
