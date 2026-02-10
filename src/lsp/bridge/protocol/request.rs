@@ -214,13 +214,8 @@ mod tests {
 
     #[test]
     fn didchange_notification_uses_virtual_uri() {
-        let notification = build_didchange_notification(
-            &test_host_uri(),
-            "lua",
-            "region-0",
-            "local x = 42",
-            2,
-        );
+        let notification =
+            build_didchange_notification(&test_host_uri(), "lua", "region-0", "local x = 42", 2);
 
         assert_eq!(notification["jsonrpc"], "2.0");
         assert_eq!(notification["method"], "textDocument/didChange");

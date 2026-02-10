@@ -20,8 +20,7 @@ use super::super::pool::{
     ConnectionHandleSender, LanguageServerPool, NotificationSendResult, UpstreamId,
 };
 use super::super::protocol::{
-    RequestId, VirtualDocumentUri, build_didchange_notification,
-    build_position_based_request,
+    RequestId, VirtualDocumentUri, build_didchange_notification, build_position_based_request,
 };
 
 impl LanguageServerPool {
