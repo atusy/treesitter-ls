@@ -15,13 +15,11 @@
 use std::io;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::Range;
+use tower_lsp_server::ls_types::{InlayHint, InlayHintLabel, Range, Uri};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
-use super::super::protocol::{
-    RequestId, ResponseTransformContext, VirtualDocumentUri, transform_inlay_hint_response_to_host,
-};
+use super::super::protocol::{RequestId, VirtualDocumentUri};
 
 impl LanguageServerPool {
     /// Send an inlay hint request and wait for the response.
@@ -49,7 +47,7 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
         upstream_request_id: UpstreamId,
-    ) -> io::Result<serde_json::Value> {
+    ) -> io::Result<Option<Vec<InlayHint>>> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
             .get_or_create_connection(server_name, server_config)
@@ -118,13 +116,6 @@ impl LanguageServerPool {
             return Err(e.into());
         }
 
-        // Build transformation context for response handling
-        let context = ResponseTransformContext {
-            request_virtual_uri: virtual_uri_string,
-            request_host_uri: host_uri.as_str().to_string(),
-            request_region_start_line: region_start_line,
-        };
-
         // Wait for response via oneshot channel (no Mutex held) with timeout
         let response = handle.wait_for_response(request_id, response_rx).await;
 
@@ -132,7 +123,12 @@ impl LanguageServerPool {
         self.unregister_upstream_request(&upstream_request_id, server_name);
 
         // Transform response positions and textEdits to host coordinates
-        Ok(transform_inlay_hint_response_to_host(response?, &context))
+        Ok(transform_inlay_hint_response_to_host(
+            response?,
+            &virtual_uri_string,
+            &host_uri_lsp,
+            region_start_line,
+        ))
     }
 }
 
@@ -191,4 +187,83 @@ fn build_inlay_hint_request(
             }
         }
     })
+}
+
+/// Transform an inlay hint response from virtual to host document coordinates.
+///
+/// InlayHint responses are arrays of items where each hint has:
+/// - position: The position where the hint should appear (needs transformation)
+/// - label: The hint text (string or InlayHintLabelPart[] with optional location)
+/// - textEdits: Optional array of TextEdit (needs transformation)
+///
+/// When label is an array of InlayHintLabelPart, each part may have a location field
+/// that needs URI and range transformation:
+/// 1. **Real file URI** → preserved as-is
+/// 2. **Same virtual URI as request** → transform coordinates, replace URI with host URI
+/// 3. **Different virtual URI** (cross-region) → label part filtered out
+///
+/// # Arguments
+/// * `response` - The JSON-RPC response from the downstream language server
+/// * `request_virtual_uri` - The virtual URI from the request
+/// * `host_uri` - The pre-parsed host URI to use in transformed responses
+/// * `region_start_line` - Line offset to add when transforming to host coordinates
+fn transform_inlay_hint_response_to_host(
+    mut response: serde_json::Value,
+    request_virtual_uri: &str,
+    host_uri: &Uri,
+    region_start_line: u32,
+) -> Option<Vec<InlayHint>> {
+    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    let result = response.get_mut("result").map(serde_json::Value::take)?;
+
+    if result.is_null() {
+        return None;
+    }
+
+    // Parse into typed Vec<InlayHint>
+    let mut hints: Vec<InlayHint> = serde_json::from_value(result).ok()?;
+
+    for hint in &mut hints {
+        // Transform position to host coordinates
+        hint.position.line = hint.position.line.saturating_add(region_start_line);
+
+        // Transform textEdits ranges
+        if let Some(text_edits) = &mut hint.text_edits {
+            for edit in text_edits.iter_mut() {
+                edit.range.start.line = edit.range.start.line.saturating_add(region_start_line);
+                edit.range.end.line = edit.range.end.line.saturating_add(region_start_line);
+            }
+        }
+
+        // Transform label parts if label is an array (InlayHintLabelPart[])
+        if let InlayHintLabel::LabelParts(parts) = &mut hint.label {
+            parts.retain_mut(|part| {
+                let Some(location) = &mut part.location else {
+                    return true; // Parts without location are always kept
+                };
+
+                let uri_str = location.uri.as_str();
+
+                // Case 1: Real file URI (not virtual) → keep as-is
+                if !VirtualDocumentUri::is_virtual_uri(uri_str) {
+                    return true;
+                }
+
+                // Case 2: Same virtual URI → transform to host coordinates
+                if uri_str == request_virtual_uri {
+                    location.uri = host_uri.clone();
+                    location.range.start.line =
+                        location.range.start.line.saturating_add(region_start_line);
+                    location.range.end.line =
+                        location.range.end.line.saturating_add(region_start_line);
+                    return true;
+                }
+
+                // Case 3: Different virtual URI (cross-region) → filter out
+                false
+            });
+        }
+    }
+
+    Some(hints)
 }

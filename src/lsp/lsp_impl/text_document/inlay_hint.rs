@@ -123,20 +123,7 @@ impl Kakehashi {
             .await;
 
         match response {
-            Ok(json_response) => {
-                // Parse the inlay hint response
-                if let Some(result) = json_response.get("result") {
-                    if result.is_null() {
-                        return Ok(None);
-                    }
-
-                    // Parse the result into Vec<InlayHint>
-                    if let Ok(hints) = serde_json::from_value::<Vec<InlayHint>>(result.clone()) {
-                        return Ok(Some(hints));
-                    }
-                }
-                Ok(None)
-            }
+            Ok(hints) => Ok(hints),
             Err(e) => {
                 self.client
                     .log_message(
