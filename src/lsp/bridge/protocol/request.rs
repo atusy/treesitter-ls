@@ -111,7 +111,7 @@ pub(crate) fn build_bridge_rename_request(
 /// * `region_id` - The unique region ID for this injection
 /// * `request_id` - The JSON-RPC request ID
 /// * `method` - The LSP method name (e.g., "textDocument/documentLink")
-fn build_whole_document_request(
+pub(crate) fn build_whole_document_request(
     host_uri: &tower_lsp_server::ls_types::Uri,
     injection_language: &str,
     region_id: &str,
@@ -130,32 +130,6 @@ fn build_whole_document_request(
             }
         }
     })
-}
-
-/// Build a JSON-RPC document link request for a downstream language server.
-///
-/// Unlike position-based requests (hover, definition, etc.), DocumentLinkParams
-/// only has a textDocument field - no position. The request asks for all links
-/// in the entire document.
-///
-/// # Arguments
-/// * `host_uri` - The URI of the host document
-/// * `injection_language` - The injection language (e.g., "lua")
-/// * `region_id` - The unique region ID for this injection
-/// * `request_id` - The JSON-RPC request ID
-pub(crate) fn build_bridge_document_link_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    injection_language: &str,
-    region_id: &str,
-    request_id: RequestId,
-) -> serde_json::Value {
-    build_whole_document_request(
-        host_uri,
-        injection_language,
-        region_id,
-        request_id,
-        "textDocument/documentLink",
-    )
 }
 
 /// Build a JSON-RPC document symbol request for a downstream language server.
@@ -653,60 +627,6 @@ mod tests {
             request["params"]["newName"], "renamedVariable",
             "Request should include newName parameter"
         );
-    }
-
-    // ==========================================================================
-    // Document link request tests
-    // ==========================================================================
-
-    #[test]
-    fn document_link_request_uses_virtual_uri() {
-        let request = build_bridge_document_link_request(
-            &test_host_uri(),
-            "lua",
-            "region-0",
-            test_request_id(),
-        );
-
-        assert_uses_virtual_uri(&request, "lua");
-    }
-
-    #[test]
-    fn document_link_request_has_correct_method_and_structure() {
-        let request = build_bridge_document_link_request(
-            &test_host_uri(),
-            "lua",
-            "region-0",
-            RequestId::new(123),
-        );
-
-        assert_eq!(request["jsonrpc"], "2.0");
-        assert_eq!(request["id"], 123);
-        assert_eq!(request["method"], "textDocument/documentLink");
-        // DocumentLink request has no position parameter
-        assert!(
-            request["params"].get("position").is_none(),
-            "DocumentLink request should not have position parameter"
-        );
-    }
-
-    #[test]
-    fn document_link_request_different_languages_produce_different_extensions() {
-        let lua_request = build_bridge_document_link_request(
-            &test_host_uri(),
-            "lua",
-            "region-0",
-            RequestId::new(1),
-        );
-        let python_request = build_bridge_document_link_request(
-            &test_host_uri(),
-            "python",
-            "region-0",
-            RequestId::new(1),
-        );
-
-        assert_uses_virtual_uri(&lua_request, "lua");
-        assert_uses_virtual_uri(&python_request, "py");
     }
 
     // ==========================================================================

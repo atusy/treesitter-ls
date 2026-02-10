@@ -18,7 +18,7 @@ use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
 use super::super::protocol::{
-    VirtualDocumentUri, build_bridge_document_link_request,
+    RequestId, VirtualDocumentUri, build_whole_document_request,
     transform_document_link_response_to_host,
 };
 
@@ -79,12 +79,8 @@ impl LanguageServerPool {
 
         // Build document link request
         // Note: document link doesn't need position - it operates on the whole document
-        let request = build_bridge_document_link_request(
-            &host_uri_lsp,
-            injection_language,
-            region_id,
-            request_id,
-        );
+        let request =
+            build_document_link_request(&host_uri_lsp, injection_language, region_id, request_id);
 
         // Use a closure for cleanup on any failure path
         let cleanup = || {
@@ -125,4 +121,24 @@ impl LanguageServerPool {
             region_start_line,
         ))
     }
+}
+
+/// Build a JSON-RPC document link request for a downstream language server.
+///
+/// Unlike position-based requests (hover, definition, etc.), DocumentLinkParams
+/// only has a textDocument field - no position. The request asks for all links
+/// in the entire document.
+fn build_document_link_request(
+    host_uri: &tower_lsp_server::ls_types::Uri,
+    injection_language: &str,
+    region_id: &str,
+    request_id: RequestId,
+) -> serde_json::Value {
+    build_whole_document_request(
+        host_uri,
+        injection_language,
+        region_id,
+        request_id,
+        "textDocument/documentLink",
+    )
 }
