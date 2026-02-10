@@ -80,12 +80,8 @@ impl LanguageServerPool {
 
         // Build document symbol request
         // Note: document symbol doesn't need position - it operates on the whole document
-        let request = build_document_symbol_request(
-            &host_uri_lsp,
-            injection_language,
-            region_id,
-            request_id,
-        );
+        let request =
+            build_document_symbol_request(&host_uri_lsp, injection_language, region_id, request_id);
 
         // Use a closure for cleanup on any failure path
         let cleanup = || {
@@ -190,9 +186,7 @@ fn transform_document_symbol_response_to_host(
     }
 
     // DocumentSymbol[] or SymbolInformation[] is an array
-    let Some(items) = result.as_array() else {
-        return None;
-    };
+    let items = result.as_array()?;
 
     if items.is_empty() {
         // Return empty Nested variant for consistency
@@ -674,12 +668,8 @@ mod tests {
             ]
         });
 
-        let transformed = transform_document_symbol_response_to_host(
-            response,
-            virtual_uri,
-            "file:///doc.md",
-            5,
-        );
+        let transformed =
+            transform_document_symbol_response_to_host(response, virtual_uri, "file:///doc.md", 5);
 
         let result = transformed.unwrap();
         match result {
@@ -731,12 +721,8 @@ mod tests {
             ]
         });
 
-        let transformed = transform_document_symbol_response_to_host(
-            response,
-            request_virtual_uri,
-            host_uri,
-            5,
-        );
+        let transformed =
+            transform_document_symbol_response_to_host(response, request_virtual_uri, host_uri, 5);
 
         let result = transformed.unwrap();
         match result {

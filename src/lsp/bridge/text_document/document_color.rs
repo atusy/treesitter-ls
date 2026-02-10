@@ -80,12 +80,8 @@ impl LanguageServerPool {
 
         // Build document color request
         // Note: document color doesn't need position - it operates on the whole document
-        let request = build_document_color_request(
-            &host_uri_lsp,
-            injection_language,
-            region_id,
-            request_id,
-        );
+        let request =
+            build_document_color_request(&host_uri_lsp, injection_language, region_id, request_id);
 
         // Use a closure for cleanup on any failure path
         let cleanup = || {
