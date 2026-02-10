@@ -109,7 +109,7 @@ pub(crate) fn build_whole_document_request(
 /// # Arguments
 /// * `virtual_uri` - The virtual document URI
 /// * `content` - The initial content of the virtual document
-pub(crate) fn build_bridge_didopen_notification(
+pub(crate) fn build_didopen_notification(
     virtual_uri: &VirtualDocumentUri,
     content: &str,
 ) -> serde_json::Value {
@@ -131,7 +131,7 @@ pub(crate) fn build_bridge_didopen_notification(
 ///
 /// Uses full text sync (TextDocumentSyncKind::Full) which sends the entire
 /// document content on each change. This is simpler and sufficient for bridge use.
-pub(crate) fn build_bridge_didchange_notification(
+pub(crate) fn build_didchange_notification(
     host_uri: &tower_lsp_server::ls_types::Uri,
     injection_language: &str,
     region_id: &str,
@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn didchange_notification_uses_virtual_uri() {
-        let notification = build_bridge_didchange_notification(
+        let notification = build_didchange_notification(
             &test_host_uri(),
             "lua",
             "region-0",
@@ -236,7 +236,7 @@ mod tests {
     fn didchange_notification_contains_full_text() {
         let content = "local x = 42\nprint(x)";
         let notification =
-            build_bridge_didchange_notification(&test_host_uri(), "lua", "region-0", content, 1);
+            build_didchange_notification(&test_host_uri(), "lua", "region-0", content, 1);
 
         let changes = notification["params"]["contentChanges"].as_array().unwrap();
         assert_eq!(changes.len(), 1);

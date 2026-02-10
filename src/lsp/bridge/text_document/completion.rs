@@ -20,7 +20,7 @@ use super::super::pool::{
     ConnectionHandleSender, LanguageServerPool, NotificationSendResult, UpstreamId,
 };
 use super::super::protocol::{
-    RequestId, VirtualDocumentUri, build_bridge_didchange_notification,
+    RequestId, VirtualDocumentUri, build_didchange_notification,
     build_position_based_request,
 };
 
@@ -118,7 +118,7 @@ impl LanguageServerPool {
                 .increment_document_version(&virtual_uri, server_name)
                 .await
         {
-            let did_change = build_bridge_didchange_notification(
+            let did_change = build_didchange_notification(
                 &host_uri_lsp,
                 injection_language,
                 region_id,
