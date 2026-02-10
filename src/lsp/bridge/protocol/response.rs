@@ -133,7 +133,7 @@ pub(crate) fn transform_goto_response_to_host(
 /// This is a lossless conversion - LocationLink is the more feature-rich format.
 /// We set `targetSelectionRange` equal to `targetRange` since Location doesn't
 /// distinguish between the full symbol range and the selection range.
-pub(crate) fn location_to_location_link(location: Location) -> LocationLink {
+fn location_to_location_link(location: Location) -> LocationLink {
     LocationLink {
         origin_selection_range: None,
         target_uri: location.uri,
