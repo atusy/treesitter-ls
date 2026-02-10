@@ -194,39 +194,41 @@ fn build_completion_request(
 /// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
 /// * `region_start_line` - Line offset to add to completion item ranges
 fn transform_completion_response_to_host(
-    response: serde_json::Value,
+    mut response: serde_json::Value,
     region_start_line: u32,
 ) -> Option<CompletionList> {
-    // Extract result from JSON-RPC envelope
-    let result = response.get("result")?;
+    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    let result = response.get_mut("result").map(serde_json::Value::take)?;
     if result.is_null() {
         return None;
     }
 
-    // Try to deserialize as CompletionList first (preferred format)
-    if let Ok(mut list) = serde_json::from_value::<CompletionList>(result.clone()) {
-        // Transform all items in the list
-        for item in &mut list.items {
-            transform_completion_item(item, region_start_line);
-        }
-        return Some(list);
-    }
+    // Determine format by checking if result is an array (legacy) or object (CompletionList)
+    let is_array = result.is_array();
 
-    // Try to deserialize as array of CompletionItem (legacy format)
-    // Normalize to CompletionList with isIncomplete=false (the default)
-    if let Ok(mut items) = serde_json::from_value::<Vec<CompletionItem>>(result.clone()) {
-        // Transform all items in the array
+    if is_array {
+        // Legacy format: array of CompletionItem
+        // Normalize to CompletionList with isIncomplete=false (the default)
+        let Ok(mut items) = serde_json::from_value::<Vec<CompletionItem>>(result) else {
+            return None;
+        };
         for item in &mut items {
             transform_completion_item(item, region_start_line);
         }
-        return Some(CompletionList {
+        Some(CompletionList {
             is_incomplete: false,
             items,
-        });
+        })
+    } else {
+        // Preferred format: CompletionList object
+        let Ok(mut list) = serde_json::from_value::<CompletionList>(result) else {
+            return None;
+        };
+        for item in &mut list.items {
+            transform_completion_item(item, region_start_line);
+        }
+        Some(list)
     }
-
-    // Failed to deserialize
-    None
 }
 
 /// Transform textEdit range in a single completion item to host coordinates.

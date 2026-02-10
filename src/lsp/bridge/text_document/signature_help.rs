@@ -51,13 +51,13 @@ fn build_signature_help_request(
 /// * `Some(SignatureHelp)` if the response contains valid signature help data
 /// * `None` if the result is null or cannot be parsed
 fn transform_signature_help_response_to_host(
-    response: serde_json::Value,
+    mut response: serde_json::Value,
     _region_start_line: u32,
 ) -> Option<SignatureHelp> {
     // SignatureHelp doesn't have ranges that need transformation.
     // activeSignature and activeParameter are indices, not coordinates.
-    // Extract the result field from the JSON-RPC response
-    let result = response.get("result")?;
+    // Extract result from JSON-RPC envelope, taking ownership to avoid clones
+    let result = response.get_mut("result").map(serde_json::Value::take)?;
 
     // If result is null, return None
     if result.is_null() {
@@ -65,7 +65,7 @@ fn transform_signature_help_response_to_host(
     }
 
     // Parse the result into a SignatureHelp struct
-    serde_json::from_value(result.clone()).ok()
+    serde_json::from_value(result).ok()
 }
 
 impl LanguageServerPool {
@@ -329,8 +329,7 @@ mod tests {
         });
         let region_start_line = 3;
 
-        let transformed =
-            transform_signature_help_response_to_host(response.clone(), region_start_line);
+        let transformed = transform_signature_help_response_to_host(response, region_start_line);
 
         assert!(transformed.is_some());
         let signature_help = transformed.unwrap();
@@ -352,8 +351,7 @@ mod tests {
         });
         let region_start_line = 3;
 
-        let transformed =
-            transform_signature_help_response_to_host(response.clone(), region_start_line);
+        let transformed = transform_signature_help_response_to_host(response, region_start_line);
 
         assert!(transformed.is_none(), "Null result should return None");
     }
