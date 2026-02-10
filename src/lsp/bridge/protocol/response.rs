@@ -14,7 +14,7 @@
 //! - Same virtual URI as request → transform coordinates
 //! - Different virtual URI → filter out (cross-region, can't transform safely)
 //!
-//! Examples: goto definition/type_definition/implementation/declaration, references
+//! Examples: goto definition/type_definition/implementation/declaration
 
 use log::warn;
 
@@ -162,7 +162,7 @@ pub(crate) fn location_link_to_location(link: LocationLink) -> Location {
 /// 1. Real file URI → preserve as-is (cross-file jump to real file) - KEEP
 /// 2. Same virtual URI as request → transform using request's context - KEEP
 /// 3. Different virtual URI → cross-region jump - FILTER OUT
-fn transform_location_for_goto(
+pub(crate) fn transform_location_for_goto(
     mut location: Location,
     request_virtual_uri: &str,
     host_uri: &Uri,
@@ -227,71 +227,4 @@ fn transform_location_link_for_goto(
 fn transform_range_for_goto(range: &mut Range, region_start_line: u32) {
     range.start.line = range.start.line.saturating_add(region_start_line);
     range.end.line = range.end.line.saturating_add(region_start_line);
-}
-
-/// Transform references response to typed Vec<Location> format.
-///
-/// This function handles the references endpoint response which returns
-/// Location[] | null according to the LSP spec.
-///
-/// # URI Filtering Logic
-///
-/// Same as goto endpoints:
-/// - Real file URIs → keep as-is (cross-file jumps)
-/// - Same virtual URI as request → transform coordinates
-/// - Different virtual URI → filter out (cross-region, can't transform safely)
-///
-/// Empty arrays after filtering are preserved to distinguish "searched, found nothing"
-/// from "search failed" (None).
-///
-/// # Arguments
-/// * `response` - Raw JSON-RPC response envelope (`{"result": {...}}`)
-/// * `request_virtual_uri` - The virtual URI from the request
-/// * `host_uri` - The pre-parsed host URI to use in transformed responses
-/// * `region_start_line` - Line offset to add when transforming to host coordinates
-pub(crate) fn transform_references_response_to_host(
-    mut response: serde_json::Value,
-    request_virtual_uri: &str,
-    host_uri: &Uri,
-    region_start_line: u32,
-) -> Option<Vec<Location>> {
-    if let Some(error) = response.get("error") {
-        warn!(target: "kakehashi::bridge", "Downstream server returned error for textDocument/references: {}", error);
-    }
-    let result = response.get_mut("result").map(serde_json::Value::take)?;
-    if result.is_null() {
-        return None;
-    }
-
-    // The LSP spec defines ReferenceResponse as: Location[] | null
-    // References only returns arrays of Location (simpler than goto endpoints)
-
-    if result.is_array() {
-        let arr = result.as_array()?;
-        if arr.is_empty() {
-            // Preserve empty arrays (semantic: "searched, found nothing")
-            return Some(vec![]);
-        }
-
-        // Location[] → transform each location
-        if let Ok(locations) = serde_json::from_value::<Vec<Location>>(result) {
-            let transformed: Vec<Location> = locations
-                .into_iter()
-                .filter_map(|location| {
-                    transform_location_for_goto(
-                        location,
-                        request_virtual_uri,
-                        host_uri,
-                        region_start_line,
-                    )
-                })
-                .collect();
-
-            // Preserve empty array after filtering
-            return Some(transformed);
-        }
-    }
-
-    // Failed to deserialize as Location[]
-    None
 }
