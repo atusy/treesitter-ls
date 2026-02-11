@@ -20,20 +20,15 @@ use tower_lsp_server::ls_types::{
 };
 use url::Url;
 
-use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
+use super::super::pool::{LanguageServerPool, UpstreamId};
 use super::super::protocol::{RequestId, VirtualDocumentUri, build_position_based_request};
 
 impl LanguageServerPool {
     /// Send a rename request and wait for the response.
     ///
-    /// This is a convenience method that handles the full request/response cycle:
-    /// 1. Get or create a connection (state check is atomic with lookup - ADR-0015)
-    /// 2. Send a textDocument/didOpen notification if needed
-    /// 3. Send the rename request
-    /// 4. Wait for and return the response
-    ///
-    /// The `upstream_request_id` enables $/cancelRequest forwarding.
-    /// See [`LanguageServerPool::register_upstream_request()`] for the full flow.
+    /// Delegates to [`execute_bridge_request`](Self::execute_bridge_request) for the
+    /// full lifecycle, providing rename-specific request building and response
+    /// transformation.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_rename_request(
         &self,
@@ -48,88 +43,36 @@ impl LanguageServerPool {
         new_name: &str,
         upstream_request_id: UpstreamId,
     ) -> io::Result<Option<WorkspaceEdit>> {
-        // Get or create connection - state check is atomic with lookup (ADR-0015)
-        let handle = self
-            .get_or_create_connection(server_name, server_config)
-            .await?;
-
-        // Convert host_uri to lsp_types::Uri for bridge protocol functions
-        let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-
-        // Build virtual document URI
-        let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
-        let virtual_uri_string = virtual_uri.to_uri_string();
-
-        // Register in the upstream request registry FIRST for cancel lookup.
-        // This order matters: if a cancel arrives between pool and router registration,
-        // the cancel will fail at the router lookup (which is acceptable for best-effort
-        // cancel semantics) rather than finding the server but no downstream ID.
-        self.register_upstream_request(upstream_request_id.clone(), server_name);
-
-        // Register request with upstream ID mapping for cancel forwarding
-        let (request_id, response_rx) =
-            match handle.register_request_with_upstream(Some(upstream_request_id.clone())) {
-                Ok(result) => result,
-                Err(e) => {
-                    // Clean up the pool registration on failure
-                    self.unregister_upstream_request(&upstream_request_id, server_name);
-                    return Err(e);
-                }
-            };
-
-        // Build rename request
-        let rename_request = build_rename_request(
-            &host_uri_lsp,
-            host_position,
+        self.execute_bridge_request(
+            server_name,
+            server_config,
+            host_uri,
             injection_language,
             region_id,
             region_start_line,
-            new_name,
-            request_id,
-        );
-
-        // Use a closure for cleanup on any failure path
-        let cleanup = || {
-            handle.router().remove(request_id);
-            self.unregister_upstream_request(&upstream_request_id, server_name);
-        };
-
-        // Send didOpen notification only if document hasn't been opened yet
-        if let Err(e) = self
-            .ensure_document_opened(
-                &mut ConnectionHandleSender(&handle),
-                host_uri,
-                &virtual_uri,
-                virtual_content,
-                server_name,
-            )
-            .await
-        {
-            cleanup();
-            return Err(e);
-        }
-
-        // Queue the rename request via single-writer loop (ADR-0015)
-        if let Err(e) = handle.send_request(rename_request, request_id) {
-            cleanup();
-            return Err(e.into());
-        }
-
-        // Wait for response via oneshot channel (no Mutex held) with timeout
-        let response = handle.wait_for_response(request_id, response_rx).await;
-
-        // Unregister from the upstream request registry regardless of result
-        self.unregister_upstream_request(&upstream_request_id, server_name);
-
-        // Transform WorkspaceEdit response to host coordinates and URI
-        // Cross-region virtual URIs are filtered out
-        Ok(transform_workspace_edit_response_to_host(
-            response?,
-            &virtual_uri_string,
-            &host_uri_lsp,
-            region_start_line,
-        ))
+            virtual_content,
+            upstream_request_id,
+            |host_uri_lsp, _virtual_uri, request_id| {
+                build_rename_request(
+                    host_uri_lsp,
+                    host_position,
+                    injection_language,
+                    region_id,
+                    region_start_line,
+                    new_name,
+                    request_id,
+                )
+            },
+            |response, ctx| {
+                transform_workspace_edit_response_to_host(
+                    response,
+                    &ctx.virtual_uri_string,
+                    ctx.host_uri_lsp,
+                    ctx.region_start_line,
+                )
+            },
+        )
+        .await
     }
 }
 
