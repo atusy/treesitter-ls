@@ -33,7 +33,13 @@ use crate::lsp::bridge::protocol::{RequestId, VirtualDocumentUri};
 /// document space.
 ///
 /// Fields are added incrementally as handlers are migrated.
-pub(crate) struct BridgeResponseContext {
+pub(crate) struct BridgeResponseContext<'a> {
+    /// The virtual document URI string (for matching against response URIs
+    /// to determine whether locations point to the same virtual document).
+    pub virtual_uri_string: String,
+    /// The host document URI in `lsp_types::Uri` form (for rewriting virtual
+    /// URIs back to the host URI in goto responses).
+    pub host_uri_lsp: &'a Uri,
     /// The starting line of the injection region in the host document
     /// (for coordinate translation back to host space).
     pub region_start_line: u32,
@@ -89,7 +95,7 @@ impl LanguageServerPool {
         virtual_content: &str,
         upstream_request_id: UpstreamId,
         build_request: impl FnOnce(&Uri, &VirtualDocumentUri, RequestId) -> serde_json::Value,
-        transform_response: impl FnOnce(serde_json::Value, &BridgeResponseContext) -> T,
+        transform_response: impl FnOnce(serde_json::Value, &BridgeResponseContext<'_>) -> T,
     ) -> io::Result<T> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
         let handle = self
@@ -157,7 +163,11 @@ impl LanguageServerPool {
         self.unregister_upstream_request(&upstream_request_id, server_name);
 
         // Build context and transform response via caller-provided closure
-        let context = BridgeResponseContext { region_start_line };
+        let context = BridgeResponseContext {
+            virtual_uri_string: virtual_uri.to_uri_string(),
+            host_uri_lsp: &host_uri_lsp,
+            region_start_line,
+        };
 
         Ok(transform_response(response?, &context))
     }
@@ -218,10 +228,15 @@ mod tests {
 
     /// Test that BridgeResponseContext fields are accessible.
     #[test]
-    fn bridge_response_context_exposes_region_start_line() {
+    fn bridge_response_context_exposes_fields() {
+        let host_uri: Uri = "file:///project/doc.md".parse().unwrap();
         let ctx = BridgeResponseContext {
+            virtual_uri_string: "file:///project/virtual.lua".to_string(),
+            host_uri_lsp: &host_uri,
             region_start_line: 5,
         };
+        assert_eq!(ctx.virtual_uri_string, "file:///project/virtual.lua");
+        assert_eq!(ctx.host_uri_lsp, &host_uri);
         assert_eq!(ctx.region_start_line, 5);
     }
 }
