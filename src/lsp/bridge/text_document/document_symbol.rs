@@ -16,7 +16,7 @@ use std::io;
 use log::warn;
 
 use crate::config::settings::BridgeServerConfig;
-use tower_lsp_server::ls_types::{DocumentSymbol, DocumentSymbolResponse, SymbolInformation};
+use tower_lsp_server::ls_types::{DocumentSymbol, DocumentSymbolResponse, SymbolInformation, Uri};
 use url::Url;
 
 use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
@@ -120,7 +120,7 @@ impl LanguageServerPool {
         Ok(transform_document_symbol_response_to_host(
             response?,
             &virtual_uri_string,
-            host_uri.as_str(),
+            &host_uri_lsp,
             region_start_line,
         ))
     }
@@ -131,7 +131,7 @@ impl LanguageServerPool {
 /// Like DocumentLinkParams, DocumentSymbolParams only has a textDocument field -
 /// no position. The request asks for all symbols in the entire document.
 fn build_document_symbol_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
+    host_uri: &Uri,
     injection_language: &str,
     region_id: &str,
     request_id: RequestId,
@@ -168,12 +168,12 @@ fn build_document_symbol_request(
 /// # Arguments
 /// * `response` - The JSON-RPC response from the downstream language server
 /// * `request_virtual_uri` - The virtual URI from the request
-/// * `request_host_uri` - The host URI to replace virtual URIs with
+/// * `host_uri` - The host URI to replace virtual URIs with
 /// * `region_start_line` - The starting line of the injection region in the host document
 fn transform_document_symbol_response_to_host(
     mut response: serde_json::Value,
     request_virtual_uri: &str,
-    request_host_uri: &str,
+    host_uri: &Uri,
     region_start_line: u32,
 ) -> Option<DocumentSymbolResponse> {
     if let Some(error) = response.get("error") {
@@ -201,7 +201,7 @@ fn transform_document_symbol_response_to_host(
         transform_symbol_information_response(
             result,
             request_virtual_uri,
-            request_host_uri,
+            host_uri,
             region_start_line,
         )
     } else {
@@ -217,13 +217,10 @@ fn transform_document_symbol_response_to_host(
 fn transform_symbol_information_response(
     result: serde_json::Value,
     request_virtual_uri: &str,
-    request_host_uri: &str,
+    host_uri: &Uri,
     region_start_line: u32,
 ) -> Option<DocumentSymbolResponse> {
     let mut symbols: Vec<SymbolInformation> = serde_json::from_value(result).ok()?;
-
-    // Parse host URI once for reuse across all matching items
-    let host_uri: tower_lsp_server::ls_types::Uri = request_host_uri.parse().ok()?;
 
     symbols.retain_mut(|symbol| {
         let is_virtual = VirtualDocumentUri::is_virtual_uri(symbol.location.uri.as_str());
@@ -302,13 +299,17 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// A dummy URI for tests where the host URI is not used (nested/early-return paths).
+    fn dummy_uri() -> Uri {
+        "file:///unused".parse().unwrap()
+    }
+
     // ==========================================================================
     // Document symbol request tests
     // ==========================================================================
 
     #[test]
     fn document_symbol_request_uses_virtual_uri() {
-        use tower_lsp_server::ls_types::Uri;
         use url::Url;
 
         let host_uri: Uri =
@@ -332,7 +333,6 @@ mod tests {
 
     #[test]
     fn document_symbol_request_has_correct_method_and_no_position() {
-        use tower_lsp_server::ls_types::Uri;
         use url::Url;
 
         let host_uri: Uri =
@@ -376,7 +376,7 @@ mod tests {
         });
 
         let transformed =
-            transform_document_symbol_response_to_host(response, "unused", "unused", 3);
+            transform_document_symbol_response_to_host(response, "unused", &dummy_uri(), 3);
 
         let result = transformed.unwrap();
         match result {
@@ -442,7 +442,7 @@ mod tests {
         });
 
         let transformed =
-            transform_document_symbol_response_to_host(response, "unused", "unused", 5);
+            transform_document_symbol_response_to_host(response, "unused", &dummy_uri(), 5);
 
         let result = transformed.unwrap();
         match result {
@@ -496,10 +496,11 @@ mod tests {
                 }
             ]
         });
+        let host_uri: Uri = "file:///doc.md".parse().unwrap();
         let transformed = transform_document_symbol_response_to_host(
             response,
             "file:///project/kakehashi-virtual-uri-region-0.lua",
-            "file:///doc.md",
+            &host_uri,
             7,
         );
 
@@ -527,7 +528,7 @@ mod tests {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": null });
 
         let transformed =
-            transform_document_symbol_response_to_host(response, "unused", "unused", 5);
+            transform_document_symbol_response_to_host(response, "unused", &dummy_uri(), 5);
         assert!(transformed.is_none());
     }
 
@@ -536,7 +537,7 @@ mod tests {
         let response = json!({ "jsonrpc": "2.0", "id": 42, "result": [] });
 
         let transformed =
-            transform_document_symbol_response_to_host(response, "unused", "unused", 5);
+            transform_document_symbol_response_to_host(response, "unused", &dummy_uri(), 5);
         let result = transformed.unwrap();
         match result {
             DocumentSymbolResponse::Nested(symbols) => {
@@ -549,7 +550,7 @@ mod tests {
     #[test]
     fn document_symbol_response_transforms_symbol_information_location_uri_to_host_uri() {
         let virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
-        let host_uri = "file:///project/doc.md";
+        let host_uri: Uri = "file:///project/doc.md".parse().unwrap();
         let response = json!({
             "jsonrpc": "2.0",
             "id": 42,
@@ -569,13 +570,13 @@ mod tests {
         });
 
         let transformed =
-            transform_document_symbol_response_to_host(response, virtual_uri, host_uri, 7);
+            transform_document_symbol_response_to_host(response, virtual_uri, &host_uri, 7);
 
         let result = transformed.unwrap();
         match result {
             DocumentSymbolResponse::Flat(symbols) => {
                 assert_eq!(symbols.len(), 1);
-                assert_eq!(symbols[0].location.uri.as_str(), host_uri);
+                assert_eq!(symbols[0].location.uri.as_str(), host_uri.as_str());
                 assert_eq!(symbols[0].location.range.start.line, 9);
                 assert_eq!(symbols[0].location.range.end.line, 9);
             }
@@ -605,12 +606,9 @@ mod tests {
             ]
         });
 
-        let transformed = transform_document_symbol_response_to_host(
-            response,
-            request_virtual_uri,
-            "file:///doc.md",
-            5,
-        );
+        let host_uri: Uri = "file:///doc.md".parse().unwrap();
+        let transformed =
+            transform_document_symbol_response_to_host(response, request_virtual_uri, &host_uri, 5);
 
         let result = transformed.unwrap();
         match result {
@@ -646,8 +644,9 @@ mod tests {
             ]
         });
 
+        let host_uri: Uri = "file:///doc.md".parse().unwrap();
         let transformed =
-            transform_document_symbol_response_to_host(response, virtual_uri, "file:///doc.md", 5);
+            transform_document_symbol_response_to_host(response, virtual_uri, &host_uri, 5);
 
         let result = transformed.unwrap();
         match result {
@@ -666,7 +665,7 @@ mod tests {
         let request_virtual_uri = "file:///project/kakehashi-virtual-uri-region-0.lua";
         let cross_region_uri = "file:///project/kakehashi-virtual-uri-region-1.lua";
         let real_file_uri = "file:///real/module.lua";
-        let host_uri = "file:///doc.md";
+        let host_uri: Uri = "file:///doc.md".parse().unwrap();
 
         let response = json!({
             "jsonrpc": "2.0",
@@ -700,7 +699,7 @@ mod tests {
         });
 
         let transformed =
-            transform_document_symbol_response_to_host(response, request_virtual_uri, host_uri, 5);
+            transform_document_symbol_response_to_host(response, request_virtual_uri, &host_uri, 5);
 
         let result = transformed.unwrap();
         match result {
@@ -711,7 +710,7 @@ mod tests {
                     "Should have 2 items (cross-region filtered out)"
                 );
                 assert_eq!(symbols[0].name, "localSymbol");
-                assert_eq!(symbols[0].location.uri.as_str(), host_uri);
+                assert_eq!(symbols[0].location.uri.as_str(), host_uri.as_str());
                 assert_eq!(symbols[0].location.range.start.line, 5);
 
                 assert_eq!(symbols[1].name, "externalSymbol");
@@ -731,7 +730,7 @@ mod tests {
         });
 
         let transformed =
-            transform_document_symbol_response_to_host(response, "unused", "unused", 5);
+            transform_document_symbol_response_to_host(response, "unused", &dummy_uri(), 5);
         assert!(transformed.is_none());
     }
 
@@ -744,7 +743,7 @@ mod tests {
         });
 
         let transformed =
-            transform_document_symbol_response_to_host(response, "unused", "unused", 5);
+            transform_document_symbol_response_to_host(response, "unused", &dummy_uri(), 5);
         assert!(transformed.is_none());
     }
 
@@ -770,7 +769,7 @@ mod tests {
         });
 
         let transformed =
-            transform_document_symbol_response_to_host(response, "unused", "unused", 10);
+            transform_document_symbol_response_to_host(response, "unused", &dummy_uri(), 10);
         let result = transformed.unwrap();
         match result {
             DocumentSymbolResponse::Nested(symbols) => {
