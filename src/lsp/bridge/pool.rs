@@ -51,7 +51,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use url::Url;
 
-use super::protocol::{VirtualDocumentUri, build_bridge_didopen_notification};
+use super::protocol::{VirtualDocumentUri, build_didopen_notification};
 
 /// Timeout for LSP initialize handshake (ADR-0018 Tier 0: 30-60s recommended).
 ///
@@ -437,7 +437,7 @@ impl LanguageServerPool {
             .await
         {
             DocumentOpenDecision::SendDidOpen => {
-                let did_open = build_bridge_didopen_notification(virtual_uri, virtual_content);
+                let did_open = build_didopen_notification(virtual_uri, virtual_content);
                 sender.send_notification(did_open).await?;
                 self.document_tracker.mark_document_opened(virtual_uri);
                 Ok(())

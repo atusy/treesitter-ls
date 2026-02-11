@@ -110,26 +110,13 @@ impl Kakehashi {
                 .await;
 
             match response {
-                Ok(json_response) => {
-                    // Parse the document symbol response
-                    if let Some(result) = json_response.get("result") {
-                        if result.is_null() {
-                            continue;
-                        }
-
-                        // Try DocumentSymbol[] format first (hierarchical, preferred)
-                        if let Ok(symbols) =
-                            serde_json::from_value::<Vec<DocumentSymbol>>(result.clone())
-                        {
-                            all_document_symbols.extend(symbols);
-                        } else if let Ok(symbols) =
-                            serde_json::from_value::<Vec<SymbolInformation>>(result.clone())
-                        {
-                            // Fall back to SymbolInformation[] format (flat, deprecated but still used)
-                            all_symbol_information.extend(symbols);
-                        }
-                    }
+                Ok(Some(DocumentSymbolResponse::Nested(symbols))) => {
+                    all_document_symbols.extend(symbols);
                 }
+                Ok(Some(DocumentSymbolResponse::Flat(symbols))) => {
+                    all_symbol_information.extend(symbols);
+                }
+                Ok(None) => {}
                 Err(e) => {
                     self.client
                         .log_message(
