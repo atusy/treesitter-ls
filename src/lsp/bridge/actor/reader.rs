@@ -1248,6 +1248,89 @@ mod tests {
     }
 
     // ============================================================
+    // Server Request Response Reliability Tests
+    // ============================================================
+
+    /// Test that server request response is delivered even under backpressure.
+    ///
+    /// With `try_send`, if the outbound queue is full the response is silently
+    /// dropped. With `send_timeout`, the response waits for capacity and is
+    /// delivered once the queue drains.
+    #[tokio::test]
+    async fn server_request_response_survives_backpressure() {
+        use std::time::Duration;
+
+        // Use capacity=1 to simulate backpressure
+        let (response_tx, mut response_rx) = mpsc::channel(1);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+
+        // Fill the channel with a dummy message to create backpressure
+        response_tx
+            .send(OutboundMessage::Notification(json!({"dummy": true})))
+            .await
+            .unwrap();
+
+        // Spawn handle_server_request in a separate task (it needs to await)
+        let tx_clone = response_tx.clone();
+        let caps_clone = Arc::clone(&dynamic_capabilities);
+        let handle = tokio::spawn(async move {
+            let message = json!({
+                "jsonrpc": "2.0",
+                "id": 42,
+                "method": "window/workDoneProgress/create",
+                "params": { "token": "test" }
+            });
+            handle_server_request(message, "", &tx_clone, &caps_clone).await;
+        });
+
+        // Give handle_server_request a moment to start waiting
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Drain the dummy message to free capacity
+        let dummy = response_rx.recv().await.expect("should have dummy");
+        assert!(matches!(dummy, OutboundMessage::Notification(v) if v["dummy"] == true));
+
+        // Now the server request response should arrive
+        let response = tokio::time::timeout(Duration::from_secs(2), response_rx.recv())
+            .await
+            .expect("should not timeout waiting for response")
+            .expect("channel should not be closed");
+
+        match response {
+            OutboundMessage::Notification(val) => {
+                assert_eq!(val["id"], 42);
+                assert!(val["result"].is_null());
+            }
+            _ => panic!("Expected Notification variant"),
+        }
+
+        handle.await.unwrap();
+    }
+
+    /// Test that server request response on a closed channel does not panic.
+    ///
+    /// When the receiver is dropped (e.g., connection shutting down),
+    /// handle_server_request should log a warning but not panic.
+    #[tokio::test]
+    async fn server_request_response_closed_channel_no_panic() {
+        let (response_tx, response_rx) = mpsc::channel(1);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+
+        // Drop the receiver to simulate a closed channel
+        drop(response_rx);
+
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "window/workDoneProgress/create",
+            "params": { "token": "test" }
+        });
+
+        // Should not panic
+        handle_server_request(message, "", &response_tx, &dynamic_capabilities).await;
+    }
+
+    // ============================================================
     // Liveness Timer Tests (ADR-0014)
     // ============================================================
 
