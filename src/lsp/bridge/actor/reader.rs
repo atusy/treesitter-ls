@@ -496,7 +496,7 @@ async fn reader_loop_with_liveness(
                         // Reset liveness timer on any message activity (ADR-0014)
                         liveness.reset(&lang_prefix);
 
-                        handle_message(message, &router, &lang_prefix, &response_tx, &dynamic_capabilities);
+                        handle_message(message, &router, &lang_prefix, &response_tx, &dynamic_capabilities).await;
 
                         // Check if pending count returned to 0 - stop timer
                         if liveness.is_active() && router.pending_count() == 0 {
@@ -547,7 +547,7 @@ fn classify_message(message: &serde_json::Value) -> MessageKind {
 }
 
 /// Handle a single message from the downstream server.
-fn handle_message(
+async fn handle_message(
     message: serde_json::Value,
     router: &ResponseRouter,
     lang_prefix: &str,
@@ -584,7 +584,7 @@ fn handle_message(
             }
         }
         MessageKind::ServerRequest => {
-            handle_server_request(message, lang_prefix, response_tx, dynamic_capabilities);
+            handle_server_request(message, lang_prefix, response_tx, dynamic_capabilities).await;
         }
         MessageKind::Notification => {
             // Notifications are silently ignored (no logging needed)
@@ -604,7 +604,7 @@ fn handle_message(
 ///
 /// Server-initiated requests have both `"id"` and `"method"` fields.
 /// We must send a JSON-RPC response back for each request.
-fn handle_server_request(
+async fn handle_server_request(
     message: serde_json::Value,
     lang_prefix: &str,
     response_tx: &mpsc::Sender<OutboundMessage>,
@@ -771,8 +771,8 @@ mod tests {
         (tx, caps)
     }
 
-    #[test]
-    fn handle_message_routes_response() {
+    #[tokio::test]
+    async fn handle_message_routes_response() {
         let router = ResponseRouter::new();
         let _rx = router
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
@@ -785,7 +785,7 @@ mod tests {
             "result": null
         });
 
-        handle_message(response, &router, "", &response_tx, &dynamic_capabilities);
+        handle_message(response, &router, "", &response_tx, &dynamic_capabilities).await;
 
         // Receiver should have the response
         // We can't block on rx.await here in a sync test, but we can check
@@ -793,8 +793,8 @@ mod tests {
         assert_eq!(router.pending_count(), 0);
     }
 
-    #[test]
-    fn handle_message_ignores_notification() {
+    #[tokio::test]
+    async fn handle_message_ignores_notification() {
         let router = ResponseRouter::new();
         let _rx = router
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
@@ -813,7 +813,8 @@ mod tests {
             "",
             &response_tx,
             &dynamic_capabilities,
-        );
+        )
+        .await;
 
         // Pending count should still be 1 (notification was ignored)
         assert_eq!(router.pending_count(), 1);
@@ -1072,8 +1073,8 @@ mod tests {
         assert_eq!(classify_message(&msg), MessageKind::Invalid);
     }
 
-    #[test]
-    fn handle_message_does_not_route_server_request() {
+    #[tokio::test]
+    async fn handle_message_does_not_route_server_request() {
         let router = ResponseRouter::new();
         let _rx = router
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
@@ -1095,7 +1096,8 @@ mod tests {
             "",
             &response_tx,
             &dynamic_capabilities,
-        );
+        )
+        .await;
 
         // The server request should NOT be routed as a response.
         // Pending count must remain 1 (the registered request is still waiting).
@@ -1110,8 +1112,8 @@ mod tests {
     // Server Request Handling Tests
     // ============================================================
 
-    #[test]
-    fn handle_message_register_capability_updates_registry() {
+    #[tokio::test]
+    async fn handle_message_register_capability_updates_registry() {
         let router = ResponseRouter::new();
         let (response_tx, mut response_rx) = mpsc::channel(16);
         let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
@@ -1131,7 +1133,7 @@ mod tests {
             }
         });
 
-        handle_message(message, &router, "", &response_tx, &dynamic_capabilities);
+        handle_message(message, &router, "", &response_tx, &dynamic_capabilities).await;
 
         // Registry should have the registration
         assert!(dynamic_capabilities.has_registration("textDocument/diagnostic"));
@@ -1147,8 +1149,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn handle_message_unregister_capability_updates_registry() {
+    #[tokio::test]
+    async fn handle_message_unregister_capability_updates_registry() {
         let router = ResponseRouter::new();
         let (response_tx, mut response_rx) = mpsc::channel(16);
         let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
@@ -1176,7 +1178,7 @@ mod tests {
             }
         });
 
-        handle_message(message, &router, "", &response_tx, &dynamic_capabilities);
+        handle_message(message, &router, "", &response_tx, &dynamic_capabilities).await;
 
         // Registry should no longer have the registration
         assert!(!dynamic_capabilities.has_registration("textDocument/diagnostic"));
@@ -1192,8 +1194,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn handle_message_work_done_progress_create_sends_success() {
+    #[tokio::test]
+    async fn handle_message_work_done_progress_create_sends_success() {
         let router = ResponseRouter::new();
         let (response_tx, mut response_rx) = mpsc::channel(16);
         let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
@@ -1207,7 +1209,7 @@ mod tests {
             }
         });
 
-        handle_message(message, &router, "", &response_tx, &dynamic_capabilities);
+        handle_message(message, &router, "", &response_tx, &dynamic_capabilities).await;
 
         // A success response should have been sent
         let response = response_rx.try_recv().expect("should have response");
@@ -1220,8 +1222,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn handle_message_unknown_server_request_sends_method_not_found() {
+    #[tokio::test]
+    async fn handle_message_unknown_server_request_sends_method_not_found() {
         let router = ResponseRouter::new();
         let (response_tx, mut response_rx) = mpsc::channel(16);
         let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
@@ -1233,7 +1235,7 @@ mod tests {
             "params": {}
         });
 
-        handle_message(message, &router, "", &response_tx, &dynamic_capabilities);
+        handle_message(message, &router, "", &response_tx, &dynamic_capabilities).await;
 
         let response = response_rx.try_recv().expect("should have response");
         match response {
