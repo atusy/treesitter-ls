@@ -448,9 +448,9 @@ mod tests {
         let caps = ClientCapabilities {
             text_document: if text_document {
                 Some(TextDocumentClientCapabilities {
-                    definition: goto.clone(),
-                    type_definition: goto.clone(),
-                    implementation: goto.clone(),
+                    definition: goto,
+                    type_definition: goto,
+                    implementation: goto,
                     declaration: goto,
                     ..Default::default()
                 })
