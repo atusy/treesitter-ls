@@ -24,6 +24,7 @@ use tokio::sync::mpsc;
 use tower_lsp_server::ls_types::ServerCapabilities;
 
 use super::connection_action::BridgeError;
+use super::dynamic_capability_registry::DynamicCapabilityRegistry;
 use super::{ConnectionState, UpstreamId};
 use crate::lsp::bridge::actor::{
     OUTBOUND_QUEUE_CAPACITY, OutboundMessage, ReaderTaskHandle, ResponseRouter, WriterTaskHandle,
@@ -108,6 +109,11 @@ pub(crate) struct ConnectionHandle {
     /// Uses OnceLock for "set once, read many" semantics
     /// (same pattern as SettingsManager::client_capabilities).
     server_capabilities: OnceLock<ServerCapabilities>,
+    /// Dynamic capability registrations from server-initiated `client/registerCapability` requests.
+    ///
+    /// Updated by the reader task, queried by request handlers.
+    #[allow(dead_code)] // Will be queried via accessor in a subsequent subtask
+    dynamic_capabilities: Arc<DynamicCapabilityRegistry>,
 }
 
 impl ConnectionHandle {
@@ -122,6 +128,7 @@ impl ConnectionHandle {
         reader_handle: ReaderTaskHandle,
     ) -> Self {
         let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
         Self::with_state(
             writer,
             router,
@@ -129,6 +136,7 @@ impl ConnectionHandle {
             ConnectionState::Ready,
             tx,
             rx,
+            dynamic_capabilities,
         )
     }
 
@@ -155,6 +163,7 @@ impl ConnectionHandle {
         initial_state: ConnectionState,
         tx: mpsc::Sender<OutboundMessage>,
         rx: mpsc::Receiver<OutboundMessage>,
+        dynamic_capabilities: Arc<DynamicCapabilityRegistry>,
     ) -> Self {
         use crate::lsp::bridge::actor::spawn_writer_task;
 
@@ -173,6 +182,7 @@ impl ConnectionHandle {
             // which is pre-registered before spawning the reader task.
             next_request_id: AtomicI64::new(2),
             server_capabilities: OnceLock::new(),
+            dynamic_capabilities,
         }
     }
 
@@ -396,6 +406,12 @@ impl ConnectionHandle {
     #[cfg(feature = "experimental")]
     pub(crate) fn server_capabilities(&self) -> Option<&ServerCapabilities> {
         self.server_capabilities.get()
+    }
+
+    /// Access the dynamic capability registry for this connection.
+    #[allow(dead_code)] // Will be used by unified capability check in a subsequent subtask
+    pub(crate) fn dynamic_capabilities(&self) -> &DynamicCapabilityRegistry {
+        &self.dynamic_capabilities
     }
 
     /// Begin graceful shutdown of the connection.
@@ -662,6 +678,11 @@ mod tests {
     use crate::lsp::bridge::actor::{ResponseRouter, spawn_reader_task};
     use crate::lsp::bridge::connection::AsyncBridgeConnection;
 
+    /// Create a default DynamicCapabilityRegistry for tests that don't need it.
+    fn default_dynamic_caps() -> Arc<DynamicCapabilityRegistry> {
+        Arc::new(DynamicCapabilityRegistry::new())
+    }
+
     /// Test that ConnectionHandle provides unique request IDs via atomic counter.
     ///
     /// Each call to next_request_id() should return a unique, incrementing value.
@@ -790,6 +811,7 @@ mod tests {
             ConnectionState::Ready,
             tx,
             rx,
+            default_dynamic_caps(),
         ));
 
         // Verify initial state is Ready
@@ -862,6 +884,7 @@ mod tests {
             ConnectionState::Ready,
             tx,
             rx,
+            default_dynamic_caps(),
         ));
 
         // Register a request to start the liveness timer
@@ -918,6 +941,7 @@ mod tests {
             ConnectionState::Closing,
             tx,
             rx,
+            default_dynamic_caps(),
         ));
 
         // Register a request - this should NOT start the liveness timer
@@ -981,17 +1005,19 @@ mod tests {
             ConnectionState::Ready,
             tx,
             rx,
+            default_dynamic_caps(),
         ));
 
         // Register first request - this starts the liveness timer
         let (request_id1, response_rx1) = handle.register_request().expect("should register");
 
-        // Send a request that will be echoed back (ADR-0015: use send_request)
+        // Send a response-shaped message that will be echoed back.
+        // We deliberately omit "method" so the echo is classified as a Response
+        // (not a ServerRequest), matching the routing expected by this test.
         let request1 = json!({
             "jsonrpc": "2.0",
             "id": request_id1.as_i64(),
-            "method": "test",
-            "params": {}
+            "result": null
         });
         handle
             .send_request(request1, request_id1)
@@ -1020,12 +1046,11 @@ mod tests {
         // Register second request to keep pending > 0 (timer stays active after reset)
         let (request_id2, response_rx2) = handle.register_request().expect("should register");
 
-        // Send second request (ADR-0015: use send_request)
+        // Send response-shaped message for echo (see first request comment)
         let request2 = json!({
             "jsonrpc": "2.0",
             "id": request_id2.as_i64(),
-            "method": "test2",
-            "params": {}
+            "result": null
         });
         handle
             .send_request(request2, request_id2)
@@ -1080,6 +1105,7 @@ mod tests {
             ConnectionState::Ready,
             tx,
             rx,
+            default_dynamic_caps(),
         );
 
         // Register a request with upstream ID
@@ -1120,6 +1146,7 @@ mod tests {
             ConnectionState::Ready,
             tx,
             rx,
+            default_dynamic_caps(),
         );
 
         // Register without upstream ID
@@ -1159,6 +1186,7 @@ mod tests {
             ConnectionState::Ready,
             tx,
             rx,
+            default_dynamic_caps(),
         );
 
         // Should return immediately
@@ -1190,6 +1218,7 @@ mod tests {
             ConnectionState::Initializing,
             tx,
             rx,
+            default_dynamic_caps(),
         ));
 
         // Spawn a task that will transition to Ready after a delay
@@ -1232,6 +1261,7 @@ mod tests {
             ConnectionState::Initializing,
             tx,
             rx,
+            default_dynamic_caps(),
         ));
 
         // Spawn a task that will transition to Failed
@@ -1276,6 +1306,7 @@ mod tests {
             ConnectionState::Initializing,
             tx,
             rx,
+            default_dynamic_caps(),
         );
 
         // Wait with short timeout - should timeout
@@ -1309,6 +1340,7 @@ mod tests {
             ConnectionState::Initializing,
             tx,
             rx,
+            default_dynamic_caps(),
         ));
 
         // Spawn a task that will transition to Closing

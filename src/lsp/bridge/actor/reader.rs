@@ -22,8 +22,10 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::super::connection::BridgeReader;
+use super::OutboundMessage;
 use super::ResponseRouter;
 use super::response_router::RouteResult;
+use crate::lsp::bridge::pool::DynamicCapabilityRegistry;
 
 /// Type alias for the pinned liveness timer future.
 type LivenessTimer = std::pin::Pin<Box<tokio::time::Sleep>>;
@@ -296,6 +298,8 @@ pub(crate) fn spawn_reader_task(
 /// This is a convenience wrapper for tests that don't need structured logging
 /// with language identifiers. Production code should use `spawn_reader_task_for_language`.
 ///
+/// Creates dummy channel and registry for tests that don't need server request handling.
+///
 /// # Arguments
 /// * `reader` - The BridgeReader to read messages from
 /// * `router` - The ResponseRouter to route responses to waiters
@@ -309,7 +313,16 @@ pub(crate) fn spawn_reader_task_with_liveness(
     router: Arc<ResponseRouter>,
     liveness_timeout: Option<Duration>,
 ) -> ReaderTaskHandle {
-    spawn_reader_task_for_language(reader, router, liveness_timeout, None)
+    let (response_tx, _response_rx) = mpsc::channel(16);
+    let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+    spawn_reader_task_for_language(
+        reader,
+        router,
+        liveness_timeout,
+        None,
+        response_tx,
+        dynamic_capabilities,
+    )
 }
 
 /// Spawn a reader task with liveness timeout and language identifier for logging.
@@ -327,6 +340,8 @@ pub(crate) fn spawn_reader_task_for_language(
     router: Arc<ResponseRouter>,
     liveness_timeout: Option<Duration>,
     language: Option<String>,
+    response_tx: mpsc::Sender<OutboundMessage>,
+    dynamic_capabilities: Arc<DynamicCapabilityRegistry>,
 ) -> ReaderTaskHandle {
     let cancel_token = CancellationToken::new();
     let token_clone = cancel_token.clone();
@@ -349,6 +364,8 @@ pub(crate) fn spawn_reader_task_for_language(
         liveness_stop_rx,
         liveness_failed_tx,
         language,
+        response_tx,
+        dynamic_capabilities,
     ));
 
     ReaderTaskHandle {
@@ -375,6 +392,9 @@ async fn reader_loop(
     let (_stop_tx, stop_rx) = mpsc::channel(1);
     // Create a dummy sender that we'll drop (no liveness failure signaling in test helper)
     let (failed_tx, _failed_rx) = oneshot::channel();
+    // Create dummy channel and registry for tests that don't need server request handling
+    let (response_tx, _response_rx) = mpsc::channel(16);
+    let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
     reader_loop_with_liveness(
         reader,
         router,
@@ -384,6 +404,8 @@ async fn reader_loop(
         stop_rx,
         failed_tx,
         None, // No language context for test helper
+        response_tx,
+        dynamic_capabilities,
     )
     .await
 }
@@ -412,6 +434,8 @@ async fn reader_loop_with_liveness(
     mut liveness_stop_rx: mpsc::Receiver<()>,
     liveness_failed_tx: oneshot::Sender<()>,
     language: Option<String>,
+    response_tx: mpsc::Sender<OutboundMessage>,
+    dynamic_capabilities: Arc<DynamicCapabilityRegistry>,
 ) {
     // Language prefix for log messages (e.g., "[lua] " or "")
     let lang_prefix = language
@@ -472,7 +496,7 @@ async fn reader_loop_with_liveness(
                         // Reset liveness timer on any message activity (ADR-0014)
                         liveness.reset(&lang_prefix);
 
-                        handle_message(message, &router, &lang_prefix);
+                        handle_message(message, &router, &lang_prefix, &response_tx, &dynamic_capabilities);
 
                         // Check if pending count returned to 0 - stop timer
                         if liveness.is_active() && router.pending_count() == 0 {
@@ -523,7 +547,13 @@ fn classify_message(message: &serde_json::Value) -> MessageKind {
 }
 
 /// Handle a single message from the downstream server.
-fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_prefix: &str) {
+fn handle_message(
+    message: serde_json::Value,
+    router: &ResponseRouter,
+    lang_prefix: &str,
+    response_tx: &mpsc::Sender<OutboundMessage>,
+    dynamic_capabilities: &DynamicCapabilityRegistry,
+) {
     match classify_message(&message) {
         MessageKind::Response => {
             let id = message.get("id").cloned();
@@ -554,15 +584,7 @@ fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_pref
             }
         }
         MessageKind::ServerRequest => {
-            // Server-initiated request (e.g., client/registerCapability).
-            // Handling will be implemented in a future subtask.
-            debug!(
-                target: "kakehashi::bridge::reader",
-                "{}Server-initiated request: method={}, id={}",
-                lang_prefix,
-                message.get("method").and_then(|v| v.as_str()).unwrap_or("unknown"),
-                message.get("id").unwrap_or(&serde_json::Value::Null)
-            );
+            handle_server_request(message, lang_prefix, response_tx, dynamic_capabilities);
         }
         MessageKind::Notification => {
             // Notifications are silently ignored (no logging needed)
@@ -575,6 +597,112 @@ fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_pref
                 message
             );
         }
+    }
+}
+
+/// Handle a server-initiated request by dispatching on its method.
+///
+/// Server-initiated requests have both `"id"` and `"method"` fields.
+/// We must send a JSON-RPC response back for each request.
+fn handle_server_request(
+    message: serde_json::Value,
+    lang_prefix: &str,
+    response_tx: &mpsc::Sender<OutboundMessage>,
+    dynamic_capabilities: &DynamicCapabilityRegistry,
+) {
+    let id = message
+        .get("id")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let method = message.get("method").and_then(|v| v.as_str()).unwrap_or("");
+
+    let response = match method {
+        "client/registerCapability" => {
+            if let Some(params) = message.get("params") {
+                match serde_json::from_value::<tower_lsp_server::ls_types::RegistrationParams>(
+                    params.clone(),
+                ) {
+                    Ok(reg_params) => {
+                        for reg in &reg_params.registrations {
+                            debug!(
+                                target: "kakehashi::bridge::reader",
+                                "{}Registered dynamic capability: {} (id={})",
+                                lang_prefix, reg.method, reg.id
+                            );
+                        }
+                        dynamic_capabilities.register(reg_params.registrations);
+                    }
+                    Err(e) => {
+                        warn!(
+                            target: "kakehashi::bridge::reader",
+                            "{}Failed to parse registerCapability params: {}",
+                            lang_prefix, e
+                        );
+                    }
+                }
+            }
+            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
+        }
+        "client/unregisterCapability" => {
+            if let Some(params) = message.get("params") {
+                match serde_json::from_value::<tower_lsp_server::ls_types::UnregistrationParams>(
+                    params.clone(),
+                ) {
+                    Ok(unreg_params) => {
+                        for unreg in &unreg_params.unregisterations {
+                            debug!(
+                                target: "kakehashi::bridge::reader",
+                                "{}Unregistered dynamic capability: {} (id={})",
+                                lang_prefix, unreg.method, unreg.id
+                            );
+                        }
+                        dynamic_capabilities.unregister(unreg_params.unregisterations);
+                    }
+                    Err(e) => {
+                        warn!(
+                            target: "kakehashi::bridge::reader",
+                            "{}Failed to parse unregisterCapability params: {}",
+                            lang_prefix, e
+                        );
+                    }
+                }
+            }
+            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
+        }
+        "window/workDoneProgress/create" => {
+            // Common from Pyright et al. Returning MethodNotFound causes server-side log noise,
+            // so we acknowledge silently.
+            debug!(
+                target: "kakehashi::bridge::reader",
+                "{}Acknowledged window/workDoneProgress/create",
+                lang_prefix
+            );
+            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
+        }
+        _ => {
+            debug!(
+                target: "kakehashi::bridge::reader",
+                "{}Unknown server request method: {}, responding with MethodNotFound",
+                lang_prefix, method
+            );
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": -32601, "message": "Method not found"}
+            })
+        }
+    };
+
+    // Send response via the writer channel.
+    // We reuse OutboundMessage::Notification because the writer loop treats
+    // Notification and Request identically (serialize & write). A server-initiated
+    // response has no router entry to clean up on failure.
+    if let Err(e) = response_tx.try_send(OutboundMessage::Notification(response)) {
+        warn!(
+            target: "kakehashi::bridge::reader",
+            "{}Failed to send response for server request '{}': {}",
+            lang_prefix, method, e
+        );
     }
 }
 
@@ -633,12 +761,23 @@ mod tests {
         drop(writer);
     }
 
+    /// Create dummy response_tx and dynamic_capabilities for tests that don't need server request handling.
+    fn dummy_server_request_deps() -> (
+        mpsc::Sender<OutboundMessage>,
+        Arc<DynamicCapabilityRegistry>,
+    ) {
+        let (tx, _rx) = mpsc::channel(16);
+        let caps = Arc::new(DynamicCapabilityRegistry::new());
+        (tx, caps)
+    }
+
     #[test]
     fn handle_message_routes_response() {
         let router = ResponseRouter::new();
         let _rx = router
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
             .unwrap();
+        let (response_tx, dynamic_capabilities) = dummy_server_request_deps();
 
         let response = json!({
             "jsonrpc": "2.0",
@@ -646,7 +785,7 @@ mod tests {
             "result": null
         });
 
-        handle_message(response, &router, "");
+        handle_message(response, &router, "", &response_tx, &dynamic_capabilities);
 
         // Receiver should have the response
         // We can't block on rx.await here in a sync test, but we can check
@@ -660,6 +799,7 @@ mod tests {
         let _rx = router
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
             .unwrap();
+        let (response_tx, dynamic_capabilities) = dummy_server_request_deps();
 
         let notification = json!({
             "jsonrpc": "2.0",
@@ -667,7 +807,13 @@ mod tests {
             "params": {}
         });
 
-        handle_message(notification, &router, "");
+        handle_message(
+            notification,
+            &router,
+            "",
+            &response_tx,
+            &dynamic_capabilities,
+        );
 
         // Pending count should still be 1 (notification was ignored)
         assert_eq!(router.pending_count(), 1);
@@ -933,6 +1079,7 @@ mod tests {
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
             .unwrap();
         assert_eq!(router.pending_count(), 1);
+        let (response_tx, dynamic_capabilities) = dummy_server_request_deps();
 
         // Server-initiated request: has both "id" and "method"
         let server_request = json!({
@@ -942,7 +1089,13 @@ mod tests {
             "params": {}
         });
 
-        handle_message(server_request, &router, "");
+        handle_message(
+            server_request,
+            &router,
+            "",
+            &response_tx,
+            &dynamic_capabilities,
+        );
 
         // The server request should NOT be routed as a response.
         // Pending count must remain 1 (the registered request is still waiting).
@@ -961,9 +1114,7 @@ mod tests {
     fn handle_message_register_capability_updates_registry() {
         let router = ResponseRouter::new();
         let (response_tx, mut response_rx) = mpsc::channel(16);
-        let dynamic_capabilities = Arc::new(
-            crate::lsp::bridge::pool::DynamicCapabilityRegistry::new(),
-        );
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
 
         let message = json!({
             "jsonrpc": "2.0",
@@ -1000,9 +1151,7 @@ mod tests {
     fn handle_message_unregister_capability_updates_registry() {
         let router = ResponseRouter::new();
         let (response_tx, mut response_rx) = mpsc::channel(16);
-        let dynamic_capabilities = Arc::new(
-            crate::lsp::bridge::pool::DynamicCapabilityRegistry::new(),
-        );
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
 
         // First register a capability
         dynamic_capabilities.register(vec![tower_lsp_server::ls_types::Registration {
@@ -1047,9 +1196,7 @@ mod tests {
     fn handle_message_work_done_progress_create_sends_success() {
         let router = ResponseRouter::new();
         let (response_tx, mut response_rx) = mpsc::channel(16);
-        let dynamic_capabilities = Arc::new(
-            crate::lsp::bridge::pool::DynamicCapabilityRegistry::new(),
-        );
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
 
         let message = json!({
             "jsonrpc": "2.0",
@@ -1077,9 +1224,7 @@ mod tests {
     fn handle_message_unknown_server_request_sends_method_not_found() {
         let router = ResponseRouter::new();
         let (response_tx, mut response_rx) = mpsc::channel(16);
-        let dynamic_capabilities = Arc::new(
-            crate::lsp::bridge::pool::DynamicCapabilityRegistry::new(),
-        );
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
 
         let message = json!({
             "jsonrpc": "2.0",

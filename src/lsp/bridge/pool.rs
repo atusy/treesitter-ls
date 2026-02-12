@@ -41,6 +41,7 @@ pub(crate) use connection_state::ConnectionState;
 use document_tracker::DocumentOpenDecision;
 use document_tracker::DocumentTracker;
 pub(crate) use document_tracker::OpenedVirtualDoc;
+pub(crate) use dynamic_capability_registry::DynamicCapabilityRegistry;
 pub(crate) use message_sender::ConnectionHandleSender;
 pub(crate) use shutdown_timeout::GlobalShutdownTimeout;
 
@@ -702,6 +703,12 @@ impl LanguageServerPool {
             .register(init_request_id)
             .expect("fresh router cannot have duplicate IDs");
 
+        // Create outbound message channel (extracted here so tx can be shared with reader task)
+        let (tx, rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
+
+        // Create dynamic capability registry (shared between reader and connection handle)
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+
         // Now spawn reader task with liveness timeout - it can route the initialize response immediately
         // Liveness timeout is configured via LivenessTimeout::default() (60s per ADR-0018 Tier 2)
         // Server name is passed for structured logging (observability improvement)
@@ -711,10 +718,9 @@ impl LanguageServerPool {
             Arc::clone(&router),
             Some(liveness_timeout.as_duration()),
             Some(server_name.to_string()),
+            tx.clone(),
+            Arc::clone(&dynamic_capabilities),
         );
-
-        // Create outbound message channel (extracted here so tx can be shared with reader task later)
-        let (tx, rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
 
         // Create handle in Initializing state (fast-fail for concurrent requests)
         let handle = Arc::new(ConnectionHandle::with_state(
@@ -724,6 +730,7 @@ impl LanguageServerPool {
             ConnectionState::Initializing,
             tx,
             rx,
+            dynamic_capabilities,
         ));
 
         // Insert into pool immediately so concurrent requests see Initializing state
@@ -2234,6 +2241,7 @@ mod tests {
             ConnectionState::Ready,
             tx,
             rx,
+            Arc::new(DynamicCapabilityRegistry::new()),
         ));
 
         // Add connection to pool
