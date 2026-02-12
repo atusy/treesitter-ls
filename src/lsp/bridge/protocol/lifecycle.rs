@@ -72,7 +72,14 @@ fn build_bridge_client_capabilities() -> serde_json::Value {
         ..Default::default()
     };
 
-    serde_json::to_value(capabilities).expect("ClientCapabilities serialization is infallible")
+    serde_json::to_value(capabilities).unwrap_or_else(|e| {
+        log::warn!(
+            target: "kakehashi::bridge",
+            "Failed to serialize ClientCapabilities, falling back to empty: {}",
+            e
+        );
+        serde_json::json!({})
+    })
 }
 
 /// Build an LSP initialize request.
