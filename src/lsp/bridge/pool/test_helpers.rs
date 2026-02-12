@@ -83,15 +83,20 @@ pub(super) fn test_host_uri(name: &str) -> Url {
 
 /// Create a ConnectionHandle with a specific initial state for testing.
 ///
-/// Spawns a real `cat` process to get a working connection, then sets
-/// the desired state. This allows testing state-dependent behavior
-/// without going through the full initialization flow.
+/// Spawns a `cat > /dev/null` sink process to get a working connection,
+/// then sets the desired state. Uses a sink (not echo) because echo servers
+/// return raw requests which include both `"id"` and `"method"` fields —
+/// these are correctly classified as ServerRequest rather than Response,
+/// causing shutdown handshakes to hang.
 pub async fn create_handle_with_state(state: ConnectionState) -> Arc<ConnectionHandle> {
-    // Create a mock server process to get a real connection
-    let mut conn =
-        AsyncBridgeConnection::spawn(vec!["sh".to_string(), "-c".to_string(), "cat".to_string()])
-            .await
-            .expect("should spawn cat process");
+    // Create a mock server process (sink — discards all input, no output)
+    let mut conn = AsyncBridgeConnection::spawn(vec![
+        "sh".to_string(),
+        "-c".to_string(),
+        "cat > /dev/null".to_string(),
+    ])
+    .await
+    .expect("should spawn sink process");
 
     // Split connection and spawn reader task (new architecture)
     let (writer, reader) = conn.split();
