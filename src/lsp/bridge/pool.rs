@@ -22,6 +22,7 @@ mod connection_action;
 mod connection_handle;
 mod connection_state;
 mod document_tracker;
+mod dynamic_capability_registry;
 mod execute;
 mod handshake;
 mod liveness_timeout;
@@ -40,6 +41,7 @@ pub(crate) use connection_state::ConnectionState;
 use document_tracker::DocumentOpenDecision;
 use document_tracker::DocumentTracker;
 pub(crate) use document_tracker::OpenedVirtualDoc;
+pub(crate) use dynamic_capability_registry::DynamicCapabilityRegistry;
 pub(crate) use message_sender::ConnectionHandleSender;
 pub(crate) use shutdown_timeout::GlobalShutdownTimeout;
 
