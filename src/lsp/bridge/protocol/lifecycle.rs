@@ -15,7 +15,7 @@ fn build_bridge_client_capabilities() -> serde_json::Value {
             "colorProvider": {},
             "completion": {
                 "completionItem": {
-                    "snippetSupport": false
+                    "snippetSupport": true
                 }
             },
             "declaration": {

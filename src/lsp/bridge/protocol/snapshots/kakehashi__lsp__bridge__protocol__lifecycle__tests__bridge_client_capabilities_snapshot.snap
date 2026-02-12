@@ -7,7 +7,7 @@ expression: capabilities
     "colorProvider": {},
     "completion": {
       "completionItem": {
-        "snippetSupport": false
+        "snippetSupport": true
       }
     },
     "declaration": {
