@@ -22,32 +22,22 @@ use crate::config::settings::BridgeServerConfig;
 use tower_lsp_server::ls_types::Diagnostic;
 use url::Url;
 
-use super::super::pool::{
-    ConnectionHandleSender, INIT_TIMEOUT_SECS, LanguageServerPool, UpstreamId,
-};
+use super::super::pool::{INIT_TIMEOUT_SECS, LanguageServerPool, UpstreamId};
 use super::super::protocol::{RequestId, VirtualDocumentUri};
 
 impl LanguageServerPool {
     /// Send a diagnostic request and wait for the response.
     ///
-    /// This is a convenience method that handles the full request/response cycle:
-    /// 1. Get or create a connection, waiting for initialization if needed
-    /// 2. Send a textDocument/didOpen notification if needed
-    /// 3. Send the diagnostic request
-    /// 4. Wait for and return the response
-    ///
-    /// Unlike position-based requests, diagnostic operates on the entire document,
-    /// so no position translation is needed for the request.
-    ///
-    /// The `upstream_request_id` enables $/cancelRequest forwarding.
-    /// See [`LanguageServerPool::register_upstream_request()`] for the full flow.
-    ///
     /// # Wait-for-Ready Behavior
     ///
     /// Unlike other request types that fail fast when a server is initializing,
     /// diagnostic requests wait for the server to become Ready. This provides
-    /// better UX - users see diagnostics appear once the server is ready rather
+    /// better UX — users see diagnostics appear once the server is ready rather
     /// than seeing empty results.
+    ///
+    /// After the wait-for-ready and capability check, delegates to
+    /// [`execute_bridge_request`](Self::execute_bridge_request) for the standard
+    /// lifecycle.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_diagnostic_request(
         &self,
@@ -61,9 +51,7 @@ impl LanguageServerPool {
         upstream_request_id: UpstreamId,
         previous_result_id: Option<&str>,
     ) -> io::Result<Vec<Diagnostic>> {
-        // Get or create connection, waiting for Ready state if initializing.
-        // Unlike other requests that fail fast, diagnostics wait for initialization
-        // to provide better UX (diagnostics appear once server is ready).
+        // Pre-work: wait for server to become Ready (unlike other handlers that fail fast).
         let handle = self
             .get_or_create_connection_wait_ready(
                 server_name,
@@ -86,79 +74,36 @@ impl LanguageServerPool {
             return Ok(Vec::new());
         }
 
-        // Convert host_uri to lsp_types::Uri for bridge protocol functions
-        let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-
-        // Build virtual document URI
-        let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
-
-        // Register in the upstream request registry FIRST for cancel lookup.
-        // This order matters: if a cancel arrives between pool and router registration,
-        // the cancel will fail at the router lookup (which is acceptable for best-effort
-        // cancel semantics) rather than finding the server but no downstream ID.
-        self.register_upstream_request(upstream_request_id.clone(), server_name);
-
-        // Register request with upstream ID mapping for cancel forwarding
-        let (request_id, response_rx) =
-            match handle.register_request_with_upstream(Some(upstream_request_id.clone())) {
-                Ok(result) => result,
-                Err(e) => {
-                    // Clean up the pool registration on failure
-                    self.unregister_upstream_request(&upstream_request_id, server_name);
-                    return Err(e);
-                }
-            };
-
-        // Build diagnostic request
-        // Note: diagnostic doesn't need position - it operates on the whole document
-        let request = build_diagnostic_request(
-            &host_uri_lsp,
+        // Server is Ready and supports diagnostics — proceed with standard lifecycle.
+        // get_or_create_connection inside execute_bridge_request will find the
+        // already-Ready server immediately (just a HashMap lookup).
+        self.execute_bridge_request(
+            server_name,
+            server_config,
+            host_uri,
             injection_language,
             region_id,
-            request_id,
-            previous_result_id,
-        );
-
-        // Use a closure for cleanup on any failure path
-        let cleanup = || {
-            handle.router().remove(request_id);
-            self.unregister_upstream_request(&upstream_request_id, server_name);
-        };
-
-        // Send didOpen notification only if document hasn't been opened yet
-        if let Err(e) = self
-            .ensure_document_opened(
-                &mut ConnectionHandleSender(&handle),
-                host_uri,
-                &virtual_uri,
-                virtual_content,
-                server_name,
-            )
-            .await
-        {
-            cleanup();
-            return Err(e);
-        }
-
-        // Queue the diagnostic request via single-writer loop (ADR-0015)
-        if let Err(e) = handle.send_request(request, request_id) {
-            cleanup();
-            return Err(e.into());
-        }
-
-        // Wait for response via oneshot channel (no Mutex held) with timeout
-        let response = handle.wait_for_response(request_id, response_rx).await;
-
-        // Unregister from the upstream request registry regardless of result
-        self.unregister_upstream_request(&upstream_request_id, server_name);
-
-        // Parse and transform response to typed diagnostics in host coordinates
-        Ok(transform_diagnostic_response_to_host(
-            response?,
             region_start_line,
-            host_uri.as_str(),
-        ))
+            virtual_content,
+            upstream_request_id,
+            |host_uri_lsp, _virtual_uri, request_id| {
+                build_diagnostic_request(
+                    host_uri_lsp,
+                    injection_language,
+                    region_id,
+                    request_id,
+                    previous_result_id,
+                )
+            },
+            |response, ctx| {
+                transform_diagnostic_response_to_host(
+                    response,
+                    ctx.region_start_line,
+                    host_uri.as_str(),
+                )
+            },
+        )
+        .await
     }
 }
 
