@@ -697,7 +697,24 @@ async fn handle_server_request(
     // We reuse OutboundMessage::Notification because the writer loop treats
     // Notification and Request identically (serialize & write). A server-initiated
     // response has no router entry to clean up on failure.
-    if let Err(e) = response_tx.try_send(OutboundMessage::Notification(response)) {
+    //
+    // We use send_timeout(5s) instead of try_send() to guarantee delivery under
+    // transient backpressure. try_send() silently drops the response if the queue
+    // (capacity 256) is momentarily full — a correctness bug for server-initiated
+    // requests like client/registerCapability that require acknowledgment.
+    //
+    // We avoid bare send().await because it could theoretically deadlock if the
+    // queue is full, the writer is blocked on stdin, and the downstream server is
+    // blocked on stdout — creating a circular wait. send_timeout(5s) provides an
+    // explicit safety net: the response is dropped only after 5 seconds of
+    // sustained backpressure, which is far better than instant loss.
+    if let Err(e) = response_tx
+        .send_timeout(
+            OutboundMessage::Notification(response),
+            Duration::from_secs(5),
+        )
+        .await
+    {
         warn!(
             target: "kakehashi::bridge::reader",
             "{}Failed to send response for server request '{}': {}",
