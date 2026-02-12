@@ -32,7 +32,6 @@ use crate::lsp::bridge::pool::DynamicCapabilityRegistry;
 /// Reader tasks use this to signal events that require upstream Client interaction,
 /// keeping the bridge module decoupled from tower-lsp's Client type.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // Variants used in upcoming subtasks
 pub(crate) enum UpstreamNotification {
     /// Request upstream to re-pull diagnostics.
     /// Sent when downstream server issues `workspace/diagnostic/refresh`.
@@ -636,7 +635,7 @@ async fn handle_server_request(
     lang_prefix: &str,
     response_tx: &mpsc::Sender<OutboundMessage>,
     dynamic_capabilities: &DynamicCapabilityRegistry,
-    _upstream_tx: &mpsc::UnboundedSender<UpstreamNotification>,
+    upstream_tx: &mpsc::UnboundedSender<UpstreamNotification>,
 ) {
     let id = message
         .get("id")
@@ -705,6 +704,17 @@ async fn handle_server_request(
                 "{}Acknowledged window/workDoneProgress/create",
                 lang_prefix
             );
+            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
+        }
+        "workspace/diagnostic/refresh" => {
+            // Downstream server is requesting that the client re-pull diagnostics.
+            // Forward this upstream so the editor triggers a fresh diagnostic pull.
+            debug!(
+                target: "kakehashi::bridge::reader",
+                "{}Forwarding workspace/diagnostic/refresh upstream",
+                lang_prefix
+            );
+            let _ = upstream_tx.send(UpstreamNotification::DiagnosticRefresh);
             serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
         }
         _ => {
