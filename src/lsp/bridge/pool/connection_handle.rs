@@ -111,8 +111,7 @@ pub(crate) struct ConnectionHandle {
     server_capabilities: OnceLock<ServerCapabilities>,
     /// Dynamic capability registrations from server-initiated `client/registerCapability` requests.
     ///
-    /// Updated by the reader task, queried by request handlers.
-    #[allow(dead_code)] // Will be queried via accessor in a subsequent subtask
+    /// Updated by the reader task, queried by request handlers via `has_capability()`.
     dynamic_capabilities: Arc<DynamicCapabilityRegistry>,
 }
 
@@ -403,15 +402,33 @@ impl ConnectionHandle {
     /// Returns `None` if capabilities haven't been set yet (server still initializing).
     /// Callers use typed field access (e.g., `c.diagnostic_provider.as_ref()`) for
     /// compile-time-safe capability checks.
-    #[cfg(feature = "experimental")]
     pub(crate) fn server_capabilities(&self) -> Option<&ServerCapabilities> {
         self.server_capabilities.get()
     }
 
     /// Access the dynamic capability registry for this connection.
-    #[allow(dead_code)] // Will be used by unified capability check in a subsequent subtask
     pub(crate) fn dynamic_capabilities(&self) -> &DynamicCapabilityRegistry {
         &self.dynamic_capabilities
+    }
+
+    /// Check if the downstream server supports a given LSP method,
+    /// either via static capabilities (initialize response) or dynamic registration.
+    ///
+    /// Dynamic registrations take precedence since they may arrive after initialize.
+    pub(crate) fn has_capability(&self, method: &str) -> bool {
+        // Check dynamic registrations first (may arrive after initialize)
+        if self.dynamic_capabilities().has_registration(method) {
+            return true;
+        }
+        // Fall back to static capabilities from initialize response
+        let Some(caps) = self.server_capabilities() else {
+            return false;
+        };
+        match method {
+            "textDocument/diagnostic" => caps.diagnostic_provider.is_some(),
+            // Add more mappings as handlers adopt this API
+            _ => false,
+        }
     }
 
     /// Begin graceful shutdown of the connection.
@@ -1386,7 +1403,6 @@ mod tests {
     }
 
     /// Test that server_capabilities returns None before set_server_capabilities is called.
-    #[cfg(feature = "experimental")]
     #[tokio::test]
     async fn server_capabilities_returns_none_before_init() {
         let handle = spawn_sink_handle().await;
@@ -1396,7 +1412,6 @@ mod tests {
     }
 
     /// Test that server_capabilities returns typed struct with set fields.
-    #[cfg(feature = "experimental")]
     #[tokio::test]
     async fn server_capabilities_returns_typed_struct() {
         use tower_lsp_server::ls_types::{
@@ -1425,7 +1440,6 @@ mod tests {
     }
 
     /// Test that default capabilities have all fields as None.
-    #[cfg(feature = "experimental")]
     #[tokio::test]
     async fn server_capabilities_default_has_none_fields() {
         let handle = spawn_sink_handle().await;

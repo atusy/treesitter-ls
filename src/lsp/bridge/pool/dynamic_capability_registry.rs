@@ -59,7 +59,6 @@ impl DynamicCapabilityRegistry {
         }
     }
 
-    #[allow(dead_code)] // Will be used by unified capability check in a subsequent subtask
     pub(crate) fn has_registration(&self, method: &str) -> bool {
         let guard = match self.registrations.read() {
             Ok(guard) => guard,
