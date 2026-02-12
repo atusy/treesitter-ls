@@ -254,7 +254,6 @@ pub struct LanguageServerPool {
     /// Receiver for upstream notifications, taken once by the forwarding task.
     ///
     /// Wrapped in `Mutex<Option<...>>` because `take_upstream_rx()` moves it out.
-    #[allow(dead_code)] // Read via take_upstream_rx() in upcoming subtask
     upstream_rx:
         std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<UpstreamNotification>>>,
 }
@@ -312,7 +311,6 @@ impl LanguageServerPool {
     ///
     /// Returns `Some(receiver)` on first call, `None` on subsequent calls.
     /// The receiver should be consumed by a single forwarding task in `initialized()`.
-    #[allow(dead_code)] // Used via BridgeCoordinator in upcoming subtask
     pub(crate) fn take_upstream_rx(
         &self,
     ) -> Option<tokio::sync::mpsc::UnboundedReceiver<UpstreamNotification>> {

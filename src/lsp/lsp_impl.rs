@@ -1028,6 +1028,31 @@ impl LanguageServer for Kakehashi {
 
     async fn initialized(&self, _: InitializedParams) {
         self.notifier().log_info("server is ready").await;
+
+        // Forward downstream server notifications to upstream editor.
+        // When a downstream LS sends workspace/diagnostic/refresh, the reader
+        // task puts DiagnosticRefresh on this channel. We forward it to the
+        // editor via Client::workspace_diagnostic_refresh() so the editor
+        // triggers a fresh textDocument/diagnostic pull.
+        if let Some(mut upstream_rx) = self.bridge.take_upstream_rx() {
+            let client = self.client.clone();
+            tokio::spawn(async move {
+                use super::bridge::UpstreamNotification;
+                while let Some(notification) = upstream_rx.recv().await {
+                    match notification {
+                        UpstreamNotification::DiagnosticRefresh => {
+                            if let Err(e) = client.workspace_diagnostic_refresh().await {
+                                log::debug!(
+                                    target: "kakehashi::bridge",
+                                    "workspace/diagnostic/refresh forwarding failed: {}",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+            });
+        }
     }
 
     async fn shutdown(&self) -> Result<()> {

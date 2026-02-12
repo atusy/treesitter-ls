@@ -328,7 +328,6 @@ impl BridgeCoordinator {
     ///
     /// Returns `Some(receiver)` on first call, `None` on subsequent calls.
     /// Delegates to the underlying pool.
-    #[allow(dead_code)] // Used in lsp_impl::initialized() in upcoming subtask
     pub(crate) fn take_upstream_rx(
         &self,
     ) -> Option<tokio::sync::mpsc::UnboundedReceiver<super::actor::UpstreamNotification>> {
