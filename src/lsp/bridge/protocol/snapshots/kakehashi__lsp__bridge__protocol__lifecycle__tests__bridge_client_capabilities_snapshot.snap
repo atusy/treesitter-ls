@@ -8,38 +8,57 @@ expression: capabilities
       "completionItem": {
         "insertReplaceSupport": true,
         "snippetSupport": true
-      }
+      },
+      "dynamicRegistration": true
     },
     "declaration": {
+      "dynamicRegistration": true,
       "linkSupport": true
     },
     "definition": {
+      "dynamicRegistration": true,
       "linkSupport": true
     },
     "diagnostic": {
+      "dynamicRegistration": true,
       "relatedDocumentSupport": true
     },
-    "documentHighlight": {},
+    "documentHighlight": {
+      "dynamicRegistration": true
+    },
     "documentLink": {
+      "dynamicRegistration": true,
       "tooltipSupport": true
     },
     "documentSymbol": {
+      "dynamicRegistration": true,
       "hierarchicalDocumentSymbolSupport": true
     },
     "hover": {
       "contentFormat": [
         "markdown",
         "plaintext"
-      ]
+      ],
+      "dynamicRegistration": true
     },
     "implementation": {
+      "dynamicRegistration": true,
       "linkSupport": true
     },
-    "inlayHint": {},
-    "moniker": {},
-    "references": {},
-    "signatureHelp": {},
+    "inlayHint": {
+      "dynamicRegistration": true
+    },
+    "moniker": {
+      "dynamicRegistration": true
+    },
+    "references": {
+      "dynamicRegistration": true
+    },
+    "signatureHelp": {
+      "dynamicRegistration": true
+    },
     "typeDefinition": {
+      "dynamicRegistration": true,
       "linkSupport": true
     }
   }
