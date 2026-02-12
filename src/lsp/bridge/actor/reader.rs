@@ -503,7 +503,6 @@ async fn reader_loop_with_liveness(
 /// - ServerRequest: has both `id` and `method` (server-initiated request)
 /// - Notification: has `method`, no `id` (server-initiated notification)
 /// - Invalid: has neither `id` nor `method`
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, PartialEq)]
 enum MessageKind {
     Response,
@@ -512,7 +511,6 @@ enum MessageKind {
     Invalid,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 fn classify_message(message: &serde_json::Value) -> MessageKind {
     let has_id = message.get("id").is_some();
     let has_method = message.get("method").is_some();
@@ -526,36 +524,58 @@ fn classify_message(message: &serde_json::Value) -> MessageKind {
 
 /// Handle a single message from the downstream server.
 fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_prefix: &str) {
-    // Check if it's a response (has "id" field)
-    if let Some(id) = message.get("id").cloned() {
-        // It's a response - route to waiter
-        match router.route(message) {
-            RouteResult::Delivered => {
-                // Response delivered successfully - no logging needed for normal case
-            }
-            RouteResult::ReceiverDropped => {
-                // ID was found but receiver was dropped (requester cancelled).
-                // This can legitimately happen when users cancel requests rapidly.
-                // Using debug! to avoid log spam; upgrade to warn! if investigation is needed.
-                debug!(
-                    target: "kakehashi::bridge::reader",
-                    "{}Response for id={} arrived but receiver was dropped (requester cancelled)",
-                    lang_prefix,
-                    id
-                );
-            }
-            RouteResult::NotFound => {
-                // Unknown request ID - could be a late response or protocol mismatch
-                debug!(
-                    target: "kakehashi::bridge::reader",
-                    "{}Response for unknown request id={}, dropping",
-                    lang_prefix,
-                    id
-                );
+    match classify_message(&message) {
+        MessageKind::Response => {
+            let id = message.get("id").cloned();
+            match router.route(message) {
+                RouteResult::Delivered => {
+                    // Response delivered successfully - no logging needed for normal case
+                }
+                RouteResult::ReceiverDropped => {
+                    // ID was found but receiver was dropped (requester cancelled).
+                    // This can legitimately happen when users cancel requests rapidly.
+                    // Using debug! to avoid log spam; upgrade to warn! if investigation is needed.
+                    debug!(
+                        target: "kakehashi::bridge::reader",
+                        "{}Response for id={} arrived but receiver was dropped (requester cancelled)",
+                        lang_prefix,
+                        id.unwrap_or(serde_json::Value::Null)
+                    );
+                }
+                RouteResult::NotFound => {
+                    // Unknown request ID - could be a late response or protocol mismatch
+                    debug!(
+                        target: "kakehashi::bridge::reader",
+                        "{}Response for unknown request id={}, dropping",
+                        lang_prefix,
+                        id.unwrap_or(serde_json::Value::Null)
+                    );
+                }
             }
         }
+        MessageKind::ServerRequest => {
+            // Server-initiated request (e.g., client/registerCapability).
+            // Handling will be implemented in a future subtask.
+            debug!(
+                target: "kakehashi::bridge::reader",
+                "{}Server-initiated request: method={}, id={}",
+                lang_prefix,
+                message.get("method").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                message.get("id").unwrap_or(&serde_json::Value::Null)
+            );
+        }
+        MessageKind::Notification => {
+            // Notifications are silently ignored (no logging needed)
+        }
+        MessageKind::Invalid => {
+            warn!(
+                target: "kakehashi::bridge::reader",
+                "{}Invalid message from downstream (no id or method): {}",
+                lang_prefix,
+                message
+            );
+        }
     }
-    // Notifications are silently ignored (no logging needed)
 }
 
 #[cfg(test)]
