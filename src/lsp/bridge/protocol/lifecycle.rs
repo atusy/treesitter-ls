@@ -9,42 +9,58 @@ use super::request_id::RequestId;
 ///
 /// These capabilities inform downstream servers which LSP features the bridge
 /// can handle, enabling richer responses (e.g., `LocationLink` instead of `Location`).
+///
+/// Uses typed `ClientCapabilities` from `ls_types` for compile-time field validation.
 fn build_bridge_client_capabilities() -> serde_json::Value {
-    serde_json::json!({
-        "textDocument": {
-            "colorProvider": {},
-            "completion": {
-                "completionItem": {
-                    "snippetSupport": true
-                }
-            },
-            "declaration": {
-                "linkSupport": true
-            },
-            "definition": {
-                "linkSupport": true
-            },
-            "diagnostic": {},
-            "documentHighlight": {},
-            "documentLink": {},
-            "documentSymbol": {
-                "hierarchicalDocumentSymbolSupport": true
-            },
-            "hover": {
-                "contentFormat": ["markdown", "plaintext"]
-            },
-            "implementation": {
-                "linkSupport": true
-            },
-            "inlayHint": {},
-            "moniker": {},
-            "references": {},
-            "signatureHelp": {},
-            "typeDefinition": {
-                "linkSupport": true
-            }
-        }
-    })
+    use tower_lsp_server::ls_types::{
+        ClientCapabilities, CompletionClientCapabilities, CompletionItemCapability,
+        DocumentLinkClientCapabilities, DocumentSymbolClientCapabilities, GotoCapability,
+        HoverClientCapabilities, MarkupKind, TextDocumentClientCapabilities,
+    };
+
+    let goto_link = Some(GotoCapability {
+        link_support: Some(true),
+        ..Default::default()
+    });
+
+    let capabilities = ClientCapabilities {
+        text_document: Some(TextDocumentClientCapabilities {
+            hover: Some(HoverClientCapabilities {
+                content_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
+                ..Default::default()
+            }),
+            completion: Some(CompletionClientCapabilities {
+                completion_item: Some(CompletionItemCapability {
+                    snippet_support: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            definition: goto_link,
+            type_definition: goto_link,
+            implementation: goto_link,
+            declaration: goto_link,
+            references: Some(Default::default()),
+            signature_help: Some(Default::default()),
+            document_highlight: Some(Default::default()),
+            document_symbol: Some(DocumentSymbolClientCapabilities {
+                hierarchical_document_symbol_support: Some(true),
+                ..Default::default()
+            }),
+            document_link: Some(DocumentLinkClientCapabilities {
+                dynamic_registration: None,
+                tooltip_support: None,
+            }),
+            color_provider: Some(Default::default()),
+            inlay_hint: Some(Default::default()),
+            diagnostic: Some(Default::default()),
+            moniker: Some(Default::default()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    serde_json::to_value(capabilities).expect("ClientCapabilities serialization is infallible")
 }
 
 /// Build an LSP initialize request.
