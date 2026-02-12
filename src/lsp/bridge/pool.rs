@@ -64,7 +64,7 @@ use super::protocol::{VirtualDocumentUri, build_didopen_notification};
 /// within this duration, the connection attempt fails with a timeout error.
 pub(crate) const INIT_TIMEOUT_SECS: u64 = 30;
 
-use super::actor::{ResponseRouter, spawn_reader_task_for_language};
+use super::actor::{OUTBOUND_QUEUE_CAPACITY, ResponseRouter, spawn_reader_task_for_language};
 use super::connection::AsyncBridgeConnection;
 
 /// Upstream request ID type supporting both numeric and string IDs per LSP spec.
@@ -712,12 +712,17 @@ impl LanguageServerPool {
             Some(server_name.to_string()),
         );
 
+        // Create outbound message channel (extracted here so tx can be shared with reader task later)
+        let (tx, rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
+
         // Create handle in Initializing state (fast-fail for concurrent requests)
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Initializing,
+            tx,
+            rx,
         ));
 
         // Insert into pool immediately so concurrent requests see Initializing state
@@ -2220,11 +2225,14 @@ mod tests {
         let router = Arc::new(ResponseRouter::new());
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
+        let (tx, rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Ready,
+            tx,
+            rx,
         ));
 
         // Add connection to pool

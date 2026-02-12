@@ -121,7 +121,15 @@ impl ConnectionHandle {
         router: Arc<ResponseRouter>,
         reader_handle: ReaderTaskHandle,
     ) -> Self {
-        Self::with_state(writer, router, reader_handle, ConnectionState::Ready)
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
+        Self::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+            tx,
+            rx,
+        )
     }
 
     /// Create a new ConnectionHandle with a specific initial state.
@@ -145,11 +153,10 @@ impl ConnectionHandle {
         router: Arc<ResponseRouter>,
         reader_handle: ReaderTaskHandle,
         initial_state: ConnectionState,
+        tx: mpsc::Sender<OutboundMessage>,
+        rx: mpsc::Receiver<OutboundMessage>,
     ) -> Self {
         use crate::lsp::bridge::actor::spawn_writer_task;
-
-        // Create the outbound message channel
-        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
 
         // Spawn the writer task - it owns the writer and writes from the channel
         let writer_handle = spawn_writer_task(writer, rx, Arc::clone(&router));
@@ -775,11 +782,14 @@ mod tests {
         );
 
         // Create ConnectionHandle in Ready state
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Ready,
+            tx,
+            rx,
         ));
 
         // Verify initial state is Ready
@@ -844,11 +854,14 @@ mod tests {
         );
 
         // Create ConnectionHandle in Ready state
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Ready,
+            tx,
+            rx,
         ));
 
         // Register a request to start the liveness timer
@@ -897,11 +910,14 @@ mod tests {
             spawn_reader_task_with_liveness(reader, Arc::clone(&router), Some(timeout));
 
         // Create ConnectionHandle in Closing state
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Closing,
+            tx,
+            rx,
         ));
 
         // Register a request - this should NOT start the liveness timer
@@ -957,11 +973,14 @@ mod tests {
         );
 
         // Create ConnectionHandle in Ready state
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Ready,
+            tx,
+            rx,
         ));
 
         // Register first request - this starts the liveness timer
@@ -1053,8 +1072,15 @@ mod tests {
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
         // Create ConnectionHandle in Ready state
-        let handle =
-            ConnectionHandle::with_state(writer, router, reader_handle, ConnectionState::Ready);
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
+        let handle = ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+            tx,
+            rx,
+        );
 
         // Register a request with upstream ID
         let upstream_id = UpstreamId::Number(42);
@@ -1086,8 +1112,15 @@ mod tests {
         let router = Arc::new(ResponseRouter::new());
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
-        let handle =
-            ConnectionHandle::with_state(writer, router, reader_handle, ConnectionState::Ready);
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
+        let handle = ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+            tx,
+            rx,
+        );
 
         // Register without upstream ID
         let (downstream_id, _response_rx) = handle
@@ -1118,8 +1151,15 @@ mod tests {
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
         // Create handle already in Ready state
-        let handle =
-            ConnectionHandle::with_state(writer, router, reader_handle, ConnectionState::Ready);
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
+        let handle = ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+            tx,
+            rx,
+        );
 
         // Should return immediately
         let result = handle.wait_for_ready(Duration::from_millis(10)).await;
@@ -1142,11 +1182,14 @@ mod tests {
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
         // Create handle in Initializing state
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Initializing,
+            tx,
+            rx,
         ));
 
         // Spawn a task that will transition to Ready after a delay
@@ -1181,11 +1224,14 @@ mod tests {
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
         // Create handle in Initializing state
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Initializing,
+            tx,
+            rx,
         ));
 
         // Spawn a task that will transition to Failed
@@ -1222,11 +1268,14 @@ mod tests {
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
         // Create handle in Initializing state that won't transition
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Initializing,
+            tx,
+            rx,
         );
 
         // Wait with short timeout - should timeout
@@ -1252,11 +1301,14 @@ mod tests {
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
         // Create handle in Initializing state
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Initializing,
+            tx,
+            rx,
         ));
 
         // Spawn a task that will transition to Closing
