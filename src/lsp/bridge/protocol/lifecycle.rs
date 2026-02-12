@@ -12,37 +12,37 @@ use super::request_id::RequestId;
 fn build_bridge_client_capabilities() -> serde_json::Value {
     serde_json::json!({
         "textDocument": {
-            "hover": {
-                "contentFormat": ["markdown", "plaintext"]
-            },
+            "colorProvider": {},
             "completion": {
                 "completionItem": {
                     "snippetSupport": false
                 }
             },
+            "declaration": {
+                "linkSupport": true
+            },
             "definition": {
                 "linkSupport": true
             },
-            "typeDefinition": {
-                "linkSupport": true
+            "diagnostic": {},
+            "documentHighlight": {},
+            "documentLink": {},
+            "documentSymbol": {
+                "hierarchicalDocumentSymbolSupport": true
+            },
+            "hover": {
+                "contentFormat": ["markdown", "plaintext"]
             },
             "implementation": {
                 "linkSupport": true
             },
-            "declaration": {
-                "linkSupport": true
-            },
+            "inlayHint": {},
+            "moniker": {},
             "references": {},
             "signatureHelp": {},
-            "documentHighlight": {},
-            "documentSymbol": {
-                "hierarchicalDocumentSymbolSupport": true
-            },
-            "documentLink": {},
-            "colorProvider": {},
-            "inlayHint": {},
-            "diagnostic": {},
-            "moniker": {}
+            "typeDefinition": {
+                "linkSupport": true
+            }
         }
     })
 }
