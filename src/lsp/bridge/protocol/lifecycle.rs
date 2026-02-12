@@ -123,6 +123,12 @@ mod tests {
     use rstest::rstest;
 
     #[test]
+    fn bridge_client_capabilities_snapshot() {
+        let capabilities = build_bridge_client_capabilities();
+        insta::assert_json_snapshot!(capabilities);
+    }
+
+    #[test]
     fn initialize_request_has_correct_structure() {
         let request = build_initialize_request(RequestId::new(1), None, None);
 
