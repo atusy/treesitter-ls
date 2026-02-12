@@ -75,11 +75,11 @@ impl LanguageServerPool {
         }
 
         // Server is Ready and supports diagnostics — proceed with standard lifecycle.
-        // get_or_create_connection inside execute_bridge_request will find the
-        // already-Ready server immediately (just a HashMap lookup).
-        self.execute_bridge_request(
+        // Use execute_bridge_request_with_handle to reuse the pre-fetched handle,
+        // avoiding a redundant HashMap lookup.
+        self.execute_bridge_request_with_handle(
+            handle,
             server_name,
-            server_config,
             host_uri,
             injection_language,
             region_id,

@@ -1,8 +1,11 @@
 //! Shared bridge request lifecycle execution.
 //!
-//! This module provides `execute_bridge_request`, a generic method on
-//! [`LanguageServerPool`] that encapsulates the common lifecycle boilerplate
-//! shared by all bridge request handlers (hover, definition, document_link, etc.).
+//! This module provides two generic methods on [`LanguageServerPool`] that
+//! encapsulate the common lifecycle boilerplate shared by all bridge request
+//! handlers (hover, definition, document_link, etc.):
+//!
+//! - `execute_bridge_request`: Full lifecycle including connection lookup
+//! - `execute_bridge_request_with_handle`: Lifecycle with pre-fetched connection handle
 //!
 //! The lifecycle steps are:
 //! 1. Get or create a connection
@@ -18,11 +21,12 @@
 //! 11. Transform the response (via caller-provided closure)
 
 use std::io;
+use std::sync::Arc;
 
 use tower_lsp_server::ls_types::Uri;
 use url::Url;
 
-use super::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
+use super::{ConnectionHandle, ConnectionHandleSender, LanguageServerPool, UpstreamId};
 use crate::config::settings::BridgeServerConfig;
 use crate::lsp::bridge::protocol::{RequestId, VirtualDocumentUri};
 
@@ -46,18 +50,17 @@ pub(crate) struct BridgeResponseContext<'a> {
 }
 
 impl LanguageServerPool {
-    /// Execute a bridge request through the full lifecycle.
+    /// Execute a bridge request through the full lifecycle with a pre-fetched connection handle.
     ///
-    /// This method encapsulates the common lifecycle boilerplate shared by all
-    /// bridge request handlers. It handles connection management, request
-    /// registration, document opening, request sending, response waiting, and
-    /// cleanup — leaving only request building and response transformation to
-    /// the caller.
+    /// This method is identical to [`execute_bridge_request`](Self::execute_bridge_request)
+    /// but accepts a pre-fetched `ConnectionHandle` instead of fetching it internally.
+    /// Use this when you've already obtained a handle (e.g., for capability checking)
+    /// to avoid a redundant HashMap lookup.
     ///
     /// # Arguments
     ///
-    /// * `server_name` - The server name from config (e.g., "tsgo", "lua-ls")
-    /// * `server_config` - The server configuration containing command and options
+    /// * `handle` - The pre-fetched connection handle
+    /// * `server_name` - The server name from config (still needed for document tracking)
     /// * `host_uri` - The host document URI
     /// * `injection_language` - The injection language (e.g., "lua")
     /// * `region_id` - The unique region ID for this injection
@@ -68,26 +71,11 @@ impl LanguageServerPool {
     ///   virtual document URI and allocated request ID
     /// * `transform_response` - Closure to transform the raw JSON-RPC response into the
     ///   typed result, given the response context
-    ///
-    /// # Lifecycle
-    ///
-    /// The method follows the exact lifecycle from existing handlers:
-    /// 1. `get_or_create_connection` — lazy server spawn with LSP handshake
-    /// 2. `url_to_uri` — convert `url::Url` to `lsp_types::Uri`
-    /// 3. `VirtualDocumentUri::new` — build the virtual document URI
-    /// 4. `register_upstream_request` — register for cancel forwarding (pool level)
-    /// 5. `register_request_with_upstream` — register for cancel forwarding (router level)
-    /// 6. `build_request` closure — build the JSON-RPC request
-    /// 7. `ensure_document_opened` — send didOpen if needed
-    /// 8. `send_request` — queue via single-writer loop (ADR-0015)
-    /// 9. `wait_for_response` — wait via oneshot channel with timeout
-    /// 10. `unregister_upstream_request` — cleanup cancel forwarding
-    /// 11. `transform_response` closure — transform to typed result
     #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn execute_bridge_request<T>(
+    pub(crate) async fn execute_bridge_request_with_handle<T>(
         &self,
+        handle: Arc<ConnectionHandle>,
         server_name: &str,
-        server_config: &BridgeServerConfig,
         host_uri: &Url,
         injection_language: &str,
         region_id: &str,
@@ -97,11 +85,6 @@ impl LanguageServerPool {
         build_request: impl FnOnce(&VirtualDocumentUri, RequestId) -> serde_json::Value,
         transform_response: impl FnOnce(serde_json::Value, &BridgeResponseContext<'_>) -> T,
     ) -> io::Result<T> {
-        // Get or create connection - state check is atomic with lookup (ADR-0015)
-        let handle = self
-            .get_or_create_connection(server_name, server_config)
-            .await?;
-
         // Convert host_uri to lsp_types::Uri for bridge protocol functions
         let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
@@ -170,6 +153,67 @@ impl LanguageServerPool {
         };
 
         Ok(transform_response(response?, &context))
+    }
+
+    /// Execute a bridge request through the full lifecycle.
+    ///
+    /// This method encapsulates the common lifecycle boilerplate shared by all
+    /// bridge request handlers. It handles connection management, request
+    /// registration, document opening, request sending, response waiting, and
+    /// cleanup — leaving only request building and response transformation to
+    /// the caller.
+    ///
+    /// For handlers that need to pre-fetch the connection (e.g., for capability
+    /// checking), use [`execute_bridge_request_with_handle`](Self::execute_bridge_request_with_handle)
+    /// instead to avoid a redundant connection lookup.
+    ///
+    /// # Arguments
+    ///
+    /// * `server_name` - The server name from config (e.g., "tsgo", "lua-ls")
+    /// * `server_config` - The server configuration containing command and options
+    /// * `host_uri` - The host document URI
+    /// * `injection_language` - The injection language (e.g., "lua")
+    /// * `region_id` - The unique region ID for this injection
+    /// * `region_start_line` - The starting line of the injection region in the host document
+    /// * `virtual_content` - The content of the virtual document
+    /// * `upstream_request_id` - The original request ID from the upstream client
+    /// * `build_request` - Closure to build the JSON-RPC request from the
+    ///   virtual document URI and allocated request ID
+    /// * `transform_response` - Closure to transform the raw JSON-RPC response into the
+    ///   typed result, given the response context
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_bridge_request<T>(
+        &self,
+        server_name: &str,
+        server_config: &BridgeServerConfig,
+        host_uri: &Url,
+        injection_language: &str,
+        region_id: &str,
+        region_start_line: u32,
+        virtual_content: &str,
+        upstream_request_id: UpstreamId,
+        build_request: impl FnOnce(&VirtualDocumentUri, RequestId) -> serde_json::Value,
+        transform_response: impl FnOnce(serde_json::Value, &BridgeResponseContext<'_>) -> T,
+    ) -> io::Result<T> {
+        // Get or create connection - state check is atomic with lookup (ADR-0015)
+        let handle = self
+            .get_or_create_connection(server_name, server_config)
+            .await?;
+
+        // Delegate to the handle-based variant
+        self.execute_bridge_request_with_handle(
+            handle,
+            server_name,
+            host_uri,
+            injection_language,
+            region_id,
+            region_start_line,
+            virtual_content,
+            upstream_request_id,
+            build_request,
+            transform_response,
+        )
+        .await
     }
 }
 
