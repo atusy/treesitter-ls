@@ -22,6 +22,7 @@ mod connection_action;
 mod connection_handle;
 mod connection_state;
 mod document_tracker;
+mod execute;
 mod handshake;
 mod liveness_timeout;
 mod message_sender;

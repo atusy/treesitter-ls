@@ -14,7 +14,7 @@ use crate::config::settings::BridgeServerConfig;
 use tower_lsp_server::ls_types::{LocationLink, Position};
 use url::Url;
 
-use super::super::pool::{ConnectionHandleSender, LanguageServerPool, UpstreamId};
+use super::super::pool::{LanguageServerPool, UpstreamId};
 use super::super::protocol::{
     RequestId, VirtualDocumentUri, build_position_based_request, transform_goto_response_to_host,
 };
@@ -22,14 +22,9 @@ use super::super::protocol::{
 impl LanguageServerPool {
     /// Send a declaration request and wait for the response.
     ///
-    /// This is a convenience method that handles the full request/response cycle:
-    /// 1. Get or create a connection (state check is atomic with lookup - ADR-0015)
-    /// 2. Send a textDocument/didOpen notification if needed
-    /// 3. Send the declaration request
-    /// 4. Wait for and return the response
-    ///
-    /// The `upstream_request_id` enables $/cancelRequest forwarding.
-    /// See [`LanguageServerPool::register_upstream_request()`] for the full flow.
+    /// Delegates to [`execute_bridge_request`](Self::execute_bridge_request) for the
+    /// full lifecycle, providing declaration-specific request building and response
+    /// transformation.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_declaration_request(
         &self,
@@ -43,103 +38,41 @@ impl LanguageServerPool {
         virtual_content: &str,
         upstream_request_id: UpstreamId,
     ) -> io::Result<Option<Vec<LocationLink>>> {
-        // Get or create connection - state check is atomic with lookup (ADR-0015)
-        let handle = self
-            .get_or_create_connection(server_name, server_config)
-            .await?;
-
-        // Convert host_uri to lsp_types::Uri for bridge protocol functions
-        let host_uri_lsp = crate::lsp::lsp_impl::url_to_uri(host_uri)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-
-        // Build virtual document URI
-        let virtual_uri = VirtualDocumentUri::new(&host_uri_lsp, injection_language, region_id);
-        let virtual_uri_string = virtual_uri.to_uri_string();
-
-        // Register in the upstream request registry FIRST for cancel lookup.
-        // This order matters: if a cancel arrives between pool and router registration,
-        // the cancel will fail at the router lookup (which is acceptable for best-effort
-        // cancel semantics) rather than finding the server but no downstream ID.
-        self.register_upstream_request(upstream_request_id.clone(), server_name);
-
-        // Register request with upstream ID mapping for cancel forwarding
-        let (request_id, response_rx) =
-            match handle.register_request_with_upstream(Some(upstream_request_id.clone())) {
-                Ok(result) => result,
-                Err(e) => {
-                    // Clean up the pool registration on failure
-                    self.unregister_upstream_request(&upstream_request_id, server_name);
-                    return Err(e);
-                }
-            };
-
-        // Build declaration request
-        let declaration_request = build_declaration_request(
-            &host_uri_lsp,
-            host_position,
+        self.execute_bridge_request(
+            server_name,
+            server_config,
+            host_uri,
             injection_language,
             region_id,
             region_start_line,
-            request_id,
-        );
-
-        // Use a closure for cleanup on any failure path
-        let cleanup = || {
-            handle.router().remove(request_id);
-            self.unregister_upstream_request(&upstream_request_id, server_name);
-        };
-
-        // Send didOpen notification only if document hasn't been opened yet
-        if let Err(e) = self
-            .ensure_document_opened(
-                &mut ConnectionHandleSender(&handle),
-                host_uri,
-                &virtual_uri,
-                virtual_content,
-                server_name,
-            )
-            .await
-        {
-            cleanup();
-            return Err(e);
-        }
-
-        // Queue the declaration request via single-writer loop (ADR-0015)
-        if let Err(e) = handle.send_request(declaration_request, request_id) {
-            cleanup();
-            return Err(e.into());
-        }
-
-        // Wait for response via oneshot channel (no Mutex held) with timeout
-        let response = handle.wait_for_response(request_id, response_rx).await;
-
-        // Unregister from the upstream request registry regardless of result
-        self.unregister_upstream_request(&upstream_request_id, server_name);
-
-        // Transform response to host coordinates
-        Ok(transform_goto_response_to_host(
-            response?,
-            &virtual_uri_string,
-            &host_uri_lsp,
-            region_start_line,
-        ))
+            virtual_content,
+            upstream_request_id,
+            |virtual_uri, request_id| {
+                build_declaration_request(virtual_uri, host_position, region_start_line, request_id)
+            },
+            |response, ctx| {
+                transform_goto_response_to_host(
+                    response,
+                    &ctx.virtual_uri_string,
+                    ctx.host_uri_lsp,
+                    ctx.region_start_line,
+                )
+            },
+        )
+        .await
     }
 }
 
 /// Build a JSON-RPC declaration request for a downstream language server.
 fn build_declaration_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
+    virtual_uri: &VirtualDocumentUri,
     host_position: tower_lsp_server::ls_types::Position,
-    injection_language: &str,
-    region_id: &str,
     region_start_line: u32,
     request_id: RequestId,
 ) -> serde_json::Value {
     build_position_based_request(
-        host_uri,
+        virtual_uri,
         host_position,
-        injection_language,
-        region_id,
         region_start_line,
         request_id,
         "textDocument/declaration",
@@ -162,14 +95,8 @@ mod tests {
             line: 5,
             character: 10,
         };
-        let request = build_declaration_request(
-            &host_uri,
-            position,
-            "lua",
-            "region-0",
-            3,
-            RequestId::new(42),
-        );
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
+        let request = build_declaration_request(&virtual_uri, position, 3, RequestId::new(42));
 
         let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
         assert!(
@@ -197,14 +124,8 @@ mod tests {
             line: 5,
             character: 10,
         };
-        let request = build_declaration_request(
-            &host_uri,
-            position,
-            "lua",
-            "region-0",
-            3,
-            RequestId::new(42),
-        );
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
+        let request = build_declaration_request(&virtual_uri, position, 3, RequestId::new(42));
 
         assert_eq!(request["jsonrpc"], "2.0");
         assert_eq!(request["id"], 42);
