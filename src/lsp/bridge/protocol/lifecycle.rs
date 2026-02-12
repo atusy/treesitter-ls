@@ -14,8 +14,9 @@ use super::request_id::RequestId;
 fn build_bridge_client_capabilities() -> serde_json::Value {
     use tower_lsp_server::ls_types::{
         ClientCapabilities, CompletionClientCapabilities, CompletionItemCapability,
-        DocumentLinkClientCapabilities, DocumentSymbolClientCapabilities, GotoCapability,
-        HoverClientCapabilities, MarkupKind, TextDocumentClientCapabilities,
+        DiagnosticClientCapabilities, DocumentLinkClientCapabilities,
+        DocumentSymbolClientCapabilities, GotoCapability, HoverClientCapabilities, MarkupKind,
+        TextDocumentClientCapabilities,
     };
 
     let goto_link = Some(GotoCapability {
@@ -23,40 +24,51 @@ fn build_bridge_client_capabilities() -> serde_json::Value {
         ..Default::default()
     });
 
-    let capabilities = ClientCapabilities {
-        text_document: Some(TextDocumentClientCapabilities {
-            hover: Some(HoverClientCapabilities {
-                content_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
-                ..Default::default()
-            }),
-            completion: Some(CompletionClientCapabilities {
-                completion_item: Some(CompletionItemCapability {
-                    snippet_support: Some(true),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-            definition: goto_link,
-            type_definition: goto_link,
-            implementation: goto_link,
-            declaration: goto_link,
-            references: Some(Default::default()),
-            signature_help: Some(Default::default()),
-            document_highlight: Some(Default::default()),
-            document_symbol: Some(DocumentSymbolClientCapabilities {
-                hierarchical_document_symbol_support: Some(true),
-                ..Default::default()
-            }),
-            document_link: Some(DocumentLinkClientCapabilities {
-                dynamic_registration: None,
-                tooltip_support: None,
-            }),
-            color_provider: Some(Default::default()),
-            inlay_hint: Some(Default::default()),
-            diagnostic: Some(Default::default()),
-            moniker: Some(Default::default()),
+    #[allow(unused_mut)] // mutated only with "experimental" feature
+    let mut text_document = TextDocumentClientCapabilities {
+        hover: Some(HoverClientCapabilities {
+            content_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
             ..Default::default()
         }),
+        completion: Some(CompletionClientCapabilities {
+            completion_item: Some(CompletionItemCapability {
+                snippet_support: Some(true),
+                insert_replace_support: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        definition: goto_link,
+        type_definition: goto_link,
+        implementation: goto_link,
+        declaration: goto_link,
+        references: Some(Default::default()),
+        signature_help: Some(Default::default()),
+        document_highlight: Some(Default::default()),
+        document_symbol: Some(DocumentSymbolClientCapabilities {
+            hierarchical_document_symbol_support: Some(true),
+            ..Default::default()
+        }),
+        document_link: Some(DocumentLinkClientCapabilities {
+            dynamic_registration: None,
+            tooltip_support: Some(true),
+        }),
+        inlay_hint: Some(Default::default()),
+        diagnostic: Some(DiagnosticClientCapabilities {
+            related_document_support: Some(true),
+            ..Default::default()
+        }),
+        moniker: Some(Default::default()),
+        ..Default::default()
+    };
+
+    #[cfg(feature = "experimental")]
+    {
+        text_document.color_provider = Some(Default::default());
+    }
+
+    let capabilities = ClientCapabilities {
+        text_document: Some(text_document),
         ..Default::default()
     };
 

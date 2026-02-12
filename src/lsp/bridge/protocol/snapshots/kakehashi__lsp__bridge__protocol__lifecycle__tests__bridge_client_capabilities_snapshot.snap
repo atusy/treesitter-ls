@@ -4,9 +4,9 @@ expression: capabilities
 ---
 {
   "textDocument": {
-    "colorProvider": {},
     "completion": {
       "completionItem": {
+        "insertReplaceSupport": true,
         "snippetSupport": true
       }
     },
@@ -16,9 +16,13 @@ expression: capabilities
     "definition": {
       "linkSupport": true
     },
-    "diagnostic": {},
+    "diagnostic": {
+      "relatedDocumentSupport": true
+    },
     "documentHighlight": {},
-    "documentLink": {},
+    "documentLink": {
+      "tooltipSupport": true
+    },
     "documentSymbol": {
       "hierarchicalDocumentSymbolSupport": true
     },
