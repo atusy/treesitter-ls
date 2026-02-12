@@ -496,6 +496,34 @@ async fn reader_loop_with_liveness(
     }
 }
 
+/// Classification of messages from downstream language servers.
+///
+/// LSP messages are classified by the presence of `id` and `method` fields:
+/// - Response: has `id`, no `method` (reply to our request)
+/// - ServerRequest: has both `id` and `method` (server-initiated request)
+/// - Notification: has `method`, no `id` (server-initiated notification)
+/// - Invalid: has neither `id` nor `method`
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, PartialEq)]
+enum MessageKind {
+    Response,
+    ServerRequest,
+    Notification,
+    Invalid,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn classify_message(message: &serde_json::Value) -> MessageKind {
+    let has_id = message.get("id").is_some();
+    let has_method = message.get("method").is_some();
+    match (has_id, has_method) {
+        (true, false) => MessageKind::Response,
+        (true, true) => MessageKind::ServerRequest,
+        (false, true) => MessageKind::Notification,
+        (false, false) => MessageKind::Invalid,
+    }
+}
+
 /// Handle a single message from the downstream server.
 fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_prefix: &str) {
     // Check if it's a response (has "id" field)
@@ -847,6 +875,62 @@ mod tests {
         assert_eq!(received["result"], "known");
 
         drop(writer);
+    }
+
+    // ============================================================
+    // Message Classification Tests
+    // ============================================================
+
+    #[test]
+    fn classify_message_response() {
+        let msg = json!({"jsonrpc": "2.0", "id": 1, "result": null});
+        assert_eq!(classify_message(&msg), MessageKind::Response);
+    }
+
+    #[test]
+    fn classify_message_server_request() {
+        let msg =
+            json!({"jsonrpc": "2.0", "id": 1, "method": "client/registerCapability", "params": {}});
+        assert_eq!(classify_message(&msg), MessageKind::ServerRequest);
+    }
+
+    #[test]
+    fn classify_message_notification() {
+        let msg = json!({"jsonrpc": "2.0", "method": "$/progress", "params": {}});
+        assert_eq!(classify_message(&msg), MessageKind::Notification);
+    }
+
+    #[test]
+    fn classify_message_invalid() {
+        let msg = json!({"jsonrpc": "2.0"});
+        assert_eq!(classify_message(&msg), MessageKind::Invalid);
+    }
+
+    #[test]
+    fn handle_message_does_not_route_server_request() {
+        let router = ResponseRouter::new();
+        let _rx = router
+            .register(crate::lsp::bridge::protocol::RequestId::new(1))
+            .unwrap();
+        assert_eq!(router.pending_count(), 1);
+
+        // Server-initiated request: has both "id" and "method"
+        let server_request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "client/registerCapability",
+            "params": {}
+        });
+
+        handle_message(server_request, &router, "");
+
+        // The server request should NOT be routed as a response.
+        // Pending count must remain 1 (the registered request is still waiting).
+        assert_eq!(
+            router.pending_count(),
+            1,
+            "Server-initiated requests (with both id and method) must not be routed as responses"
+        );
     }
 
     // ============================================================
