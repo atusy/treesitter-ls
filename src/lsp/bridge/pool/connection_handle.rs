@@ -386,6 +386,7 @@ impl ConnectionHandle {
     /// Returns `None` if capabilities haven't been set yet (server still initializing).
     /// Callers use typed field access (e.g., `c.diagnostic_provider.as_ref()`) for
     /// compile-time-safe capability checks.
+    #[cfg(feature = "experimental")]
     pub(crate) fn server_capabilities(&self) -> Option<&ServerCapabilities> {
         self.server_capabilities.get()
     }
@@ -1301,6 +1302,7 @@ mod tests {
     }
 
     /// Test that server_capabilities returns None before set_server_capabilities is called.
+    #[cfg(feature = "experimental")]
     #[tokio::test]
     async fn server_capabilities_returns_none_before_init() {
         let handle = spawn_sink_handle().await;
@@ -1310,6 +1312,7 @@ mod tests {
     }
 
     /// Test that server_capabilities returns typed struct with set fields.
+    #[cfg(feature = "experimental")]
     #[tokio::test]
     async fn server_capabilities_returns_typed_struct() {
         use tower_lsp_server::ls_types::{
@@ -1338,6 +1341,7 @@ mod tests {
     }
 
     /// Test that default capabilities have all fields as None.
+    #[cfg(feature = "experimental")]
     #[tokio::test]
     async fn server_capabilities_default_has_none_fields() {
         let handle = spawn_sink_handle().await;
