@@ -1307,6 +1307,53 @@ mod tests {
         }
     }
 
+    /// Test that workspace/diagnostic/refresh is forwarded upstream and acknowledged.
+    ///
+    /// When a downstream server sends workspace/diagnostic/refresh:
+    /// 1. An UpstreamNotification::DiagnosticRefresh is sent on the upstream channel
+    /// 2. A success response (not MethodNotFound) is sent back to the server
+    #[tokio::test]
+    async fn handle_message_diagnostic_refresh_forwards_upstream() {
+        let router = ResponseRouter::new();
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, mut upstream_rx) = mpsc::unbounded_channel();
+
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "workspace/diagnostic/refresh",
+            "params": null
+        });
+
+        handle_message(
+            message,
+            &router,
+            "",
+            &response_tx,
+            &dynamic_capabilities,
+            &upstream_tx,
+        )
+        .await;
+
+        // Should have sent DiagnosticRefresh on the upstream channel
+        let notification = upstream_rx
+            .try_recv()
+            .expect("should have upstream notification");
+        assert_eq!(notification, UpstreamNotification::DiagnosticRefresh);
+
+        // Should have sent a success response (not MethodNotFound)
+        let response = response_rx.try_recv().expect("should have response");
+        match response {
+            OutboundMessage::Notification(val) => {
+                assert_eq!(val["id"], 10);
+                assert!(val["result"].is_null(), "Should be success, not error");
+                assert!(val.get("error").is_none(), "Should not have error field");
+            }
+            _ => panic!("Expected Notification variant"),
+        }
+    }
+
     #[tokio::test]
     async fn handle_message_unknown_server_request_sends_method_not_found() {
         let router = ResponseRouter::new();
