@@ -1437,4 +1437,80 @@ mod tests {
         assert!(caps.diagnostic_provider.is_none());
         assert!(caps.completion_provider.is_none());
     }
+
+    // ========================================
+    // Unified Capability Check Tests
+    // ========================================
+
+    /// Test has_capability returns false when neither static nor dynamic.
+    #[tokio::test]
+    async fn has_capability_returns_false_when_no_capabilities() {
+        let handle = spawn_sink_handle().await;
+        // No capabilities set, no dynamic registrations
+        assert!(!handle.has_capability("textDocument/diagnostic"));
+    }
+
+    /// Test has_capability returns true with static capability only.
+    #[tokio::test]
+    async fn has_capability_returns_true_with_static_only() {
+        use tower_lsp_server::ls_types::{DiagnosticOptions, DiagnosticServerCapabilities};
+        let handle = spawn_sink_handle().await;
+        handle.set_server_capabilities(ServerCapabilities {
+            diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
+                DiagnosticOptions::default(),
+            )),
+            ..Default::default()
+        });
+        assert!(handle.has_capability("textDocument/diagnostic"));
+    }
+
+    /// Test has_capability returns true with dynamic registration only.
+    #[tokio::test]
+    async fn has_capability_returns_true_with_dynamic_only() {
+        use tower_lsp_server::ls_types::Registration;
+        let handle = spawn_sink_handle().await;
+        // No static capabilities set
+        handle.dynamic_capabilities().register(vec![Registration {
+            id: "diag-1".to_string(),
+            method: "textDocument/diagnostic".to_string(),
+            register_options: None,
+        }]);
+        assert!(handle.has_capability("textDocument/diagnostic"));
+    }
+
+    /// Test has_capability returns true when both static and dynamic.
+    #[tokio::test]
+    async fn has_capability_returns_true_with_both() {
+        use tower_lsp_server::ls_types::{
+            DiagnosticOptions, DiagnosticServerCapabilities, Registration,
+        };
+        let handle = spawn_sink_handle().await;
+        handle.set_server_capabilities(ServerCapabilities {
+            diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
+                DiagnosticOptions::default(),
+            )),
+            ..Default::default()
+        });
+        handle.dynamic_capabilities().register(vec![Registration {
+            id: "diag-1".to_string(),
+            method: "textDocument/diagnostic".to_string(),
+            register_options: None,
+        }]);
+        assert!(handle.has_capability("textDocument/diagnostic"));
+    }
+
+    /// Test has_capability returns false for unknown methods (not mapped to static caps).
+    #[tokio::test]
+    async fn has_capability_returns_false_for_unknown_method() {
+        use tower_lsp_server::ls_types::{DiagnosticOptions, DiagnosticServerCapabilities};
+        let handle = spawn_sink_handle().await;
+        handle.set_server_capabilities(ServerCapabilities {
+            diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
+                DiagnosticOptions::default(),
+            )),
+            ..Default::default()
+        });
+        // This method has no static capability mapping
+        assert!(!handle.has_capability("textDocument/someUnknownMethod"));
+    }
 }
