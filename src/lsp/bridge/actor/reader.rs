@@ -954,6 +954,153 @@ mod tests {
     }
 
     // ============================================================
+    // Server Request Handling Tests
+    // ============================================================
+
+    #[test]
+    fn handle_message_register_capability_updates_registry() {
+        let router = ResponseRouter::new();
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let dynamic_capabilities = Arc::new(
+            crate::lsp::bridge::pool::DynamicCapabilityRegistry::new(),
+        );
+
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "client/registerCapability",
+            "params": {
+                "registrations": [
+                    {
+                        "id": "diag-1",
+                        "method": "textDocument/diagnostic",
+                        "registerOptions": null
+                    }
+                ]
+            }
+        });
+
+        handle_message(message, &router, "", &response_tx, &dynamic_capabilities);
+
+        // Registry should have the registration
+        assert!(dynamic_capabilities.has_registration("textDocument/diagnostic"));
+
+        // A response should have been sent
+        let response = response_rx.try_recv().expect("should have response");
+        match response {
+            OutboundMessage::Notification(val) => {
+                assert_eq!(val["id"], 1);
+                assert!(val["result"].is_null());
+            }
+            _ => panic!("Expected Notification variant"),
+        }
+    }
+
+    #[test]
+    fn handle_message_unregister_capability_updates_registry() {
+        let router = ResponseRouter::new();
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let dynamic_capabilities = Arc::new(
+            crate::lsp::bridge::pool::DynamicCapabilityRegistry::new(),
+        );
+
+        // First register a capability
+        dynamic_capabilities.register(vec![tower_lsp_server::ls_types::Registration {
+            id: "diag-1".to_string(),
+            method: "textDocument/diagnostic".to_string(),
+            register_options: None,
+        }]);
+        assert!(dynamic_capabilities.has_registration("textDocument/diagnostic"));
+
+        // Then unregister it
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "client/unregisterCapability",
+            "params": {
+                "unregisterations": [
+                    {
+                        "id": "diag-1",
+                        "method": "textDocument/diagnostic"
+                    }
+                ]
+            }
+        });
+
+        handle_message(message, &router, "", &response_tx, &dynamic_capabilities);
+
+        // Registry should no longer have the registration
+        assert!(!dynamic_capabilities.has_registration("textDocument/diagnostic"));
+
+        // A success response should have been sent
+        let response = response_rx.try_recv().expect("should have response");
+        match response {
+            OutboundMessage::Notification(val) => {
+                assert_eq!(val["id"], 2);
+                assert!(val["result"].is_null());
+            }
+            _ => panic!("Expected Notification variant"),
+        }
+    }
+
+    #[test]
+    fn handle_message_work_done_progress_create_sends_success() {
+        let router = ResponseRouter::new();
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let dynamic_capabilities = Arc::new(
+            crate::lsp::bridge::pool::DynamicCapabilityRegistry::new(),
+        );
+
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "window/workDoneProgress/create",
+            "params": {
+                "token": "some-token"
+            }
+        });
+
+        handle_message(message, &router, "", &response_tx, &dynamic_capabilities);
+
+        // A success response should have been sent
+        let response = response_rx.try_recv().expect("should have response");
+        match response {
+            OutboundMessage::Notification(val) => {
+                assert_eq!(val["id"], 5);
+                assert!(val["result"].is_null());
+            }
+            _ => panic!("Expected Notification variant"),
+        }
+    }
+
+    #[test]
+    fn handle_message_unknown_server_request_sends_method_not_found() {
+        let router = ResponseRouter::new();
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let dynamic_capabilities = Arc::new(
+            crate::lsp::bridge::pool::DynamicCapabilityRegistry::new(),
+        );
+
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "some/unknownMethod",
+            "params": {}
+        });
+
+        handle_message(message, &router, "", &response_tx, &dynamic_capabilities);
+
+        let response = response_rx.try_recv().expect("should have response");
+        match response {
+            OutboundMessage::Notification(val) => {
+                assert_eq!(val["id"], 99);
+                assert_eq!(val["error"]["code"], -32601);
+            }
+            _ => panic!("Expected Notification variant"),
+        }
+    }
+
+    // ============================================================
     // Liveness Timer Tests (ADR-0014)
     // ============================================================
 
