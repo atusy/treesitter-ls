@@ -66,7 +66,9 @@ use super::protocol::{VirtualDocumentUri, build_didopen_notification};
 /// within this duration, the connection attempt fails with a timeout error.
 pub(crate) const INIT_TIMEOUT_SECS: u64 = 30;
 
-use super::actor::{OUTBOUND_QUEUE_CAPACITY, ResponseRouter, spawn_reader_task_for_language};
+use super::actor::{
+    OUTBOUND_QUEUE_CAPACITY, ResponseRouter, UpstreamNotification, spawn_reader_task_for_language,
+};
 use super::connection::AsyncBridgeConnection;
 
 /// Upstream request ID type supporting both numeric and string IDs per LSP spec.
@@ -244,6 +246,17 @@ pub struct LanguageServerPool {
     /// Passed to downstream servers during LSP handshake so they can provide
     /// workspace-aware features (diagnostics, go-to-definition, etc.).
     root_uri: std::sync::Mutex<Option<String>>,
+    /// Sender for forwarding downstream server notifications to the upstream editor.
+    ///
+    /// Cloned into each reader task so they can signal events like
+    /// `workspace/diagnostic/refresh` without coupling to tower-lsp's Client type.
+    upstream_tx: tokio::sync::mpsc::UnboundedSender<UpstreamNotification>,
+    /// Receiver for upstream notifications, taken once by the forwarding task.
+    ///
+    /// Wrapped in `Mutex<Option<...>>` because `take_upstream_rx()` moves it out.
+    #[allow(dead_code)] // Read via take_upstream_rx() in upcoming subtask
+    upstream_rx:
+        std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<UpstreamNotification>>>,
 }
 
 impl Default for LanguageServerPool {
@@ -268,6 +281,7 @@ impl LanguageServerPool {
     /// let service = RequestIdCapture::with_cancel_forwarder(kakehashi, cancel_forwarder);
     /// ```
     pub fn new() -> Self {
+        let (upstream_tx, upstream_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             connections: Mutex::new(HashMap::new()),
             document_tracker: DocumentTracker::new(),
@@ -275,6 +289,8 @@ impl LanguageServerPool {
             cancel_metrics: CancelForwardingMetrics::default(),
             consecutive_panic_counts: std::sync::Mutex::new(HashMap::new()),
             root_uri: std::sync::Mutex::new(None),
+            upstream_tx,
+            upstream_rx: std::sync::Mutex::new(Some(upstream_rx)),
         }
     }
 
@@ -290,6 +306,18 @@ impl LanguageServerPool {
     fn root_uri(&self) -> Option<String> {
         let root_uri = self.root_uri.lock().unwrap_or_else(|e| e.into_inner());
         root_uri.clone()
+    }
+
+    /// Take the upstream notification receiver for forwarding to the editor.
+    ///
+    /// Returns `Some(receiver)` on first call, `None` on subsequent calls.
+    /// The receiver should be consumed by a single forwarding task in `initialized()`.
+    #[allow(dead_code)] // Used via BridgeCoordinator in upcoming subtask
+    pub(crate) fn take_upstream_rx(
+        &self,
+    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<UpstreamNotification>> {
+        let mut guard = self.upstream_rx.lock().unwrap_or_else(|e| e.into_inner());
+        guard.take()
     }
 
     /// Get access to cancel forwarding metrics (for testing).
@@ -720,6 +748,7 @@ impl LanguageServerPool {
             Some(server_name.to_string()),
             tx.clone(),
             Arc::clone(&dynamic_capabilities),
+            self.upstream_tx.clone(),
         );
 
         // Create handle in Initializing state (fast-fail for concurrent requests)

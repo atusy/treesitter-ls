@@ -324,6 +324,17 @@ impl BridgeCoordinator {
         self.pool.close_invalidated_docs(uri, ulids).await;
     }
 
+    /// Take the upstream notification receiver for forwarding to the editor.
+    ///
+    /// Returns `Some(receiver)` on first call, `None` on subsequent calls.
+    /// Delegates to the underlying pool.
+    #[allow(dead_code)] // Used in lsp_impl::initialized() in upcoming subtask
+    pub(crate) fn take_upstream_rx(
+        &self,
+    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<super::actor::UpstreamNotification>> {
+        self.pool.take_upstream_rx()
+    }
+
     /// Graceful shutdown of all downstream language server connections.
     pub(crate) async fn shutdown_all(&self) {
         self.pool.shutdown_all().await;

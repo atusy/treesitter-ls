@@ -27,6 +27,18 @@ use super::ResponseRouter;
 use super::response_router::RouteResult;
 use crate::lsp::bridge::pool::DynamicCapabilityRegistry;
 
+/// Notification to forward from downstream server to upstream editor.
+///
+/// Reader tasks use this to signal events that require upstream Client interaction,
+/// keeping the bridge module decoupled from tower-lsp's Client type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // Variants used in upcoming subtasks
+pub(crate) enum UpstreamNotification {
+    /// Request upstream to re-pull diagnostics.
+    /// Sent when downstream server issues `workspace/diagnostic/refresh`.
+    DiagnosticRefresh,
+}
+
 /// Type alias for the pinned liveness timer future.
 type LivenessTimer = std::pin::Pin<Box<tokio::time::Sleep>>;
 
@@ -315,6 +327,7 @@ pub(crate) fn spawn_reader_task_with_liveness(
 ) -> ReaderTaskHandle {
     let (response_tx, _response_rx) = mpsc::channel(16);
     let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+    let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
     spawn_reader_task_for_language(
         reader,
         router,
@@ -322,6 +335,7 @@ pub(crate) fn spawn_reader_task_with_liveness(
         None,
         response_tx,
         dynamic_capabilities,
+        upstream_tx,
     )
 }
 
@@ -342,6 +356,7 @@ pub(crate) fn spawn_reader_task_for_language(
     language: Option<String>,
     response_tx: mpsc::Sender<OutboundMessage>,
     dynamic_capabilities: Arc<DynamicCapabilityRegistry>,
+    upstream_tx: mpsc::UnboundedSender<UpstreamNotification>,
 ) -> ReaderTaskHandle {
     let cancel_token = CancellationToken::new();
     let token_clone = cancel_token.clone();
@@ -366,6 +381,7 @@ pub(crate) fn spawn_reader_task_for_language(
         language,
         response_tx,
         dynamic_capabilities,
+        upstream_tx,
     ));
 
     ReaderTaskHandle {
@@ -395,6 +411,7 @@ async fn reader_loop(
     // Create dummy channel and registry for tests that don't need server request handling
     let (response_tx, _response_rx) = mpsc::channel(16);
     let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+    let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
     reader_loop_with_liveness(
         reader,
         router,
@@ -406,6 +423,7 @@ async fn reader_loop(
         None, // No language context for test helper
         response_tx,
         dynamic_capabilities,
+        upstream_tx,
     )
     .await
 }
@@ -436,6 +454,7 @@ async fn reader_loop_with_liveness(
     language: Option<String>,
     response_tx: mpsc::Sender<OutboundMessage>,
     dynamic_capabilities: Arc<DynamicCapabilityRegistry>,
+    upstream_tx: mpsc::UnboundedSender<UpstreamNotification>,
 ) {
     // Language prefix for log messages (e.g., "[lua] " or "")
     let lang_prefix = language
@@ -496,7 +515,7 @@ async fn reader_loop_with_liveness(
                         // Reset liveness timer on any message activity (ADR-0014)
                         liveness.reset(&lang_prefix);
 
-                        handle_message(message, &router, &lang_prefix, &response_tx, &dynamic_capabilities).await;
+                        handle_message(message, &router, &lang_prefix, &response_tx, &dynamic_capabilities, &upstream_tx).await;
 
                         // Check if pending count returned to 0 - stop timer
                         if liveness.is_active() && router.pending_count() == 0 {
@@ -553,6 +572,7 @@ async fn handle_message(
     lang_prefix: &str,
     response_tx: &mpsc::Sender<OutboundMessage>,
     dynamic_capabilities: &DynamicCapabilityRegistry,
+    upstream_tx: &mpsc::UnboundedSender<UpstreamNotification>,
 ) {
     match classify_message(&message) {
         MessageKind::Response => {
@@ -584,7 +604,14 @@ async fn handle_message(
             }
         }
         MessageKind::ServerRequest => {
-            handle_server_request(message, lang_prefix, response_tx, dynamic_capabilities).await;
+            handle_server_request(
+                message,
+                lang_prefix,
+                response_tx,
+                dynamic_capabilities,
+                upstream_tx,
+            )
+            .await;
         }
         MessageKind::Notification => {
             // Notifications are silently ignored (no logging needed)
@@ -609,6 +636,7 @@ async fn handle_server_request(
     lang_prefix: &str,
     response_tx: &mpsc::Sender<OutboundMessage>,
     dynamic_capabilities: &DynamicCapabilityRegistry,
+    _upstream_tx: &mpsc::UnboundedSender<UpstreamNotification>,
 ) {
     let id = message
         .get("id")
@@ -778,14 +806,17 @@ mod tests {
         drop(writer);
     }
 
-    /// Create dummy response_tx and dynamic_capabilities for tests that don't need server request handling.
+    /// Create dummy response_tx, dynamic_capabilities, and upstream_tx for tests
+    /// that don't need server request handling.
     fn dummy_server_request_deps() -> (
         mpsc::Sender<OutboundMessage>,
         Arc<DynamicCapabilityRegistry>,
+        mpsc::UnboundedSender<UpstreamNotification>,
     ) {
         let (tx, _rx) = mpsc::channel(16);
         let caps = Arc::new(DynamicCapabilityRegistry::new());
-        (tx, caps)
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+        (tx, caps, upstream_tx)
     }
 
     #[tokio::test]
@@ -794,7 +825,7 @@ mod tests {
         let _rx = router
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
             .unwrap();
-        let (response_tx, dynamic_capabilities) = dummy_server_request_deps();
+        let (response_tx, dynamic_capabilities, upstream_tx) = dummy_server_request_deps();
 
         let response = json!({
             "jsonrpc": "2.0",
@@ -802,7 +833,15 @@ mod tests {
             "result": null
         });
 
-        handle_message(response, &router, "", &response_tx, &dynamic_capabilities).await;
+        handle_message(
+            response,
+            &router,
+            "",
+            &response_tx,
+            &dynamic_capabilities,
+            &upstream_tx,
+        )
+        .await;
 
         // Receiver should have the response
         // We can't block on rx.await here in a sync test, but we can check
@@ -816,7 +855,7 @@ mod tests {
         let _rx = router
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
             .unwrap();
-        let (response_tx, dynamic_capabilities) = dummy_server_request_deps();
+        let (response_tx, dynamic_capabilities, upstream_tx) = dummy_server_request_deps();
 
         let notification = json!({
             "jsonrpc": "2.0",
@@ -830,6 +869,7 @@ mod tests {
             "",
             &response_tx,
             &dynamic_capabilities,
+            &upstream_tx,
         )
         .await;
 
@@ -1097,7 +1137,7 @@ mod tests {
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
             .unwrap();
         assert_eq!(router.pending_count(), 1);
-        let (response_tx, dynamic_capabilities) = dummy_server_request_deps();
+        let (response_tx, dynamic_capabilities, upstream_tx) = dummy_server_request_deps();
 
         // Server-initiated request: has both "id" and "method"
         let server_request = json!({
@@ -1113,6 +1153,7 @@ mod tests {
             "",
             &response_tx,
             &dynamic_capabilities,
+            &upstream_tx,
         )
         .await;
 
@@ -1134,6 +1175,7 @@ mod tests {
         let router = ResponseRouter::new();
         let (response_tx, mut response_rx) = mpsc::channel(16);
         let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
 
         let message = json!({
             "jsonrpc": "2.0",
@@ -1150,7 +1192,15 @@ mod tests {
             }
         });
 
-        handle_message(message, &router, "", &response_tx, &dynamic_capabilities).await;
+        handle_message(
+            message,
+            &router,
+            "",
+            &response_tx,
+            &dynamic_capabilities,
+            &upstream_tx,
+        )
+        .await;
 
         // Registry should have the registration
         assert!(dynamic_capabilities.has_registration("textDocument/diagnostic"));
@@ -1171,6 +1221,7 @@ mod tests {
         let router = ResponseRouter::new();
         let (response_tx, mut response_rx) = mpsc::channel(16);
         let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
 
         // First register a capability
         dynamic_capabilities.register(vec![tower_lsp_server::ls_types::Registration {
@@ -1195,7 +1246,15 @@ mod tests {
             }
         });
 
-        handle_message(message, &router, "", &response_tx, &dynamic_capabilities).await;
+        handle_message(
+            message,
+            &router,
+            "",
+            &response_tx,
+            &dynamic_capabilities,
+            &upstream_tx,
+        )
+        .await;
 
         // Registry should no longer have the registration
         assert!(!dynamic_capabilities.has_registration("textDocument/diagnostic"));
@@ -1216,6 +1275,7 @@ mod tests {
         let router = ResponseRouter::new();
         let (response_tx, mut response_rx) = mpsc::channel(16);
         let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
 
         let message = json!({
             "jsonrpc": "2.0",
@@ -1226,7 +1286,15 @@ mod tests {
             }
         });
 
-        handle_message(message, &router, "", &response_tx, &dynamic_capabilities).await;
+        handle_message(
+            message,
+            &router,
+            "",
+            &response_tx,
+            &dynamic_capabilities,
+            &upstream_tx,
+        )
+        .await;
 
         // A success response should have been sent
         let response = response_rx.try_recv().expect("should have response");
@@ -1244,6 +1312,7 @@ mod tests {
         let router = ResponseRouter::new();
         let (response_tx, mut response_rx) = mpsc::channel(16);
         let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
 
         let message = json!({
             "jsonrpc": "2.0",
@@ -1252,7 +1321,15 @@ mod tests {
             "params": {}
         });
 
-        handle_message(message, &router, "", &response_tx, &dynamic_capabilities).await;
+        handle_message(
+            message,
+            &router,
+            "",
+            &response_tx,
+            &dynamic_capabilities,
+            &upstream_tx,
+        )
+        .await;
 
         let response = response_rx.try_recv().expect("should have response");
         match response {
@@ -1280,6 +1357,7 @@ mod tests {
         // Use capacity=1 to simulate backpressure
         let (response_tx, mut response_rx) = mpsc::channel(1);
         let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
 
         // Fill the channel with a dummy message to create backpressure
         response_tx
@@ -1290,6 +1368,7 @@ mod tests {
         // Spawn handle_server_request in a separate task (it needs to await)
         let tx_clone = response_tx.clone();
         let caps_clone = Arc::clone(&dynamic_capabilities);
+        let upstream_tx_clone = upstream_tx.clone();
         let handle = tokio::spawn(async move {
             let message = json!({
                 "jsonrpc": "2.0",
@@ -1297,7 +1376,7 @@ mod tests {
                 "method": "window/workDoneProgress/create",
                 "params": { "token": "test" }
             });
-            handle_server_request(message, "", &tx_clone, &caps_clone).await;
+            handle_server_request(message, "", &tx_clone, &caps_clone, &upstream_tx_clone).await;
         });
 
         // Give handle_server_request a moment to start waiting
@@ -1332,6 +1411,7 @@ mod tests {
     async fn server_request_response_closed_channel_no_panic() {
         let (response_tx, response_rx) = mpsc::channel(1);
         let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
 
         // Drop the receiver to simulate a closed channel
         drop(response_rx);
@@ -1344,7 +1424,14 @@ mod tests {
         });
 
         // Should not panic
-        handle_server_request(message, "", &response_tx, &dynamic_capabilities).await;
+        handle_server_request(
+            message,
+            "",
+            &response_tx,
+            &dynamic_capabilities,
+            &upstream_tx,
+        )
+        .await;
     }
 
     // ============================================================
