@@ -127,37 +127,6 @@ pub(crate) fn build_didopen_notification(
     })
 }
 
-/// Build a JSON-RPC didChange notification for a downstream language server.
-///
-/// Uses full text sync (TextDocumentSyncKind::Full) which sends the entire
-/// document content on each change. This is simpler and sufficient for bridge use.
-pub(crate) fn build_didchange_notification(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    injection_language: &str,
-    region_id: &str,
-    new_content: &str,
-    version: i32,
-) -> serde_json::Value {
-    // Create virtual document URI
-    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-
-    serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didChange",
-        "params": {
-            "textDocument": {
-                "uri": virtual_uri.to_uri_string(),
-                "version": version
-            },
-            "contentChanges": [
-                {
-                    "text": new_content
-                }
-            ]
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,35 +175,5 @@ mod tests {
 
         // This should pass - the extension is .py even though URI ends with #cell-id
         assert_uses_virtual_uri(&request, "py");
-    }
-
-    // ==========================================================================
-    // didChange notification tests
-    // ==========================================================================
-
-    #[test]
-    fn didchange_notification_uses_virtual_uri() {
-        let notification =
-            build_didchange_notification(&test_host_uri(), "lua", "region-0", "local x = 42", 2);
-
-        assert_eq!(notification["jsonrpc"], "2.0");
-        assert_eq!(notification["method"], "textDocument/didChange");
-        assert!(
-            notification.get("id").is_none(),
-            "Notification should not have id"
-        );
-        assert_uses_virtual_uri(&notification, "lua");
-        assert_eq!(notification["params"]["textDocument"]["version"], 2);
-    }
-
-    #[test]
-    fn didchange_notification_contains_full_text() {
-        let content = "local x = 42\nprint(x)";
-        let notification =
-            build_didchange_notification(&test_host_uri(), "lua", "region-0", content, 1);
-
-        let changes = notification["params"]["contentChanges"].as_array().unwrap();
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0]["text"], content);
     }
 }
