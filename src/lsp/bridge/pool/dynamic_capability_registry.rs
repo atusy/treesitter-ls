@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Will be used by ConnectionHandle in a subsequent subtask
+
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -18,6 +20,60 @@ use tower_lsp_server::ls_types::{Registration, Unregistration};
 /// (`has_registration` check) but means we don't track per-selector registrations.
 pub(crate) struct DynamicCapabilityRegistry {
     registrations: RwLock<HashMap<String, Registration>>,
+}
+
+impl DynamicCapabilityRegistry {
+    pub(crate) fn new() -> Self {
+        Self {
+            registrations: RwLock::new(HashMap::new()),
+        }
+    }
+
+    pub(crate) fn register(&self, registrations: Vec<Registration>) {
+        let mut guard = match self.registrations.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!(
+                    target: "kakehashi::lock_recovery",
+                    "Recovered from poisoned lock in DynamicCapabilityRegistry::register()"
+                );
+                poisoned.into_inner()
+            }
+        };
+        for reg in registrations {
+            guard.insert(reg.method.clone(), reg);
+        }
+    }
+
+    pub(crate) fn unregister(&self, unregistrations: Vec<Unregistration>) {
+        let mut guard = match self.registrations.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!(
+                    target: "kakehashi::lock_recovery",
+                    "Recovered from poisoned lock in DynamicCapabilityRegistry::unregister()"
+                );
+                poisoned.into_inner()
+            }
+        };
+        for unreg in unregistrations {
+            guard.remove(&unreg.method);
+        }
+    }
+
+    pub(crate) fn has_registration(&self, method: &str) -> bool {
+        let guard = match self.registrations.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!(
+                    target: "kakehashi::lock_recovery",
+                    "Recovered from poisoned lock in DynamicCapabilityRegistry::has_registration()"
+                );
+                poisoned.into_inner()
+            }
+        };
+        guard.contains_key(method)
+    }
 }
 
 #[cfg(test)]
