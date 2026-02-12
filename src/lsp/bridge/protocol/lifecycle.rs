@@ -5,6 +5,83 @@
 
 use super::request_id::RequestId;
 
+/// Build the client capabilities the bridge declares to downstream servers.
+///
+/// These capabilities inform downstream servers which LSP features the bridge
+/// can handle, enabling richer responses (e.g., `LocationLink` instead of `Location`).
+///
+/// Uses typed `ClientCapabilities` from `ls_types` for compile-time field validation.
+fn build_bridge_client_capabilities() -> serde_json::Value {
+    use tower_lsp_server::ls_types::{
+        ClientCapabilities, CompletionClientCapabilities, CompletionItemCapability,
+        DiagnosticClientCapabilities, DocumentLinkClientCapabilities,
+        DocumentSymbolClientCapabilities, GotoCapability, HoverClientCapabilities, MarkupKind,
+        TextDocumentClientCapabilities,
+    };
+
+    let goto_link = Some(GotoCapability {
+        link_support: Some(true),
+        ..Default::default()
+    });
+
+    #[allow(unused_mut)] // mutated only with "experimental" feature
+    let mut text_document = TextDocumentClientCapabilities {
+        hover: Some(HoverClientCapabilities {
+            content_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
+            ..Default::default()
+        }),
+        completion: Some(CompletionClientCapabilities {
+            completion_item: Some(CompletionItemCapability {
+                snippet_support: Some(true),
+                insert_replace_support: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        definition: goto_link,
+        type_definition: goto_link,
+        implementation: goto_link,
+        declaration: goto_link,
+        references: Some(Default::default()),
+        signature_help: Some(Default::default()),
+        document_highlight: Some(Default::default()),
+        document_symbol: Some(DocumentSymbolClientCapabilities {
+            hierarchical_document_symbol_support: Some(true),
+            ..Default::default()
+        }),
+        document_link: Some(DocumentLinkClientCapabilities {
+            dynamic_registration: None,
+            tooltip_support: Some(true),
+        }),
+        inlay_hint: Some(Default::default()),
+        diagnostic: Some(DiagnosticClientCapabilities {
+            related_document_support: Some(true),
+            ..Default::default()
+        }),
+        moniker: Some(Default::default()),
+        ..Default::default()
+    };
+
+    #[cfg(feature = "experimental")]
+    {
+        text_document.color_provider = Some(Default::default());
+    }
+
+    let capabilities = ClientCapabilities {
+        text_document: Some(text_document),
+        ..Default::default()
+    };
+
+    serde_json::to_value(capabilities).unwrap_or_else(|e| {
+        log::warn!(
+            target: "kakehashi::bridge",
+            "Failed to serialize ClientCapabilities, falling back to empty: {}",
+            e
+        );
+        serde_json::json!({})
+    })
+}
+
 /// Build an LSP initialize request.
 ///
 /// # Arguments
@@ -23,7 +100,7 @@ pub(crate) fn build_initialize_request(
         "params": {
             "processId": std::process::id(),
             "rootUri": root_uri,
-            "capabilities": {},
+            "capabilities": build_bridge_client_capabilities(),
             "initializationOptions": initialization_options
         }
     })
@@ -123,6 +200,12 @@ mod tests {
     use rstest::rstest;
 
     #[test]
+    fn bridge_client_capabilities_snapshot() {
+        let capabilities = build_bridge_client_capabilities();
+        insta::assert_json_snapshot!(capabilities);
+    }
+
+    #[test]
     fn initialize_request_has_correct_structure() {
         let request = build_initialize_request(RequestId::new(1), None, None);
 
@@ -133,6 +216,23 @@ mod tests {
         assert!(request["params"]["rootUri"].is_null());
         assert!(request["params"]["capabilities"].is_object());
         assert!(request["params"]["initializationOptions"].is_null());
+    }
+
+    #[test]
+    fn initialize_request_includes_bridge_capabilities() {
+        let request = build_initialize_request(RequestId::new(1), None, None);
+        let capabilities = &request["params"]["capabilities"];
+
+        // Should declare linkSupport for goto-family methods
+        assert_eq!(
+            capabilities["textDocument"]["definition"]["linkSupport"],
+            true
+        );
+        // Should declare hierarchical document symbol support
+        assert_eq!(
+            capabilities["textDocument"]["documentSymbol"]["hierarchicalDocumentSymbolSupport"],
+            true
+        );
     }
 
     #[test]
