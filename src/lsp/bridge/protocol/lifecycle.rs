@@ -9,7 +9,6 @@ use super::request_id::RequestId;
 ///
 /// These capabilities inform downstream servers which LSP features the bridge
 /// can handle, enabling richer responses (e.g., `LocationLink` instead of `Location`).
-#[allow(dead_code)] // Used in tests now; wired into build_initialize_request next
 fn build_bridge_client_capabilities() -> serde_json::Value {
     serde_json::json!({
         "textDocument": {
@@ -66,7 +65,7 @@ pub(crate) fn build_initialize_request(
         "params": {
             "processId": std::process::id(),
             "rootUri": root_uri,
-            "capabilities": {},
+            "capabilities": build_bridge_client_capabilities(),
             "initializationOptions": initialization_options
         }
     })
@@ -190,7 +189,10 @@ mod tests {
         let capabilities = &request["params"]["capabilities"];
 
         // Should declare linkSupport for goto-family methods
-        assert_eq!(capabilities["textDocument"]["definition"]["linkSupport"], true);
+        assert_eq!(
+            capabilities["textDocument"]["definition"]["linkSupport"],
+            true
+        );
         // Should declare hierarchical document symbol support
         assert_eq!(
             capabilities["textDocument"]["documentSymbol"]["hierarchicalDocumentSymbolSupport"],
