@@ -5,6 +5,49 @@
 
 use super::request_id::RequestId;
 
+/// Build the client capabilities the bridge declares to downstream servers.
+///
+/// These capabilities inform downstream servers which LSP features the bridge
+/// can handle, enabling richer responses (e.g., `LocationLink` instead of `Location`).
+#[allow(dead_code)] // Used in tests now; wired into build_initialize_request next
+fn build_bridge_client_capabilities() -> serde_json::Value {
+    serde_json::json!({
+        "textDocument": {
+            "hover": {
+                "contentFormat": ["markdown", "plaintext"]
+            },
+            "completion": {
+                "completionItem": {
+                    "snippetSupport": false
+                }
+            },
+            "definition": {
+                "linkSupport": true
+            },
+            "typeDefinition": {
+                "linkSupport": true
+            },
+            "implementation": {
+                "linkSupport": true
+            },
+            "declaration": {
+                "linkSupport": true
+            },
+            "references": {},
+            "signatureHelp": {},
+            "documentHighlight": {},
+            "documentSymbol": {
+                "hierarchicalDocumentSymbolSupport": true
+            },
+            "documentLink": {},
+            "colorProvider": {},
+            "inlayHint": {},
+            "diagnostic": {},
+            "moniker": {}
+        }
+    })
+}
+
 /// Build an LSP initialize request.
 ///
 /// # Arguments

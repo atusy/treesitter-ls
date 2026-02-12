@@ -1,0 +1,42 @@
+---
+source: src/lsp/bridge/protocol/lifecycle.rs
+expression: capabilities
+---
+{
+  "textDocument": {
+    "colorProvider": {},
+    "completion": {
+      "completionItem": {
+        "snippetSupport": false
+      }
+    },
+    "declaration": {
+      "linkSupport": true
+    },
+    "definition": {
+      "linkSupport": true
+    },
+    "diagnostic": {},
+    "documentHighlight": {},
+    "documentLink": {},
+    "documentSymbol": {
+      "hierarchicalDocumentSymbolSupport": true
+    },
+    "hover": {
+      "contentFormat": [
+        "markdown",
+        "plaintext"
+      ]
+    },
+    "implementation": {
+      "linkSupport": true
+    },
+    "inlayHint": {},
+    "moniker": {},
+    "references": {},
+    "signatureHelp": {},
+    "typeDefinition": {
+      "linkSupport": true
+    }
+  }
+}
