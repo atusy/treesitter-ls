@@ -185,6 +185,20 @@ mod tests {
     }
 
     #[test]
+    fn initialize_request_includes_bridge_capabilities() {
+        let request = build_initialize_request(RequestId::new(1), None, None);
+        let capabilities = &request["params"]["capabilities"];
+
+        // Should declare linkSupport for goto-family methods
+        assert_eq!(capabilities["textDocument"]["definition"]["linkSupport"], true);
+        // Should declare hierarchical document symbol support
+        assert_eq!(
+            capabilities["textDocument"]["documentSymbol"]["hierarchicalDocumentSymbolSupport"],
+            true
+        );
+    }
+
+    #[test]
     fn initialize_request_includes_initialization_options() {
         let options = serde_json::json!({
             "settings": {
