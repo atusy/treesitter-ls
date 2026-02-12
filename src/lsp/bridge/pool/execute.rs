@@ -64,8 +64,8 @@ impl LanguageServerPool {
     /// * `region_start_line` - The starting line of the injection region in the host document
     /// * `virtual_content` - The content of the virtual document
     /// * `upstream_request_id` - The original request ID from the upstream client
-    /// * `build_request` - Closure to build the JSON-RPC request from the host URI,
-    ///   virtual document URI, and allocated request ID
+    /// * `build_request` - Closure to build the JSON-RPC request from the
+    ///   virtual document URI and allocated request ID
     /// * `transform_response` - Closure to transform the raw JSON-RPC response into the
     ///   typed result, given the response context
     ///
@@ -94,7 +94,7 @@ impl LanguageServerPool {
         region_start_line: u32,
         virtual_content: &str,
         upstream_request_id: UpstreamId,
-        build_request: impl FnOnce(&Uri, &VirtualDocumentUri, RequestId) -> serde_json::Value,
+        build_request: impl FnOnce(&VirtualDocumentUri, RequestId) -> serde_json::Value,
         transform_response: impl FnOnce(serde_json::Value, &BridgeResponseContext<'_>) -> T,
     ) -> io::Result<T> {
         // Get or create connection - state check is atomic with lookup (ADR-0015)
@@ -127,7 +127,7 @@ impl LanguageServerPool {
             };
 
         // Build the request via caller-provided closure
-        let request = build_request(&host_uri_lsp, &virtual_uri, request_id);
+        let request = build_request(&virtual_uri, request_id);
 
         // Use a closure for cleanup on any failure path
         let cleanup = || {
@@ -210,7 +210,7 @@ mod tests {
                 3,
                 "print('hello')",
                 UpstreamId::Number(1),
-                |_host_uri_lsp, _virtual_uri, _request_id| {
+                |_virtual_uri, _request_id| {
                     panic!("build_request should not be called during init");
                 },
                 |_response, _ctx| -> Option<()> {

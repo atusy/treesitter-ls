@@ -11,15 +11,12 @@ use super::virtual_uri::VirtualDocumentUri;
 ///
 /// This is the core helper for building LSP requests that operate on a position
 /// (hover, completion, definition, etc.). It handles:
-/// - Creating the virtual document URI
 /// - Translating host position to virtual coordinates
 /// - Building the JSON-RPC request structure
 ///
 /// # Arguments
-/// * `host_uri` - The URI of the host document
+/// * `virtual_uri` - The pre-built virtual document URI
 /// * `host_position` - The position in the host document
-/// * `injection_language` - The injection language (e.g., "lua")
-/// * `region_id` - The unique region ID for this injection
 /// * `region_start_line` - The starting line of the injection region in the host document
 /// * `request_id` - The JSON-RPC request ID
 /// * `method` - The LSP method name (e.g., "textDocument/hover")
@@ -31,17 +28,12 @@ use super::virtual_uri::VirtualDocumentUri;
 /// data while an LSP request is in flight. In such cases, the request will use
 /// line 0, which may produce incorrect results but won't crash the server.
 pub(crate) fn build_position_based_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
+    virtual_uri: &VirtualDocumentUri,
     host_position: tower_lsp_server::ls_types::Position,
-    injection_language: &str,
-    region_id: &str,
     region_start_line: u32,
     request_id: RequestId,
     method: &str,
 ) -> serde_json::Value {
-    // Create virtual document URI
-    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-
     // Translate position from host to virtual coordinates
     // Uses saturating_sub to prevent panic on race conditions where stale region data
     // has region_start_line > host_position.line after a document edit
@@ -71,24 +63,17 @@ pub(crate) fn build_position_based_request(
 /// This is the core helper for building LSP requests that operate on an entire
 /// document without position (documentLink, documentSymbol, documentColor, etc.).
 /// It handles:
-/// - Creating the virtual document URI
 /// - Building the JSON-RPC request structure with just textDocument
 ///
 /// # Arguments
-/// * `host_uri` - The URI of the host document
-/// * `injection_language` - The injection language (e.g., "lua")
-/// * `region_id` - The unique region ID for this injection
+/// * `virtual_uri` - The pre-built virtual document URI
 /// * `request_id` - The JSON-RPC request ID
 /// * `method` - The LSP method name (e.g., "textDocument/documentLink")
 pub(crate) fn build_whole_document_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    injection_language: &str,
-    region_id: &str,
+    virtual_uri: &VirtualDocumentUri,
     request_id: RequestId,
     method: &str,
 ) -> serde_json::Value {
-    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-
     serde_json::json!({
         "jsonrpc": "2.0",
         "id": request_id.as_i64(),

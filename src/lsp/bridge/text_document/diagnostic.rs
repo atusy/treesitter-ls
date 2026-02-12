@@ -86,14 +86,8 @@ impl LanguageServerPool {
             region_start_line,
             virtual_content,
             upstream_request_id,
-            |host_uri_lsp, _virtual_uri, request_id| {
-                build_diagnostic_request(
-                    host_uri_lsp,
-                    injection_language,
-                    region_id,
-                    request_id,
-                    previous_result_id,
-                )
+            |virtual_uri, request_id| {
+                build_diagnostic_request(virtual_uri, request_id, previous_result_id)
             },
             |response, ctx| {
                 transform_diagnostic_response_to_host(
@@ -113,20 +107,14 @@ impl LanguageServerPool {
 /// The request may include an optional previousResultId for incremental updates.
 ///
 /// # Arguments
-/// * `host_uri` - The URI of the host document
-/// * `injection_language` - The injection language (e.g., "lua")
-/// * `region_id` - The unique region ID for this injection
+/// * `virtual_uri` - The pre-built virtual document URI
 /// * `request_id` - The JSON-RPC request ID
 /// * `previous_result_id` - Optional previous result ID for incremental updates
 fn build_diagnostic_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
-    injection_language: &str,
-    region_id: &str,
+    virtual_uri: &VirtualDocumentUri,
     request_id: RequestId,
     previous_result_id: Option<&str>,
 ) -> serde_json::Value {
-    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-
     let mut params = serde_json::json!({
         "textDocument": {
             "uri": virtual_uri.to_uri_string()
@@ -550,13 +538,8 @@ mod tests {
 
     #[test]
     fn diagnostic_request_uses_virtual_uri() {
-        let request = build_diagnostic_request(
-            &test_host_uri(),
-            "lua",
-            "region-0",
-            RequestId::new(42),
-            None,
-        );
+        let virtual_uri = VirtualDocumentUri::new(&test_host_uri(), "lua", "region-0");
+        let request = build_diagnostic_request(&virtual_uri, RequestId::new(42), None);
 
         let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
         let url = url::Url::parse(uri_str).expect("URI should be parseable");
@@ -573,13 +556,8 @@ mod tests {
 
     #[test]
     fn diagnostic_request_has_correct_method_and_structure() {
-        let request = build_diagnostic_request(
-            &test_host_uri(),
-            "lua",
-            "region-0",
-            RequestId::new(123),
-            None,
-        );
+        let virtual_uri = VirtualDocumentUri::new(&test_host_uri(), "lua", "region-0");
+        let request = build_diagnostic_request(&virtual_uri, RequestId::new(123), None);
 
         assert_eq!(request["jsonrpc"], "2.0");
         assert_eq!(request["id"], 123);
@@ -598,13 +576,9 @@ mod tests {
 
     #[test]
     fn diagnostic_request_includes_previous_result_id_when_provided() {
-        let request = build_diagnostic_request(
-            &test_host_uri(),
-            "lua",
-            "region-0",
-            RequestId::new(123),
-            Some("prev-result-123"),
-        );
+        let virtual_uri = VirtualDocumentUri::new(&test_host_uri(), "lua", "region-0");
+        let request =
+            build_diagnostic_request(&virtual_uri, RequestId::new(123), Some("prev-result-123"));
 
         assert_eq!(request["params"]["previousResultId"], "prev-result-123");
     }

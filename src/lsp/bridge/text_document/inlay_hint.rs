@@ -51,15 +51,8 @@ impl LanguageServerPool {
             region_start_line,
             virtual_content,
             upstream_request_id,
-            |host_uri_lsp, _virtual_uri, request_id| {
-                build_inlay_hint_request(
-                    host_uri_lsp,
-                    host_range,
-                    injection_language,
-                    region_id,
-                    region_start_line,
-                    request_id,
-                )
+            |virtual_uri, request_id| {
+                build_inlay_hint_request(virtual_uri, host_range, region_start_line, request_id)
             },
             |response, ctx| {
                 transform_inlay_hint_response_to_host(
@@ -86,16 +79,11 @@ impl LanguageServerPool {
 /// Uses `saturating_sub` for line translation to prevent panic on underflow during
 /// race conditions when document edits invalidate region data.
 fn build_inlay_hint_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
+    virtual_uri: &VirtualDocumentUri,
     host_range: Range,
-    injection_language: &str,
-    region_id: &str,
     region_start_line: u32,
     request_id: RequestId,
 ) -> serde_json::Value {
-    // Create virtual document URI
-    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-
     // Translate range from host to virtual coordinates
     // Uses saturating_sub to prevent panic on race conditions
     let virtual_range = Range {
@@ -238,14 +226,8 @@ mod tests {
                 character: 0,
             },
         };
-        let request = build_inlay_hint_request(
-            &host_uri,
-            host_range,
-            "lua",
-            "region-0",
-            5,
-            RequestId::new(1),
-        );
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
+        let request = build_inlay_hint_request(&virtual_uri, host_range, 5, RequestId::new(1));
 
         let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
         assert!(
@@ -278,11 +260,10 @@ mod tests {
             },
         };
         let region_start_line = 8;
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
         let request = build_inlay_hint_request(
-            &host_uri,
+            &virtual_uri,
             host_range,
-            "lua",
-            "region-0",
             region_start_line,
             RequestId::new(42),
         );
@@ -315,14 +296,8 @@ mod tests {
                 character: 0,
             },
         };
-        let request = build_inlay_hint_request(
-            &host_uri,
-            host_range,
-            "lua",
-            "region-0",
-            10,
-            RequestId::new(1),
-        );
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
+        let request = build_inlay_hint_request(&virtual_uri, host_range, 10, RequestId::new(1));
 
         // saturating_sub: 2 - 10 = 0, 5 - 10 = 0
         assert_eq!(request["params"]["range"]["start"]["line"], 0);

@@ -52,13 +52,11 @@ impl LanguageServerPool {
             region_start_line,
             virtual_content,
             upstream_request_id,
-            |host_uri_lsp, _virtual_uri, request_id| {
+            |virtual_uri, request_id| {
                 build_color_presentation_request(
-                    host_uri_lsp,
+                    virtual_uri,
                     host_range,
                     color,
-                    injection_language,
-                    region_id,
                     region_start_line,
                     request_id,
                 )
@@ -81,17 +79,12 @@ impl LanguageServerPool {
 /// Uses `saturating_sub` for line translation to prevent panic on underflow during
 /// race conditions when document edits invalidate region data.
 fn build_color_presentation_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
+    virtual_uri: &VirtualDocumentUri,
     host_range: Range,
     color: &serde_json::Value,
-    injection_language: &str,
-    region_id: &str,
     region_start_line: u32,
     request_id: RequestId,
 ) -> serde_json::Value {
-    // Create virtual document URI
-    let virtual_uri = VirtualDocumentUri::new(host_uri, injection_language, region_id);
-
     // Translate range from host to virtual coordinates
     // Uses saturating_sub to prevent panic on race conditions
     let virtual_range = Range {
@@ -211,12 +204,11 @@ mod tests {
             "blue": 0.0,
             "alpha": 1.0
         });
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
         let request = build_color_presentation_request(
-            &host_uri,
+            &virtual_uri,
             host_range,
             &color,
-            "lua",
-            "region-0",
             3,
             RequestId::new(42),
         );
@@ -260,12 +252,11 @@ mod tests {
             "blue": 0.0,
             "alpha": 1.0
         });
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
         let request = build_color_presentation_request(
-            &host_uri,
+            &virtual_uri,
             host_range,
             &color,
-            "lua",
-            "region-0",
             3,
             RequestId::new(42),
         );
@@ -313,12 +304,11 @@ mod tests {
             "blue": 0.75,
             "alpha": 1.0
         });
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
         let request = build_color_presentation_request(
-            &host_uri,
+            &virtual_uri,
             host_range,
             &color,
-            "lua",
-            "region-0",
             3,
             RequestId::new(42),
         );
@@ -358,12 +348,11 @@ mod tests {
             "alpha": 1.0
         });
 
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
         let request = build_color_presentation_request(
-            &host_uri,
+            &virtual_uri,
             host_range,
             &color,
-            "lua",
-            "region-0",
             10, // region_start_line > range lines
             RequestId::new(42),
         );

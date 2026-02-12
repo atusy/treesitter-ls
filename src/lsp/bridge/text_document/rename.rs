@@ -52,12 +52,10 @@ impl LanguageServerPool {
             region_start_line,
             virtual_content,
             upstream_request_id,
-            |host_uri_lsp, _virtual_uri, request_id| {
+            |virtual_uri, request_id| {
                 build_rename_request(
-                    host_uri_lsp,
+                    virtual_uri,
                     host_position,
-                    injection_language,
-                    region_id,
                     region_start_line,
                     new_name,
                     request_id,
@@ -86,19 +84,15 @@ impl LanguageServerPool {
 /// Uses `build_position_based_request` to handle host→virtual position
 /// translation, then adds the `newName` field to params.
 fn build_rename_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
+    virtual_uri: &VirtualDocumentUri,
     host_position: tower_lsp_server::ls_types::Position,
-    injection_language: &str,
-    region_id: &str,
     region_start_line: u32,
     new_name: &str,
     request_id: RequestId,
 ) -> serde_json::Value {
     let mut request = build_position_based_request(
-        host_uri,
+        virtual_uri,
         host_position,
-        injection_language,
-        region_id,
         region_start_line,
         request_id,
         "textDocument/rename",
@@ -288,15 +282,9 @@ mod tests {
             line: 5,
             character: 10,
         };
-        let request = build_rename_request(
-            &host_uri,
-            host_position,
-            "lua",
-            "region-0",
-            3,
-            "newName",
-            RequestId::new(1),
-        );
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
+        let request =
+            build_rename_request(&virtual_uri, host_position, 3, "newName", RequestId::new(1));
 
         let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
         assert!(
@@ -322,11 +310,10 @@ mod tests {
             line: 5,
             character: 10,
         };
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
         let request = build_rename_request(
-            &host_uri,
+            &virtual_uri,
             host_position,
-            "lua",
-            "region-0",
             3,
             "renamedVariable",
             RequestId::new(42),

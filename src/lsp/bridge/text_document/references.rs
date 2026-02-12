@@ -48,12 +48,10 @@ impl LanguageServerPool {
             region_start_line,
             virtual_content,
             upstream_request_id,
-            |host_uri_lsp, _virtual_uri, request_id| {
+            |virtual_uri, request_id| {
                 let mut request = build_position_based_request(
-                    host_uri_lsp,
+                    virtual_uri,
                     host_position,
-                    injection_language,
-                    region_id,
                     region_start_line,
                     request_id,
                     "textDocument/references",

@@ -49,14 +49,7 @@ impl LanguageServerPool {
             region_start_line,
             virtual_content,
             upstream_request_id,
-            |host_uri_lsp, _virtual_uri, request_id| {
-                build_document_symbol_request(
-                    host_uri_lsp,
-                    injection_language,
-                    region_id,
-                    request_id,
-                )
-            },
+            build_document_symbol_request,
             |response, ctx| {
                 transform_document_symbol_response_to_host(
                     response,
@@ -75,18 +68,10 @@ impl LanguageServerPool {
 /// Like DocumentLinkParams, DocumentSymbolParams only has a textDocument field -
 /// no position. The request asks for all symbols in the entire document.
 fn build_document_symbol_request(
-    host_uri: &Uri,
-    injection_language: &str,
-    region_id: &str,
+    virtual_uri: &VirtualDocumentUri,
     request_id: RequestId,
 ) -> serde_json::Value {
-    build_whole_document_request(
-        host_uri,
-        injection_language,
-        region_id,
-        request_id,
-        "textDocument/documentSymbol",
-    )
+    build_whole_document_request(virtual_uri, request_id, "textDocument/documentSymbol")
 }
 
 /// Transform a document symbol response from virtual to host document coordinates.
@@ -259,8 +244,8 @@ mod tests {
         let host_uri: Uri =
             crate::lsp::lsp_impl::url_to_uri(&Url::parse("file:///project/doc.md").unwrap())
                 .unwrap();
-        let request =
-            build_document_symbol_request(&host_uri, "lua", "region-0", RequestId::new(42));
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
+        let request = build_document_symbol_request(&virtual_uri, RequestId::new(42));
 
         let uri_str = request["params"]["textDocument"]["uri"].as_str().unwrap();
         assert!(
@@ -282,8 +267,8 @@ mod tests {
         let host_uri: Uri =
             crate::lsp::lsp_impl::url_to_uri(&Url::parse("file:///project/doc.md").unwrap())
                 .unwrap();
-        let request =
-            build_document_symbol_request(&host_uri, "lua", "region-0", RequestId::new(123));
+        let virtual_uri = VirtualDocumentUri::new(&host_uri, "lua", "region-0");
+        let request = build_document_symbol_request(&virtual_uri, RequestId::new(123));
 
         assert_eq!(request["jsonrpc"], "2.0");
         assert_eq!(request["id"], 123);

@@ -17,22 +17,18 @@ use tower_lsp_server::ls_types::{Position, SignatureHelp};
 use url::Url;
 
 use super::super::pool::{LanguageServerPool, UpstreamId};
-use super::super::protocol::{RequestId, build_position_based_request};
+use super::super::protocol::{RequestId, VirtualDocumentUri, build_position_based_request};
 
 /// Build a JSON-RPC signature help request for a downstream language server.
 fn build_signature_help_request(
-    host_uri: &tower_lsp_server::ls_types::Uri,
+    virtual_uri: &VirtualDocumentUri,
     host_position: tower_lsp_server::ls_types::Position,
-    injection_language: &str,
-    region_id: &str,
     region_start_line: u32,
     request_id: RequestId,
 ) -> serde_json::Value {
     build_position_based_request(
-        host_uri,
+        virtual_uri,
         host_position,
-        injection_language,
-        region_id,
         region_start_line,
         request_id,
         "textDocument/signatureHelp",
@@ -99,12 +95,10 @@ impl LanguageServerPool {
             region_start_line,
             virtual_content,
             upstream_request_id,
-            |host_uri_lsp, _virtual_uri, request_id| {
+            |virtual_uri, request_id| {
                 build_signature_help_request(
-                    host_uri_lsp,
+                    virtual_uri,
                     host_position,
-                    injection_language,
-                    region_id,
                     region_start_line,
                     request_id,
                 )
@@ -187,14 +181,9 @@ mod tests {
 
     #[test]
     fn signature_help_request_uses_virtual_uri() {
-        let request = build_signature_help_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
+        let virtual_uri = VirtualDocumentUri::new(&test_host_uri(), "lua", "region-0");
+        let request =
+            build_signature_help_request(&virtual_uri, test_position(), 3, test_request_id());
 
         assert_uses_virtual_uri(&request, "lua");
     }
@@ -202,14 +191,9 @@ mod tests {
     #[test]
     fn signature_help_request_translates_position_to_virtual_coordinates() {
         // Host line 5, region starts at line 3 -> virtual line 2
-        let request = build_signature_help_request(
-            &test_host_uri(),
-            test_position(),
-            "lua",
-            "region-0",
-            3,
-            test_request_id(),
-        );
+        let virtual_uri = VirtualDocumentUri::new(&test_host_uri(), "lua", "region-0");
+        let request =
+            build_signature_help_request(&virtual_uri, test_position(), 3, test_request_id());
 
         assert_position_request(&request, "textDocument/signatureHelp", 2);
     }
@@ -223,11 +207,10 @@ mod tests {
             character: 10,
         };
 
+        let virtual_uri = VirtualDocumentUri::new(&test_host_uri(), "lua", "region-0");
         let request = build_signature_help_request(
-            &test_host_uri(),
+            &virtual_uri,
             host_position,
-            "lua",
-            "region-0",
             5, // region_start_line > host_position.line
             test_request_id(),
         );
