@@ -705,7 +705,14 @@ async fn handle_server_request(
                     }
                 }
             } else {
-                Ok(())
+                warn!(
+                    target: "kakehashi::bridge::reader",
+                    "{}Request 'client/registerCapability' is missing 'params' field",
+                    lang_prefix
+                );
+                Err(jsonrpc::Error::invalid_params(
+                    "Request 'client/registerCapability' is missing 'params' field",
+                ))
             }
         }
         "client/unregisterCapability" => {
@@ -737,7 +744,14 @@ async fn handle_server_request(
                     }
                 }
             } else {
-                Ok(())
+                warn!(
+                    target: "kakehashi::bridge::reader",
+                    "{}Request 'client/unregisterCapability' is missing 'params' field",
+                    lang_prefix
+                );
+                Err(jsonrpc::Error::invalid_params(
+                    "Request 'client/unregisterCapability' is missing 'params' field",
+                ))
             }
         }
         "window/workDoneProgress/create" => {
@@ -1441,7 +1455,10 @@ mod tests {
         match response {
             OutboundMessage::Untracked(val) => {
                 assert_eq!(val["id"], 1);
-                assert_eq!(val["error"]["code"], -32602, "Should be InvalidParams error");
+                assert_eq!(
+                    val["error"]["code"], -32602,
+                    "Should be InvalidParams error"
+                );
             }
             _ => panic!("Expected Untracked variant"),
         }
@@ -1485,7 +1502,10 @@ mod tests {
         match response {
             OutboundMessage::Untracked(val) => {
                 assert_eq!(val["id"], 2);
-                assert_eq!(val["error"]["code"], -32602, "Should be InvalidParams error");
+                assert_eq!(
+                    val["error"]["code"], -32602,
+                    "Should be InvalidParams error"
+                );
             }
             _ => panic!("Expected Untracked variant"),
         }
