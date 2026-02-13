@@ -38,6 +38,30 @@ pub(crate) enum UpstreamNotification {
     DiagnosticRefresh,
 }
 
+/// Liveness channel endpoints for the reader task.
+///
+/// Groups the four liveness-related parameters that `reader_loop_with_liveness`
+/// needs: the timeout duration and the three channels for start/stop/failed
+/// signaling between the reader task and ConnectionHandle.
+struct LivenessParams {
+    timeout: Option<Duration>,
+    start_rx: mpsc::Receiver<()>,
+    stop_rx: mpsc::Receiver<()>,
+    failed_tx: oneshot::Sender<()>,
+}
+
+/// Dependencies for handling server-initiated requests.
+///
+/// Groups the parameters that `handle_server_request` needs: the language
+/// identifier (for logging), the response channel, the dynamic capability
+/// registry, and the upstream notification channel.
+struct ServerRequestDeps {
+    language: Option<String>,
+    response_tx: mpsc::Sender<OutboundMessage>,
+    dynamic_capabilities: Arc<DynamicCapabilityRegistry>,
+    upstream_tx: mpsc::UnboundedSender<UpstreamNotification>,
+}
+
 /// Type alias for the pinned liveness timer future.
 type LivenessTimer = std::pin::Pin<Box<tokio::time::Sleep>>;
 
@@ -369,18 +393,25 @@ pub(crate) fn spawn_reader_task_for_language(
     // Channel for liveness failure notification (Phase 3: state transition signaling)
     let (liveness_failed_tx, liveness_failed_rx) = oneshot::channel();
 
-    let join_handle = tokio::spawn(reader_loop_with_liveness(
-        reader,
-        router,
-        token_clone,
-        liveness_timeout,
-        liveness_start_rx,
-        liveness_stop_rx,
-        liveness_failed_tx,
+    let liveness = LivenessParams {
+        timeout: liveness_timeout,
+        start_rx: liveness_start_rx,
+        stop_rx: liveness_stop_rx,
+        failed_tx: liveness_failed_tx,
+    };
+    let server_request_deps = ServerRequestDeps {
         language,
         response_tx,
         dynamic_capabilities,
         upstream_tx,
+    };
+
+    let join_handle = tokio::spawn(reader_loop_with_liveness(
+        reader,
+        router,
+        token_clone,
+        liveness,
+        server_request_deps,
     ));
 
     ReaderTaskHandle {
@@ -411,20 +442,19 @@ async fn reader_loop(
     let (response_tx, _response_rx) = mpsc::channel(16);
     let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
     let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
-    reader_loop_with_liveness(
-        reader,
-        router,
-        cancel_token,
-        None,
+    let liveness = LivenessParams {
+        timeout: None,
         start_rx,
         stop_rx,
         failed_tx,
-        None, // No language context for test helper
+    };
+    let server_request_deps = ServerRequestDeps {
+        language: None,
         response_tx,
         dynamic_capabilities,
         upstream_tx,
-    )
-    .await
+    };
+    reader_loop_with_liveness(reader, router, cancel_token, liveness, server_request_deps).await
 }
 
 /// The main reader loop with optional liveness timeout support.
@@ -441,22 +471,24 @@ async fn reader_loop(
 ///
 /// When `language` is provided, all log messages include the language identifier
 /// for easier filtering in production (e.g., `[lua]` prefix in log messages).
-#[allow(clippy::too_many_arguments)] // Internal async fn; grouping would add complexity
 async fn reader_loop_with_liveness(
     mut reader: BridgeReader,
     router: Arc<ResponseRouter>,
     cancel_token: CancellationToken,
-    liveness_timeout: Option<Duration>,
-    mut liveness_start_rx: mpsc::Receiver<()>,
-    mut liveness_stop_rx: mpsc::Receiver<()>,
-    liveness_failed_tx: oneshot::Sender<()>,
-    language: Option<String>,
-    response_tx: mpsc::Sender<OutboundMessage>,
-    dynamic_capabilities: Arc<DynamicCapabilityRegistry>,
-    upstream_tx: mpsc::UnboundedSender<UpstreamNotification>,
+    liveness_params: LivenessParams,
+    server_request_deps: ServerRequestDeps,
 ) {
+    // Destructure parameter structs
+    let LivenessParams {
+        timeout: liveness_timeout,
+        start_rx: mut liveness_start_rx,
+        stop_rx: mut liveness_stop_rx,
+        failed_tx: liveness_failed_tx,
+    } = liveness_params;
+
     // Language prefix for log messages (e.g., "[lua] " or "")
-    let lang_prefix = language
+    let lang_prefix = server_request_deps
+        .language
         .as_ref()
         .map(|l| format!("[{}] ", l))
         .unwrap_or_default();
@@ -514,7 +546,7 @@ async fn reader_loop_with_liveness(
                         // Reset liveness timer on any message activity (ADR-0014)
                         liveness.reset(&lang_prefix);
 
-                        handle_message(message, &router, &lang_prefix, &response_tx, &dynamic_capabilities, &upstream_tx).await;
+                        handle_message(message, &router, &lang_prefix, &server_request_deps).await;
 
                         // Check if pending count returned to 0 - stop timer
                         if liveness.is_active() && router.pending_count() == 0 {
@@ -569,9 +601,7 @@ async fn handle_message(
     message: serde_json::Value,
     router: &ResponseRouter,
     lang_prefix: &str,
-    response_tx: &mpsc::Sender<OutboundMessage>,
-    dynamic_capabilities: &DynamicCapabilityRegistry,
-    upstream_tx: &mpsc::UnboundedSender<UpstreamNotification>,
+    deps: &ServerRequestDeps,
 ) {
     match classify_message(&message) {
         MessageKind::Response => {
@@ -603,14 +633,7 @@ async fn handle_message(
             }
         }
         MessageKind::ServerRequest => {
-            handle_server_request(
-                message,
-                lang_prefix,
-                response_tx,
-                dynamic_capabilities,
-                upstream_tx,
-            )
-            .await;
+            handle_server_request(message, lang_prefix, deps).await;
         }
         MessageKind::Notification => {
             // Notifications are silently ignored (no logging needed)
@@ -633,9 +656,7 @@ async fn handle_message(
 async fn handle_server_request(
     message: serde_json::Value,
     lang_prefix: &str,
-    response_tx: &mpsc::Sender<OutboundMessage>,
-    dynamic_capabilities: &DynamicCapabilityRegistry,
-    upstream_tx: &mpsc::UnboundedSender<UpstreamNotification>,
+    deps: &ServerRequestDeps,
 ) {
     let id = message
         .get("id")
@@ -657,7 +678,7 @@ async fn handle_server_request(
                                 lang_prefix, reg.method, reg.id
                             );
                         }
-                        dynamic_capabilities.register(reg_params.registrations);
+                        deps.dynamic_capabilities.register(reg_params.registrations);
                     }
                     Err(e) => {
                         warn!(
@@ -683,7 +704,8 @@ async fn handle_server_request(
                                 lang_prefix, unreg.method, unreg.id
                             );
                         }
-                        dynamic_capabilities.unregister(unreg_params.unregisterations);
+                        deps.dynamic_capabilities
+                            .unregister(unreg_params.unregisterations);
                     }
                     Err(e) => {
                         warn!(
@@ -714,7 +736,9 @@ async fn handle_server_request(
                 "{}Forwarding workspace/diagnostic/refresh upstream",
                 lang_prefix
             );
-            let _ = upstream_tx.send(UpstreamNotification::DiagnosticRefresh);
+            let _ = deps
+                .upstream_tx
+                .send(UpstreamNotification::DiagnosticRefresh);
             serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
         }
         _ => {
@@ -746,7 +770,8 @@ async fn handle_server_request(
     // blocked on stdout — creating a circular wait. send_timeout(5s) provides an
     // explicit safety net: the response is dropped only after 5 seconds of
     // sustained backpressure, which is far better than instant loss.
-    if let Err(e) = response_tx
+    if let Err(e) = deps
+        .response_tx
         .send_timeout(
             OutboundMessage::Notification(response),
             Duration::from_secs(5),
@@ -816,17 +841,20 @@ mod tests {
         drop(writer);
     }
 
-    /// Create dummy response_tx, dynamic_capabilities, and upstream_tx for tests
-    /// that don't need server request handling.
-    fn dummy_server_request_deps() -> (
-        mpsc::Sender<OutboundMessage>,
-        Arc<DynamicCapabilityRegistry>,
-        mpsc::UnboundedSender<UpstreamNotification>,
-    ) {
-        let (tx, _rx) = mpsc::channel(16);
+    /// Create dummy ServerRequestDeps for tests that don't need server request handling.
+    ///
+    /// Returns the deps along with the receivers (stored in a tuple) to keep them alive.
+    fn dummy_server_request_deps() -> (ServerRequestDeps, impl std::any::Any) {
+        let (tx, rx) = mpsc::channel(16);
         let caps = Arc::new(DynamicCapabilityRegistry::new());
-        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
-        (tx, caps, upstream_tx)
+        let (upstream_tx, upstream_rx) = mpsc::unbounded_channel();
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx: tx,
+            dynamic_capabilities: caps,
+            upstream_tx,
+        };
+        (deps, (rx, upstream_rx))
     }
 
     #[tokio::test]
@@ -835,7 +863,7 @@ mod tests {
         let _rx = router
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
             .unwrap();
-        let (response_tx, dynamic_capabilities, upstream_tx) = dummy_server_request_deps();
+        let (deps, _keep) = dummy_server_request_deps();
 
         let response = json!({
             "jsonrpc": "2.0",
@@ -843,15 +871,7 @@ mod tests {
             "result": null
         });
 
-        handle_message(
-            response,
-            &router,
-            "",
-            &response_tx,
-            &dynamic_capabilities,
-            &upstream_tx,
-        )
-        .await;
+        handle_message(response, &router, "", &deps).await;
 
         // Receiver should have the response
         // We can't block on rx.await here in a sync test, but we can check
@@ -865,7 +885,7 @@ mod tests {
         let _rx = router
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
             .unwrap();
-        let (response_tx, dynamic_capabilities, upstream_tx) = dummy_server_request_deps();
+        let (deps, _keep) = dummy_server_request_deps();
 
         let notification = json!({
             "jsonrpc": "2.0",
@@ -873,15 +893,7 @@ mod tests {
             "params": {}
         });
 
-        handle_message(
-            notification,
-            &router,
-            "",
-            &response_tx,
-            &dynamic_capabilities,
-            &upstream_tx,
-        )
-        .await;
+        handle_message(notification, &router, "", &deps).await;
 
         // Pending count should still be 1 (notification was ignored)
         assert_eq!(router.pending_count(), 1);
@@ -1147,7 +1159,7 @@ mod tests {
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
             .unwrap();
         assert_eq!(router.pending_count(), 1);
-        let (response_tx, dynamic_capabilities, upstream_tx) = dummy_server_request_deps();
+        let (deps, _keep) = dummy_server_request_deps();
 
         // Server-initiated request: has both "id" and "method"
         let server_request = json!({
@@ -1157,15 +1169,7 @@ mod tests {
             "params": {}
         });
 
-        handle_message(
-            server_request,
-            &router,
-            "",
-            &response_tx,
-            &dynamic_capabilities,
-            &upstream_tx,
-        )
-        .await;
+        handle_message(server_request, &router, "", &deps).await;
 
         // The server request should NOT be routed as a response.
         // Pending count must remain 1 (the registered request is still waiting).
@@ -1186,6 +1190,12 @@ mod tests {
         let (response_tx, mut response_rx) = mpsc::channel(16);
         let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
         let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities: Arc::clone(&dynamic_capabilities),
+            upstream_tx,
+        };
 
         let message = json!({
             "jsonrpc": "2.0",
@@ -1202,15 +1212,7 @@ mod tests {
             }
         });
 
-        handle_message(
-            message,
-            &router,
-            "",
-            &response_tx,
-            &dynamic_capabilities,
-            &upstream_tx,
-        )
-        .await;
+        handle_message(message, &router, "", &deps).await;
 
         // Registry should have the registration
         assert!(dynamic_capabilities.has_registration("textDocument/diagnostic"));
@@ -1241,6 +1243,13 @@ mod tests {
         }]);
         assert!(dynamic_capabilities.has_registration("textDocument/diagnostic"));
 
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities: Arc::clone(&dynamic_capabilities),
+            upstream_tx,
+        };
+
         // Then unregister it
         let message = json!({
             "jsonrpc": "2.0",
@@ -1256,15 +1265,7 @@ mod tests {
             }
         });
 
-        handle_message(
-            message,
-            &router,
-            "",
-            &response_tx,
-            &dynamic_capabilities,
-            &upstream_tx,
-        )
-        .await;
+        handle_message(message, &router, "", &deps).await;
 
         // Registry should no longer have the registration
         assert!(!dynamic_capabilities.has_registration("textDocument/diagnostic"));
@@ -1286,6 +1287,12 @@ mod tests {
         let (response_tx, mut response_rx) = mpsc::channel(16);
         let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
         let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities,
+            upstream_tx,
+        };
 
         let message = json!({
             "jsonrpc": "2.0",
@@ -1296,15 +1303,7 @@ mod tests {
             }
         });
 
-        handle_message(
-            message,
-            &router,
-            "",
-            &response_tx,
-            &dynamic_capabilities,
-            &upstream_tx,
-        )
-        .await;
+        handle_message(message, &router, "", &deps).await;
 
         // A success response should have been sent
         let response = response_rx.try_recv().expect("should have response");
@@ -1328,6 +1327,12 @@ mod tests {
         let (response_tx, mut response_rx) = mpsc::channel(16);
         let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
         let (upstream_tx, mut upstream_rx) = mpsc::unbounded_channel();
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities,
+            upstream_tx,
+        };
 
         let message = json!({
             "jsonrpc": "2.0",
@@ -1336,15 +1341,7 @@ mod tests {
             "params": null
         });
 
-        handle_message(
-            message,
-            &router,
-            "",
-            &response_tx,
-            &dynamic_capabilities,
-            &upstream_tx,
-        )
-        .await;
+        handle_message(message, &router, "", &deps).await;
 
         // Should have sent DiagnosticRefresh on the upstream channel
         let notification = upstream_rx
@@ -1370,6 +1367,12 @@ mod tests {
         let (response_tx, mut response_rx) = mpsc::channel(16);
         let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
         let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities,
+            upstream_tx,
+        };
 
         let message = json!({
             "jsonrpc": "2.0",
@@ -1378,15 +1381,7 @@ mod tests {
             "params": {}
         });
 
-        handle_message(
-            message,
-            &router,
-            "",
-            &response_tx,
-            &dynamic_capabilities,
-            &upstream_tx,
-        )
-        .await;
+        handle_message(message, &router, "", &deps).await;
 
         let response = response_rx.try_recv().expect("should have response");
         match response {
@@ -1423,9 +1418,12 @@ mod tests {
             .unwrap();
 
         // Spawn handle_server_request in a separate task (it needs to await)
-        let tx_clone = response_tx.clone();
-        let caps_clone = Arc::clone(&dynamic_capabilities);
-        let upstream_tx_clone = upstream_tx.clone();
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx: response_tx.clone(),
+            dynamic_capabilities,
+            upstream_tx,
+        };
         let handle = tokio::spawn(async move {
             let message = json!({
                 "jsonrpc": "2.0",
@@ -1433,7 +1431,7 @@ mod tests {
                 "method": "window/workDoneProgress/create",
                 "params": { "token": "test" }
             });
-            handle_server_request(message, "", &tx_clone, &caps_clone, &upstream_tx_clone).await;
+            handle_server_request(message, "", &deps).await;
         });
 
         // Give handle_server_request a moment to start waiting
@@ -1473,6 +1471,13 @@ mod tests {
         // Drop the receiver to simulate a closed channel
         drop(response_rx);
 
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities,
+            upstream_tx,
+        };
+
         let message = json!({
             "jsonrpc": "2.0",
             "id": 7,
@@ -1481,14 +1486,7 @@ mod tests {
         });
 
         // Should not panic
-        handle_server_request(
-            message,
-            "",
-            &response_tx,
-            &dynamic_capabilities,
-            &upstream_tx,
-        )
-        .await;
+        handle_server_request(message, "", &deps).await;
     }
 
     // ============================================================
