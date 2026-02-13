@@ -206,9 +206,21 @@ pub(crate) fn process_injection_sync(
         return Vec::new();
     };
 
+    // Discover nested injections BEFORE collecting tokens so we can compute
+    // exclusion ranges. This suppresses this level's captures within regions
+    // that will be handled by deeper injection languages.
+    let (nested_contexts, nested_exclusion_ranges) = collect_injection_contexts_sync(
+        ctx.content_text,
+        &tree,
+        Some(&ctx.resolved_lang),
+        coordinator,
+        ctx.host_start_byte,
+    );
+
     let mut tokens = Vec::new();
 
-    // Collect tokens from this injection's highlight query
+    // Collect tokens from this injection's highlight query, excluding
+    // regions covered by nested injections
     collect_host_tokens(
         ctx.content_text,
         &tree,
@@ -220,18 +232,11 @@ pub(crate) fn process_injection_sync(
         ctx.host_start_byte,
         depth,
         supports_multiline,
+        &nested_exclusion_ranges,
         &mut tokens,
     );
 
     // Recursively process nested injections (same thread, no parallelism)
-    let nested_contexts = collect_injection_contexts_sync(
-        ctx.content_text,
-        &tree,
-        Some(&ctx.resolved_lang),
-        coordinator,
-        ctx.host_start_byte,
-    );
-
     for nested_ctx in nested_contexts {
         let nested_tokens = process_injection_sync(
             &nested_ctx,
@@ -249,31 +254,52 @@ pub(crate) fn process_injection_sync(
     tokens
 }
 
+/// Compute byte ranges of child injection regions for a host document.
+///
+/// This is the public entry point used by `semantic.rs` to get exclusion ranges
+/// before calling `collect_host_tokens`. It runs the same injection discovery as
+/// `collect_injection_contexts_sync` but only returns the byte ranges.
+pub(super) fn compute_host_exclusion_ranges(
+    text: &str,
+    tree: &Tree,
+    filetype: Option<&str>,
+    coordinator: &LanguageCoordinator,
+) -> Vec<(usize, usize)> {
+    let (_, ranges) = collect_injection_contexts_sync(text, tree, filetype, coordinator, 0);
+    ranges
+}
+
 /// Collect injection contexts from a parsed tree (sync version).
 ///
 /// This is a synchronous version of the injection context collection that
 /// works without mutable parser access. It discovers all injections in the
 /// given tree and returns their contexts for processing.
+///
+/// Returns `(contexts, exclusion_ranges)` where exclusion_ranges are the
+/// content-local byte ranges of each resolved injection. These ranges
+/// correspond to the regions where child injections produce their own tokens,
+/// so parent captures overlapping these ranges should be suppressed.
 fn collect_injection_contexts_sync<'a>(
     text: &'a str,
     tree: &Tree,
     filetype: Option<&str>,
     coordinator: &LanguageCoordinator,
     content_start_byte: usize,
-) -> Vec<InjectionContext<'a>> {
+) -> (Vec<InjectionContext<'a>>, Vec<(usize, usize)>) {
     use crate::language::{collect_all_injections, injection::parse_offset_directive_for_pattern};
 
     let current_lang = filetype.unwrap_or("unknown");
     let Some(injection_query) = coordinator.get_injection_query(current_lang) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
 
     let Some(injections) = collect_all_injections(&tree.root_node(), text, Some(&injection_query))
     else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
 
     let mut contexts = Vec::with_capacity(injections.len());
+    let mut exclusion_ranges = Vec::with_capacity(injections.len());
 
     for injection in injections {
         let start = injection.content_node.start_byte();
@@ -318,6 +344,9 @@ fn collect_injection_contexts_sync<'a>(
             continue;
         }
 
+        // Record exclusion range (content-local) for parent token suppression
+        exclusion_ranges.push((inj_start_byte, inj_end_byte));
+
         contexts.push(InjectionContext {
             resolved_lang,
             highlight_query,
@@ -326,7 +355,7 @@ fn collect_injection_contexts_sync<'a>(
         });
     }
 
-    contexts
+    (contexts, exclusion_ranges)
 }
 
 /// Collect semantic tokens from all injections in parallel using Rayon.
@@ -364,7 +393,7 @@ pub(crate) fn collect_injection_tokens_parallel(
     let host_lines: Vec<&str> = host_text.lines().collect();
 
     // Collect top-level injection contexts
-    let contexts =
+    let (contexts, _exclusion_ranges) =
         collect_injection_contexts_sync(host_text, host_tree, host_filetype, coordinator, 0);
 
     if contexts.is_empty() {

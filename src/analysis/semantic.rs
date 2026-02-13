@@ -16,7 +16,7 @@ pub(crate) use legend::{LEGEND_MODIFIERS, LEGEND_TYPES};
 pub(crate) use range::handle_semantic_tokens_range_parallel_async;
 
 // Re-export for parallel processing
-use parallel::collect_injection_tokens_parallel;
+use parallel::{collect_injection_tokens_parallel, compute_host_exclusion_ranges};
 
 // Internal re-exports for production code
 use finalize::finalize_tokens;
@@ -59,6 +59,16 @@ pub(crate) async fn handle_semantic_tokens_full(
         let mut all_tokens: Vec<RawToken> = Vec::with_capacity(1000);
         let lines: Vec<&str> = text.lines().collect();
 
+        // Compute exclusion ranges from child injections so that parent captures
+        // overlapping injection regions are suppressed. This prevents, e.g.,
+        // Markdown's @markup.raw tokens leaking into Lua code blocks.
+        let exclusion_ranges = compute_host_exclusion_ranges(
+            &text,
+            &tree,
+            filetype.as_deref(),
+            &coordinator,
+        );
+
         // Collect host document tokens first (not parallelized - typically fast)
         collect_host_tokens(
             &text,
@@ -71,6 +81,7 @@ pub(crate) async fn handle_semantic_tokens_full(
             0,
             0,
             supports_multiline,
+            &exclusion_ranges,
             &mut all_tokens,
         );
 
@@ -629,6 +640,142 @@ local x = 42
         assert!(
             result.is_none(),
             "Empty document should return None (no tokens to return)"
+        );
+    }
+
+    /// Integration test: Markdown with Lua code block — host tokens must NOT
+    /// appear inside the injection region. This is the core acceptance test for
+    /// the exclusion ranges feature.
+    #[tokio::test]
+    async fn test_no_host_tokens_inside_injection_region() {
+        use crate::config::WorkspaceSettings;
+        use crate::language::LanguageCoordinator;
+        use std::sync::Arc;
+
+        let coordinator = Arc::new(LanguageCoordinator::new());
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        let md_result = coordinator.ensure_language_loaded("markdown");
+        let lua_result = coordinator.ensure_language_loaded("lua");
+        if !md_result.success || !lua_result.success {
+            eprintln!("Skipping: markdown or lua parser not available");
+            return;
+        }
+
+        let Some(md_query) = coordinator.get_highlight_query("markdown") else {
+            eprintln!("Skipping: markdown highlight query not available");
+            return;
+        };
+
+        // Markdown with a Lua code block
+        let text = "# Hello\n\n```lua\nlocal x = 42\n```\n";
+        // Lines:
+        //   0: "# Hello"
+        //   1: ""
+        //   2: "```lua"
+        //   3: "local x = 42"
+        //   4: "```"
+
+        // Parse markdown
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let Some(mut parser) = parser_pool.acquire("markdown") else {
+            return;
+        };
+        let Some(tree) = parser.parse(text, None) else {
+            return;
+        };
+        parser_pool.release("markdown".to_string(), parser);
+
+        let lines: Vec<&str> = text.lines().collect();
+
+        // Compute exclusion ranges from injections
+        let exclusion_ranges = compute_host_exclusion_ranges(
+            text,
+            &tree,
+            Some("markdown"),
+            &coordinator,
+        );
+
+        // Collect host tokens WITH exclusion
+        let mut host_tokens_with_exclusion = Vec::new();
+        collect_host_tokens(
+            text,
+            &tree,
+            &md_query,
+            Some("markdown"),
+            None,
+            text,
+            &lines,
+            0,
+            0,
+            false,
+            &exclusion_ranges,
+            &mut host_tokens_with_exclusion,
+        );
+
+        // Also collect host tokens WITHOUT exclusion for comparison
+        let mut host_tokens_without_exclusion = Vec::new();
+        collect_host_tokens(
+            text,
+            &tree,
+            &md_query,
+            Some("markdown"),
+            None,
+            text,
+            &lines,
+            0,
+            0,
+            false,
+            &[],
+            &mut host_tokens_without_exclusion,
+        );
+
+        // The Lua code block is on line 3 ("local x = 42").
+        // Without exclusion, Markdown typically produces tokens on line 3
+        // (e.g., @markup.raw or similar captures for fenced code block content).
+        // With exclusion, NO host tokens should appear on line 3.
+        let host_tokens_on_injection_line_without_excl = host_tokens_without_exclusion
+            .iter()
+            .filter(|t| t.line == 3)
+            .count();
+        let host_tokens_on_injection_line_with_excl = host_tokens_with_exclusion
+            .iter()
+            .filter(|t| t.line == 3)
+            .count();
+
+        // If Markdown doesn't produce tokens on line 3 at all, the exclusion
+        // is a no-op (still correct). But if it does, exclusion must suppress them.
+        if host_tokens_on_injection_line_without_excl > 0 {
+            assert_eq!(
+                host_tokens_on_injection_line_with_excl, 0,
+                "Host tokens on the Lua injection line should be suppressed by exclusion.\n\
+                 Without exclusion: {} tokens on line 3\n\
+                 With exclusion: {} tokens on line 3\n\
+                 Exclusion ranges: {:?}\n\
+                 Host tokens with exclusion: {:?}",
+                host_tokens_on_injection_line_without_excl,
+                host_tokens_on_injection_line_with_excl,
+                exclusion_ranges,
+                host_tokens_with_exclusion,
+            );
+        }
+
+        // Tokens outside injection region (e.g., line 0 "# Hello") should be preserved
+        let host_tokens_on_heading_line = host_tokens_with_exclusion
+            .iter()
+            .filter(|t| t.line == 0)
+            .count();
+        let host_tokens_on_heading_line_no_excl = host_tokens_without_exclusion
+            .iter()
+            .filter(|t| t.line == 0)
+            .count();
+        assert_eq!(
+            host_tokens_on_heading_line, host_tokens_on_heading_line_no_excl,
+            "Tokens outside injection region should be preserved"
         );
     }
 }
