@@ -1414,6 +1414,86 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn handle_message_register_capability_missing_params_returns_error() {
+        let router = ResponseRouter::new();
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities: Arc::clone(&dynamic_capabilities),
+            upstream_tx,
+        };
+
+        // client/registerCapability with no params field at all
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "client/registerCapability"
+        });
+
+        handle_message(message, &router, "", &deps).await;
+
+        // Should respond with InvalidParams error (-32602)
+        let response = response_rx.try_recv().expect("should have response");
+        match response {
+            OutboundMessage::Untracked(val) => {
+                assert_eq!(val["id"], 1);
+                assert_eq!(val["error"]["code"], -32602, "Should be InvalidParams error");
+            }
+            _ => panic!("Expected Untracked variant"),
+        }
+
+        // Registry should remain empty
+        assert!(!dynamic_capabilities.has_registration("textDocument/diagnostic"));
+    }
+
+    #[tokio::test]
+    async fn handle_message_unregister_capability_missing_params_returns_error() {
+        let router = ResponseRouter::new();
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+
+        // Pre-register a capability so we can verify it's NOT removed
+        dynamic_capabilities.register(vec![tower_lsp_server::ls_types::Registration {
+            id: "diag-1".to_string(),
+            method: "textDocument/diagnostic".to_string(),
+            register_options: None,
+        }]);
+
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities: Arc::clone(&dynamic_capabilities),
+            upstream_tx,
+        };
+
+        // client/unregisterCapability with no params field at all
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "client/unregisterCapability"
+        });
+
+        handle_message(message, &router, "", &deps).await;
+
+        // Should respond with InvalidParams error (-32602)
+        let response = response_rx.try_recv().expect("should have response");
+        match response {
+            OutboundMessage::Untracked(val) => {
+                assert_eq!(val["id"], 2);
+                assert_eq!(val["error"]["code"], -32602, "Should be InvalidParams error");
+            }
+            _ => panic!("Expected Untracked variant"),
+        }
+
+        // Registry should still have the pre-registered capability
+        assert!(dynamic_capabilities.has_registration("textDocument/diagnostic"));
+    }
+
     // ============================================================
     // Server Request Response Reliability Tests
     // ============================================================
