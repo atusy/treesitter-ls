@@ -654,14 +654,13 @@ async fn handle_message(
 /// Server-initiated requests have both `"id"` and `"method"` fields.
 /// We must send a JSON-RPC response back for each request.
 ///
-/// # Defensive Strategy
+/// # Error Handling
 ///
 /// When param parsing fails for known methods (registerCapability,
-/// unregisterCapability), we respond with success but skip the registry
-/// update. Many downstream servers don't handle error responses to their
-/// own requests gracefully, so returning an error could cause them to
-/// enter a bad state. The warn log is sufficient for debugging parse
-/// mismatches.
+/// unregisterCapability), we respond with a JSON-RPC InvalidParams error
+/// (-32602). This is spec-correct: the LSP allows error responses to any
+/// request. If a downstream server cannot handle an error to its own
+/// request, that is a server bug.
 async fn handle_server_request(
     message: serde_json::Value,
     lang_prefix: &str,
@@ -688,18 +687,24 @@ async fn handle_server_request(
                             );
                         }
                         deps.dynamic_capabilities.register(reg_params.registrations);
+                        serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
                     }
                     Err(e) => {
-                        // See defensive strategy in doc comment above
                         warn!(
                             target: "kakehashi::bridge::reader",
                             "{}Failed to parse registerCapability params: {}",
                             lang_prefix, e
                         );
+                        serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": {"code": -32602, "message": format!("Invalid params: {}", e)}
+                        })
                     }
                 }
+            } else {
+                serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
             }
-            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
         }
         "client/unregisterCapability" => {
             if let Some(params) = message.get("params") {
@@ -716,18 +721,24 @@ async fn handle_server_request(
                         }
                         deps.dynamic_capabilities
                             .unregister(unreg_params.unregisterations);
+                        serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
                     }
                     Err(e) => {
-                        // See defensive strategy in doc comment above
                         warn!(
                             target: "kakehashi::bridge::reader",
                             "{}Failed to parse unregisterCapability params: {}",
                             lang_prefix, e
                         );
+                        serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": {"code": -32602, "message": format!("Invalid params: {}", e)}
+                        })
                     }
                 }
+            } else {
+                serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
             }
-            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
         }
         "window/workDoneProgress/create" => {
             // Common from Pyright et al. Returning MethodNotFound causes server-side log noise,
