@@ -144,6 +144,22 @@ mod tests {
     }
 
     #[test]
+    fn unregister_removes_by_id_not_method() {
+        let registry = DynamicCapabilityRegistry::new();
+        let reg1 = make_registration("diag-1", "textDocument/diagnostic");
+        let reg2 = make_registration("diag-2", "textDocument/diagnostic");
+
+        registry.register(vec![reg1, reg2]);
+
+        // Unregister only "diag-1"
+        let unreg = make_unregistration("diag-1", "textDocument/diagnostic");
+        registry.unregister(vec![unreg]);
+
+        // "diag-2" should still be registered
+        assert!(registry.has_registration("textDocument/diagnostic"));
+    }
+
+    #[test]
     fn poison_recovery_on_read() {
         let registry = Arc::new(DynamicCapabilityRegistry::new());
         let reg = make_registration("1", "textDocument/completion");
