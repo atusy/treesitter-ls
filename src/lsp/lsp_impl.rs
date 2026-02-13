@@ -870,6 +870,34 @@ impl Kakehashi {
     }
 }
 
+/// Forward upstream notifications from downstream language servers to the editor.
+///
+/// Consumes notifications from `upstream_rx` and dispatches them to the LSP client.
+/// Currently handles:
+/// - `DiagnosticRefresh`: forwards `workspace/diagnostic/refresh` to trigger a
+///   fresh diagnostic pull from the editor.
+///
+/// Exits when the channel is closed (all senders dropped).
+async fn upstream_forwarding_loop(
+    mut upstream_rx: tokio::sync::mpsc::UnboundedReceiver<super::bridge::UpstreamNotification>,
+    client: Client,
+) {
+    use super::bridge::UpstreamNotification;
+    while let Some(notification) = upstream_rx.recv().await {
+        match notification {
+            UpstreamNotification::DiagnosticRefresh => {
+                if let Err(e) = client.workspace_diagnostic_refresh().await {
+                    log::debug!(
+                        target: "kakehashi::bridge",
+                        "workspace/diagnostic/refresh forwarding failed: {}",
+                        e
+                    );
+                }
+            }
+        }
+    }
+}
+
 impl LanguageServer for Kakehashi {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         // Store client capabilities for LSP compliance checks (e.g., refresh support).
@@ -1034,24 +1062,9 @@ impl LanguageServer for Kakehashi {
         // task puts DiagnosticRefresh on this channel. We forward it to the
         // editor via Client::workspace_diagnostic_refresh() so the editor
         // triggers a fresh textDocument/diagnostic pull.
-        if let Some(mut upstream_rx) = self.bridge.take_upstream_rx() {
+        if let Some(upstream_rx) = self.bridge.take_upstream_rx() {
             let client = self.client.clone();
-            tokio::spawn(async move {
-                use super::bridge::UpstreamNotification;
-                while let Some(notification) = upstream_rx.recv().await {
-                    match notification {
-                        UpstreamNotification::DiagnosticRefresh => {
-                            if let Err(e) = client.workspace_diagnostic_refresh().await {
-                                log::debug!(
-                                    target: "kakehashi::bridge",
-                                    "workspace/diagnostic/refresh forwarding failed: {}",
-                                    e
-                                );
-                            }
-                        }
-                    }
-                }
-            });
+            tokio::spawn(upstream_forwarding_loop(upstream_rx, client));
         }
     }
 
