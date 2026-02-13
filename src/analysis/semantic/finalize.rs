@@ -2,8 +2,7 @@
 //!
 //! This module handles the final steps of semantic token processing:
 //! - Filtering zero-length tokens
-//! - Sorting by position (line, column, depth, pattern_index)
-//! - Deduplicating tokens at the same position
+//! - Splitting overlapping tokens via sweep line algorithm
 //! - Converting to LSP SemanticToken format with delta-relative positions
 //!
 //! Note: The term "delta encoding" in this module refers to the LSP protocol's
@@ -15,29 +14,131 @@ use tower_lsp_server::ls_types::{SemanticToken, SemanticTokens, SemanticTokensRe
 use super::legend::map_capture_to_token_type_and_modifiers;
 use super::token_collector::RawToken;
 
+/// Priority key for token comparison. Higher values win.
+fn token_priority(t: &RawToken) -> (usize, usize, usize) {
+    (t.depth, t.node_depth, t.pattern_index)
+}
+
+/// Split overlapping tokens on the same line using a sweep line algorithm.
+///
+/// For each line, collects breakpoints (start/end columns of all tokens),
+/// then for each interval picks the highest-priority token as the winner.
+/// Priority is determined by `(depth DESC, node_depth DESC, pattern_index DESC)`.
+///
+/// This replaces the previous dedup-at-same-position approach, producing
+/// non-overlapping fragments that preserve both parent and child semantics.
+fn split_overlapping_tokens(mut tokens: Vec<RawToken>) -> Vec<RawToken> {
+    if tokens.is_empty() {
+        return tokens;
+    }
+
+    // Sort by line first, then by start column for grouping
+    tokens.sort_by(|a, b| a.line.cmp(&b.line).then(a.column.cmp(&b.column)));
+
+    let mut result = Vec::with_capacity(tokens.len());
+
+    // Group tokens by line and process each line independently
+    let mut line_start = 0;
+    while line_start < tokens.len() {
+        let current_line = tokens[line_start].line;
+        let mut line_end = line_start;
+        while line_end < tokens.len() && tokens[line_end].line == current_line {
+            line_end += 1;
+        }
+
+        let line_tokens = &tokens[line_start..line_end];
+
+        // 1. Collect all breakpoints (start and end columns)
+        let mut breakpoints = Vec::with_capacity(line_tokens.len() * 2);
+        for t in line_tokens {
+            breakpoints.push(t.column);
+            breakpoints.push(t.column + t.length);
+        }
+        breakpoints.sort_unstable();
+        breakpoints.dedup();
+
+        // 2. For each interval [bp[i], bp[i+1]), find the winner
+        for window in breakpoints.windows(2) {
+            let interval_start = window[0];
+            let interval_end = window[1];
+
+            if interval_start == interval_end {
+                continue; // zero-length interval
+            }
+
+            // Find the highest-priority token covering this interval
+            let winner = line_tokens
+                .iter()
+                .filter(|t| t.column <= interval_start && t.column + t.length >= interval_end)
+                .max_by_key(|t| token_priority(t));
+
+            if let Some(winner) = winner {
+                // Emit a fragment with the winner's properties for this interval
+                result.push(RawToken {
+                    line: current_line,
+                    column: interval_start,
+                    length: interval_end - interval_start,
+                    mapped_name: winner.mapped_name.clone(),
+                    depth: winner.depth,
+                    pattern_index: winner.pattern_index,
+                    node_depth: winner.node_depth,
+                });
+            }
+        }
+
+        line_start = line_end;
+    }
+
+    // Merge adjacent fragments with the same properties to reduce output size
+    merge_adjacent_fragments(&mut result);
+
+    result
+}
+
+/// Merge adjacent fragments on the same line that have the same token type.
+///
+/// After sweep line splitting, fragments like `keyword[0,3) + keyword[3,5)` can
+/// be merged into a single `keyword[0,5)` to reduce the number of tokens in output.
+fn merge_adjacent_fragments(tokens: &mut Vec<RawToken>) {
+    if tokens.len() < 2 {
+        return;
+    }
+    let mut write = 0;
+    for read in 1..tokens.len() {
+        let can_merge = tokens[write].line == tokens[read].line
+            && tokens[write].column + tokens[write].length == tokens[read].column
+            && tokens[write].mapped_name == tokens[read].mapped_name
+            && tokens[write].depth == tokens[read].depth
+            && tokens[write].node_depth == tokens[read].node_depth
+            && tokens[write].pattern_index == tokens[read].pattern_index;
+
+        if can_merge {
+            tokens[write].length += tokens[read].length;
+        } else {
+            write += 1;
+            if write != read {
+                tokens[write] = tokens[read].clone();
+            }
+        }
+    }
+    tokens.truncate(write + 1);
+}
+
 /// Post-process and delta-encode raw tokens into SemanticTokensResult.
 ///
 /// This shared helper:
 /// 1. Filters zero-length tokens
-/// 2. Sorts by position
-/// 3. Deduplicates tokens at same position
-/// 4. Delta-encodes for LSP protocol
+/// 2. Splits overlapping tokens via sweep line
+/// 3. Delta-encodes for LSP protocol
 pub(super) fn finalize_tokens(mut all_tokens: Vec<RawToken>) -> Option<SemanticTokensResult> {
-    // Filter out zero-length tokens BEFORE dedup.
+    // Filter out zero-length tokens BEFORE splitting.
     // Unknown captures are already filtered at collection time (apply_capture_mapping returns None).
     all_tokens.retain(|token| token.length > 0);
 
-    // Sort by position (line, column, then prefer deeper tokens, then later patterns)
-    all_tokens.sort_by(|a, b| {
-        a.line
-            .cmp(&b.line)
-            .then(a.column.cmp(&b.column))
-            .then(b.depth.cmp(&a.depth))
-            .then(b.pattern_index.cmp(&a.pattern_index))
-    });
-
-    // Deduplicate at same position
-    all_tokens.dedup_by(|a, b| a.line == b.line && a.column == b.column);
+    // Split overlapping tokens using sweep line algorithm.
+    // This replaces the old sort + dedup approach, producing non-overlapping
+    // fragments that preserve both parent and child semantics.
+    let all_tokens = split_overlapping_tokens(all_tokens);
 
     if all_tokens.is_empty() {
         return None;
@@ -94,6 +195,19 @@ mod tests {
         depth: usize,
         pattern_index: usize,
     ) -> RawToken {
+        make_token_with_node_depth(line, column, length, name, depth, pattern_index, 0)
+    }
+
+    /// Helper to create a RawToken with explicit node_depth for testing
+    fn make_token_with_node_depth(
+        line: usize,
+        column: usize,
+        length: usize,
+        name: &str,
+        depth: usize,
+        pattern_index: usize,
+        node_depth: usize,
+    ) -> RawToken {
         RawToken {
             line,
             column,
@@ -101,6 +215,7 @@ mod tests {
             mapped_name: name.to_string(),
             depth,
             pattern_index,
+            node_depth,
         }
     }
 
@@ -212,7 +327,219 @@ mod tests {
         }
     }
 
-    // At same position, dedup keeps the winner after sorting by (depth DESC, pattern_index DESC).
+    // ── sweep line (split_overlapping_tokens) tests ──────────────────
+
+    /// Helper to extract RawTokens from split_overlapping_tokens output for assertion.
+    /// Returns (column, length, mapped_name) tuples sorted by position.
+    fn extract_fragments(tokens: Vec<RawToken>) -> Vec<(usize, usize, String)> {
+        let result = split_overlapping_tokens(tokens);
+        result
+            .into_iter()
+            .map(|t| (t.column, t.length, t.mapped_name.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn split_no_overlap_both_survive() {
+        // Two disjoint tokens on the same line → both survive unchanged.
+        let tokens = vec![
+            make_token(0, 0, 3, "keyword", 0, 0),
+            make_token(0, 5, 4, "variable", 0, 0),
+        ];
+        let fragments = extract_fragments(tokens);
+        assert_eq!(
+            fragments,
+            vec![
+                (0, 3, "keyword".to_string()),
+                (5, 4, "variable".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn split_full_containment_parent_splits_into_two() {
+        // Parent [0,10) at node_depth=1, child [3,7) at node_depth=2.
+        // Parent should split into [0,3) and [7,10).
+        let tokens = vec![
+            make_token_with_node_depth(0, 0, 10, "keyword", 0, 0, 1),
+            make_token_with_node_depth(0, 3, 4, "variable", 0, 0, 2),
+        ];
+        let fragments = extract_fragments(tokens);
+        assert_eq!(
+            fragments,
+            vec![
+                (0, 3, "keyword".to_string()),
+                (3, 4, "variable".to_string()),
+                (7, 3, "keyword".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn split_multiple_children_three_fragments() {
+        // Parent [0,15) at node_depth=1.
+        // Child A [2,5) at node_depth=2, Child B [8,12) at node_depth=2.
+        // Expected: parent [0,2), child A [2,5), parent [5,8), child B [8,12), parent [12,15).
+        let tokens = vec![
+            make_token_with_node_depth(0, 0, 15, "keyword", 0, 0, 1),
+            make_token_with_node_depth(0, 2, 3, "variable", 0, 0, 2),
+            make_token_with_node_depth(0, 8, 4, "string", 0, 0, 2),
+        ];
+        let fragments = extract_fragments(tokens);
+        assert_eq!(
+            fragments,
+            vec![
+                (0, 2, "keyword".to_string()),
+                (2, 3, "variable".to_string()),
+                (5, 3, "keyword".to_string()),
+                (8, 4, "string".to_string()),
+                (12, 3, "keyword".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn split_adjacent_children_no_gap() {
+        // Parent [0,10) at node_depth=1.
+        // Child A [0,5) and Child B [5,10) at node_depth=2 — no gap.
+        // Parent should produce no fragments (entirely covered by children).
+        let tokens = vec![
+            make_token_with_node_depth(0, 0, 10, "keyword", 0, 0, 1),
+            make_token_with_node_depth(0, 0, 5, "variable", 0, 0, 2),
+            make_token_with_node_depth(0, 5, 5, "string", 0, 0, 2),
+        ];
+        let fragments = extract_fragments(tokens);
+        assert_eq!(
+            fragments,
+            vec![
+                (0, 5, "variable".to_string()),
+                (5, 5, "string".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn split_same_position_same_depth_latest_pattern_wins() {
+        // Two tokens at same position, same depth, same node_depth.
+        // Higher pattern_index wins — no split needed.
+        let tokens = vec![
+            make_token_with_node_depth(0, 0, 5, "variable", 0, 0, 1),
+            make_token_with_node_depth(0, 0, 5, "type.builtin", 0, 10, 1),
+        ];
+        let fragments = extract_fragments(tokens);
+        assert_eq!(
+            fragments,
+            vec![(0, 5, "type.builtin".to_string())]
+        );
+    }
+
+    #[test]
+    fn split_same_position_different_depth_higher_wins() {
+        // Two tokens at same position, different injection depth.
+        // Higher injection depth wins.
+        let tokens = vec![
+            make_token_with_node_depth(0, 0, 5, "string", 0, 0, 1),
+            make_token_with_node_depth(0, 0, 5, "keyword", 1, 0, 1),
+        ];
+        let fragments = extract_fragments(tokens);
+        assert_eq!(
+            fragments,
+            vec![(0, 5, "keyword".to_string())]
+        );
+    }
+
+    #[test]
+    fn split_three_level_nesting() {
+        // heading [0,20) nd=1, bold [5,15) nd=2, italic [8,12) nd=3.
+        // Expected: heading [0,5), bold [5,8), italic [8,12), bold [12,15), heading [15,20).
+        let tokens = vec![
+            make_token_with_node_depth(0, 0, 20, "keyword", 0, 0, 1),
+            make_token_with_node_depth(0, 5, 10, "variable", 0, 0, 2),
+            make_token_with_node_depth(0, 8, 4, "string", 0, 0, 3),
+        ];
+        let fragments = extract_fragments(tokens);
+        assert_eq!(
+            fragments,
+            vec![
+                (0, 5, "keyword".to_string()),
+                (5, 3, "variable".to_string()),
+                (8, 4, "string".to_string()),
+                (12, 3, "variable".to_string()),
+                (15, 5, "keyword".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn split_zero_length_fragment_filtered() {
+        // Parent [0,5) at node_depth=1, child [0,5) at node_depth=2.
+        // Parent is entirely covered → produces zero-length fragments → filtered.
+        let tokens = vec![
+            make_token_with_node_depth(0, 0, 5, "keyword", 0, 0, 1),
+            make_token_with_node_depth(0, 0, 5, "variable", 0, 0, 2),
+        ];
+        let fragments = extract_fragments(tokens);
+        assert_eq!(
+            fragments,
+            vec![(0, 5, "variable".to_string())]
+        );
+    }
+
+    #[test]
+    fn split_partial_overlap_without_containment() {
+        // Token A [0,10) at nd=1, Token B [5,15) at nd=2.
+        // Expected: A [0,5), B [5,15).
+        let tokens = vec![
+            make_token_with_node_depth(0, 0, 10, "keyword", 0, 0, 1),
+            make_token_with_node_depth(0, 5, 10, "variable", 0, 0, 2),
+        ];
+        let fragments = extract_fragments(tokens);
+        assert_eq!(
+            fragments,
+            vec![
+                (0, 5, "keyword".to_string()),
+                (5, 10, "variable".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn split_across_multiple_lines() {
+        // Line 0: parent [0,10) nd=1, child [3,7) nd=2.
+        // Line 1: single token [2,5) nd=1.
+        // Each line processed independently.
+        let tokens = vec![
+            make_token_with_node_depth(0, 0, 10, "keyword", 0, 0, 1),
+            make_token_with_node_depth(0, 3, 4, "variable", 0, 0, 2),
+            make_token_with_node_depth(1, 2, 3, "string", 0, 0, 1),
+        ];
+        let result = split_overlapping_tokens(tokens);
+        let line0: Vec<_> = result
+            .iter()
+            .filter(|t| t.line == 0)
+            .map(|t| (t.column, t.length, t.mapped_name.clone()))
+            .collect();
+        let line1: Vec<_> = result
+            .iter()
+            .filter(|t| t.line == 1)
+            .map(|t| (t.column, t.length, t.mapped_name.clone()))
+            .collect();
+        assert_eq!(
+            line0,
+            vec![
+                (0, 3, "keyword".to_string()),
+                (3, 4, "variable".to_string()),
+                (7, 3, "keyword".to_string()),
+            ]
+        );
+        assert_eq!(
+            line1,
+            vec![(2, 3, "string".to_string())]
+        );
+    }
+
+    // At same position, the sweep line picks the winner by
+    // (depth DESC, node_depth DESC, pattern_index DESC).
     #[rstest]
     #[case::deeper_injection_wins(
         ("string", 0, 0), ("keyword", 1, 0), "keyword"

@@ -49,6 +49,21 @@ pub(crate) struct RawToken {
     /// Within a single query, later patterns (higher index) are more specific
     /// and should override earlier ones at the same position and depth.
     pub pattern_index: usize,
+    /// Depth of the captured node in the syntax tree (distance from root).
+    /// Used by the sweep line to resolve overlaps: deeper nodes are more
+    /// specific and take priority over shallower ones at the same injection depth.
+    pub node_depth: usize,
+}
+
+/// Compute the depth of a node in the syntax tree by walking its parent chain.
+fn compute_node_depth(node: &Node) -> usize {
+    let mut depth = 0;
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        depth += 1;
+        current = parent.parent();
+    }
+    depth
 }
 
 /// Convert byte column position to UTF-16 column position within a line
@@ -209,6 +224,8 @@ pub(super) fn collect_host_tokens(
                 continue;
             }
 
+            let node_depth = compute_node_depth(&node);
+
             if is_single_line || is_trailing_newline {
                 // Single-line token: emit as before
                 let host_line = content_start_line + start_pos.row;
@@ -238,6 +255,7 @@ pub(super) fn collect_host_tokens(
                     mapped_name,
                     depth,
                     pattern_index: m.pattern_index,
+                    node_depth,
                 });
             } else if supports_multiline {
                 // Multiline token with client support: emit a single token spanning multiple lines.
@@ -298,6 +316,7 @@ pub(super) fn collect_host_tokens(
                     mapped_name,
                     depth,
                     pattern_index: m.pattern_index,
+                    node_depth,
                 });
             } else {
                 // Multiline token without client support: split into per-line tokens
@@ -326,6 +345,7 @@ pub(super) fn collect_host_tokens(
                             mapped_name: mapped_name.clone(),
                             depth,
                             pattern_index: m.pattern_index,
+                            node_depth,
                         });
                     }
                 }
