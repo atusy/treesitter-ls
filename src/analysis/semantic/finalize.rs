@@ -82,7 +82,6 @@ fn split_overlapping_tokens(mut tokens: Vec<RawToken>) -> Vec<RawToken> {
                     depth: winner.depth,
                     pattern_index: winner.pattern_index,
                     node_depth: winner.node_depth,
-                    exact_match_injection: winner.exact_match_injection,
                 });
             }
         }
@@ -162,15 +161,11 @@ pub(super) fn finalize_tokens(
     all_tokens.retain(|token| token.length > 0);
 
     // Injection region exclusion: remove host tokens (depth=0) inside active
-    // injection regions, UNLESS they are exact-match tokens.
+    // injection regions.
     if !active_injection_regions.is_empty() {
         all_tokens.retain(|token| {
             // Non-host tokens (injection tokens) are always kept
             if token.depth > 0 {
-                return true;
-            }
-            // Exact-match tokens are preserved (resolved by sweep line)
-            if token.exact_match_injection {
                 return true;
             }
             // Remove host tokens inside active injection regions
@@ -259,7 +254,6 @@ mod tests {
             depth,
             pattern_index,
             node_depth,
-            exact_match_injection: false,
         }
     }
 
@@ -572,7 +566,7 @@ mod tests {
     #[test]
     fn finalize_excludes_host_token_inside_active_injection_region() {
         // Host token (depth=0) on line 3 falls inside injection region lines 2-4.
-        // Should be excluded because it's not exact_match.
+        // Should be excluded.
         let tokens = vec![
             make_token(0, 0, 5, "keyword", 0, 0), // line 0 — outside region
             make_token(3, 0, 12, "string", 0, 0), // line 3 — inside region
@@ -597,22 +591,6 @@ mod tests {
         assert_eq!(st.data[0].delta_line, 0);
         assert_eq!(st.data[0].delta_start, 0);
         assert_eq!(st.data[0].length, 5);
-    }
-
-    #[test]
-    fn finalize_preserves_exact_match_token_inside_injection_region() {
-        // exact_match_injection = true → preserved even inside region.
-        let mut token = make_token(3, 0, 12, "keyword", 0, 0);
-        token.exact_match_injection = true;
-        let tokens = vec![token];
-        let regions = vec![InjectionRegion {
-            start_line: 2,
-            start_col: 0,
-            end_line: 4,
-            end_col: 0,
-        }];
-        let result = finalize_tokens(tokens, &regions);
-        assert!(result.is_some(), "Exact-match token should survive");
     }
 
     #[test]

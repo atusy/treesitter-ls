@@ -12,16 +12,9 @@ use super::legend::apply_capture_mapping;
 /// Check whether a node is strictly contained within any exclusion range.
 ///
 /// A node is excluded only if it is **properly inside** a range — meaning fully
-/// contained but NOT exactly equal. This distinction matters because:
-///
-/// - **Exact match** (e.g., `@markup.heading.1` on the same `inline` node that
-///   is the injection content): The parent capture provides useful semantics
-///   (heading level) that complement the injection's tokens. Conflicts at the
-///   same `(line, col)` are already resolved by `finalize_tokens()` dedup.
-///
-/// - **Strictly inside** (a parent capture on a child node within the injection
-///   content area): The capture is redundant because the injection language
-///   provides its own tokens for that region.
+/// contained but NOT exactly equal. Nodes whose range exactly equals an exclusion
+/// range are preserved; conflicts at the same position are resolved downstream
+/// by the sweep line algorithm in `finalize_tokens()`.
 fn is_in_exclusion_range(node: &Node, ranges: &[(usize, usize)]) -> bool {
     let node_start = node.start_byte();
     let node_end = node.end_byte();
@@ -53,10 +46,6 @@ pub(crate) struct RawToken {
     /// Used by the sweep line to resolve overlaps: deeper nodes are more
     /// specific and take priority over shallower ones at the same injection depth.
     pub node_depth: usize,
-    /// Whether this token's node exactly matches an injection content node.
-    /// Exact-match tokens are preserved even inside active injection regions
-    /// (e.g., `@markup.heading.1` on the `inline` node that is the injection content).
-    pub exact_match_injection: bool,
 }
 
 /// Represents the line/column boundaries of an injection region in the host document.
@@ -275,7 +264,6 @@ pub(super) fn collect_host_tokens(
                     depth,
                     pattern_index: m.pattern_index,
                     node_depth,
-                    exact_match_injection: false,
                 });
             } else if supports_multiline {
                 // Multiline token with client support: emit a single token spanning multiple lines.
@@ -337,7 +325,6 @@ pub(super) fn collect_host_tokens(
                     depth,
                     pattern_index: m.pattern_index,
                     node_depth,
-                    exact_match_injection: false,
                 });
             } else {
                 // Multiline token without client support: split into per-line tokens
@@ -367,7 +354,6 @@ pub(super) fn collect_host_tokens(
                             depth,
                             pattern_index: m.pattern_index,
                             node_depth,
-                            exact_match_injection: false,
                         });
                     }
                 }
