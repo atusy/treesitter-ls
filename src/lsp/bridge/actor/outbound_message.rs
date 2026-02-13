@@ -13,18 +13,25 @@ use crate::lsp::bridge::protocol::RequestId;
 ///
 /// All messages pass through the unified order queue to ensure FIFO ordering
 /// per ADR-0015. The writer task consumes these and writes to stdin.
+///
+/// The variants reflect whether the ResponseRouter tracks the message:
+/// - `Untracked`: fire-and-forget (notifications, server-request responses)
+/// - `Tracked`: request_id registered with ResponseRouter for cleanup on failure
 #[derive(Debug)]
 pub(crate) enum OutboundMessage {
-    /// Notification (no response expected).
+    /// Untracked message (no ResponseRouter entry to clean up on failure).
     ///
-    /// If the queue is full, notifications are dropped with WARN logging.
-    Notification(serde_json::Value),
+    /// Used for notifications and server-request responses — anything that
+    /// doesn't have a corresponding oneshot waiter in the ResponseRouter.
+    /// If the queue is full, untracked messages are dropped with WARN logging.
+    Untracked(serde_json::Value),
 
-    /// Request (response expected).
+    /// Tracked request (response expected, registered with ResponseRouter).
     ///
     /// The request_id must be registered with ResponseRouter BEFORE queuing.
-    /// If the queue is full, the request is rejected with REQUEST_FAILED.
-    Request {
+    /// If the queue is full, the request is rejected with REQUEST_FAILED
+    /// and the router entry is cleaned up.
+    Tracked {
         /// The JSON-RPC request payload
         payload: serde_json::Value,
         /// Request ID for correlation (already registered with router)
@@ -38,27 +45,26 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn outbound_message_notification_debug_format() {
-        let notification =
-            OutboundMessage::Notification(json!({"method": "textDocument/didChange"}));
-        let debug_str = format!("{:?}", notification);
+    fn outbound_message_untracked_debug_format() {
+        let untracked = OutboundMessage::Untracked(json!({"method": "textDocument/didChange"}));
+        let debug_str = format!("{:?}", untracked);
         assert!(
-            debug_str.contains("Notification"),
-            "Debug format should contain 'Notification': {}",
+            debug_str.contains("Untracked"),
+            "Debug format should contain 'Untracked': {}",
             debug_str
         );
     }
 
     #[test]
-    fn outbound_message_request_debug_format() {
-        let request = OutboundMessage::Request {
+    fn outbound_message_tracked_debug_format() {
+        let tracked = OutboundMessage::Tracked {
             payload: json!({"method": "textDocument/hover", "id": 42}),
             request_id: RequestId::new(42),
         };
-        let debug_str = format!("{:?}", request);
+        let debug_str = format!("{:?}", tracked);
         assert!(
-            debug_str.contains("Request"),
-            "Debug format should contain 'Request': {}",
+            debug_str.contains("Tracked"),
+            "Debug format should contain 'Tracked': {}",
             debug_str
         );
         assert!(

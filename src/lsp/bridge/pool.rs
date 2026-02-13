@@ -1861,7 +1861,7 @@ mod tests {
         // Verify that a didOpen notification was queued
         let msg = rx.try_recv().expect("should have queued didOpen");
         match msg {
-            OutboundMessage::Notification(payload) => {
+            OutboundMessage::Untracked(payload) => {
                 assert_eq!(
                     payload["method"], "textDocument/didOpen",
                     "Should be didOpen notification"

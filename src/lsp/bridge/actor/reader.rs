@@ -756,9 +756,8 @@ async fn handle_server_request(
     };
 
     // Send response via the writer channel.
-    // We reuse OutboundMessage::Notification because the writer loop treats
-    // Notification and Request identically (serialize & write). A server-initiated
-    // response has no router entry to clean up on failure.
+    // We use OutboundMessage::Untracked because a server-initiated response has
+    // no ResponseRouter entry to clean up on failure (unlike Tracked requests).
     //
     // We use send_timeout(5s) instead of try_send() to guarantee delivery under
     // transient backpressure. try_send() silently drops the response if the queue
@@ -772,10 +771,7 @@ async fn handle_server_request(
     // sustained backpressure, which is far better than instant loss.
     if let Err(e) = deps
         .response_tx
-        .send_timeout(
-            OutboundMessage::Notification(response),
-            Duration::from_secs(5),
-        )
+        .send_timeout(OutboundMessage::Untracked(response), Duration::from_secs(5))
         .await
     {
         warn!(
@@ -1220,11 +1216,11 @@ mod tests {
         // A response should have been sent
         let response = response_rx.try_recv().expect("should have response");
         match response {
-            OutboundMessage::Notification(val) => {
+            OutboundMessage::Untracked(val) => {
                 assert_eq!(val["id"], 1);
                 assert!(val["result"].is_null());
             }
-            _ => panic!("Expected Notification variant"),
+            _ => panic!("Expected Untracked variant"),
         }
     }
 
@@ -1273,11 +1269,11 @@ mod tests {
         // A success response should have been sent
         let response = response_rx.try_recv().expect("should have response");
         match response {
-            OutboundMessage::Notification(val) => {
+            OutboundMessage::Untracked(val) => {
                 assert_eq!(val["id"], 2);
                 assert!(val["result"].is_null());
             }
-            _ => panic!("Expected Notification variant"),
+            _ => panic!("Expected Untracked variant"),
         }
     }
 
@@ -1308,11 +1304,11 @@ mod tests {
         // A success response should have been sent
         let response = response_rx.try_recv().expect("should have response");
         match response {
-            OutboundMessage::Notification(val) => {
+            OutboundMessage::Untracked(val) => {
                 assert_eq!(val["id"], 5);
                 assert!(val["result"].is_null());
             }
-            _ => panic!("Expected Notification variant"),
+            _ => panic!("Expected Untracked variant"),
         }
     }
 
@@ -1352,12 +1348,12 @@ mod tests {
         // Should have sent a success response (not MethodNotFound)
         let response = response_rx.try_recv().expect("should have response");
         match response {
-            OutboundMessage::Notification(val) => {
+            OutboundMessage::Untracked(val) => {
                 assert_eq!(val["id"], 10);
                 assert!(val["result"].is_null(), "Should be success, not error");
                 assert!(val.get("error").is_none(), "Should not have error field");
             }
-            _ => panic!("Expected Notification variant"),
+            _ => panic!("Expected Untracked variant"),
         }
     }
 
@@ -1385,11 +1381,11 @@ mod tests {
 
         let response = response_rx.try_recv().expect("should have response");
         match response {
-            OutboundMessage::Notification(val) => {
+            OutboundMessage::Untracked(val) => {
                 assert_eq!(val["id"], 99);
                 assert_eq!(val["error"]["code"], -32601);
             }
-            _ => panic!("Expected Notification variant"),
+            _ => panic!("Expected Untracked variant"),
         }
     }
 
@@ -1413,7 +1409,7 @@ mod tests {
 
         // Fill the channel with a dummy message to create backpressure
         response_tx
-            .send(OutboundMessage::Notification(json!({"dummy": true})))
+            .send(OutboundMessage::Untracked(json!({"dummy": true})))
             .await
             .unwrap();
 
@@ -1439,7 +1435,7 @@ mod tests {
 
         // Drain the dummy message to free capacity
         let dummy = response_rx.recv().await.expect("should have dummy");
-        assert!(matches!(dummy, OutboundMessage::Notification(v) if v["dummy"] == true));
+        assert!(matches!(dummy, OutboundMessage::Untracked(v) if v["dummy"] == true));
 
         // Now the server request response should arrive
         let response = tokio::time::timeout(Duration::from_secs(2), response_rx.recv())
@@ -1448,11 +1444,11 @@ mod tests {
             .expect("channel should not be closed");
 
         match response {
-            OutboundMessage::Notification(val) => {
+            OutboundMessage::Untracked(val) => {
                 assert_eq!(val["id"], 42);
                 assert!(val["result"].is_null());
             }
-            _ => panic!("Expected Notification variant"),
+            _ => panic!("Expected Untracked variant"),
         }
 
         handle.await.unwrap();

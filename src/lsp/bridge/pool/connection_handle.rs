@@ -216,7 +216,7 @@ impl ConnectionHandle {
     /// handle.send_notification(notification); // Fire-and-forget
     /// ```
     pub(crate) fn send_notification(&self, payload: serde_json::Value) -> NotificationSendResult {
-        match self.tx.try_send(OutboundMessage::Notification(payload)) {
+        match self.tx.try_send(OutboundMessage::Untracked(payload)) {
             Ok(()) => NotificationSendResult::Queued,
             Err(mpsc::error::TrySendError::Full(_)) => {
                 log::warn!(
@@ -276,7 +276,7 @@ impl ConnectionHandle {
         payload: serde_json::Value,
         request_id: RequestId,
     ) -> Result<(), BridgeError> {
-        match self.tx.try_send(OutboundMessage::Request {
+        match self.tx.try_send(OutboundMessage::Tracked {
             payload,
             request_id,
         }) {

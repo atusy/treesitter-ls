@@ -44,7 +44,7 @@ pub(crate) trait MessageSender: Send {
 impl MessageSender for mpsc::Sender<OutboundMessage> {
     async fn send_notification(&mut self, payload: serde_json::Value) -> io::Result<()> {
         // Use try_send for non-blocking backpressure per ADR-0015
-        self.try_send(OutboundMessage::Notification(payload))
+        self.try_send(OutboundMessage::Untracked(payload))
             .map_err(|e| match e {
                 mpsc::error::TrySendError::Full(_) => {
                     io::Error::new(io::ErrorKind::WouldBlock, "bridge: notification queue full")
@@ -104,10 +104,10 @@ mod tests {
         // Verify the message was queued
         let msg = rx.recv().await.expect("should receive message");
         match msg {
-            OutboundMessage::Notification(received) => {
+            OutboundMessage::Untracked(received) => {
                 assert_eq!(received, payload);
             }
-            _ => panic!("Expected Notification variant"),
+            _ => panic!("Expected Untracked variant"),
         }
     }
 

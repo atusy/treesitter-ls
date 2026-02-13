@@ -172,7 +172,7 @@ async fn writer_loop(
                                 e
                             );
                             // Fail the request if write failed
-                            if let OutboundMessage::Request { request_id, .. } = msg {
+                            if let OutboundMessage::Tracked { request_id, .. } = msg {
                                 router.fail_request(request_id, "bridge: write error during shutdown");
                             }
                         }
@@ -193,7 +193,7 @@ async fn writer_loop(
                 );
                 // Drain remaining queued requests and fail them
                 while let Ok(msg) = rx.try_recv() {
-                    if let OutboundMessage::Request { request_id, .. } = msg {
+                    if let OutboundMessage::Tracked { request_id, .. } = msg {
                         router.fail_request(request_id, "bridge: connection closing");
                     }
                 }
@@ -212,7 +212,7 @@ async fn writer_loop(
                                 e
                             );
                             // Clean up request from router if write failed
-                            if let OutboundMessage::Request { request_id, .. } = &outbound {
+                            if let OutboundMessage::Tracked { request_id, .. } = &outbound {
                                 router.fail_request(*request_id, "bridge: write error");
                             }
                             // Note: Connection will transition to Failed via reader task
@@ -241,8 +241,8 @@ async fn write_message(
     msg: &OutboundMessage,
 ) -> std::io::Result<()> {
     match msg {
-        OutboundMessage::Notification(payload) => writer.write_message(payload).await,
-        OutboundMessage::Request { payload, .. } => writer.write_message(payload).await,
+        OutboundMessage::Untracked(payload) => writer.write_message(payload).await,
+        OutboundMessage::Tracked { payload, .. } => writer.write_message(payload).await,
     }
 }
 
@@ -273,13 +273,13 @@ mod tests {
         let msg2 = json!({"id": 2, "method": "test2"});
         let msg3 = json!({"id": 3, "method": "test3"});
 
-        tx.send(OutboundMessage::Notification(msg1.clone()))
+        tx.send(OutboundMessage::Untracked(msg1.clone()))
             .await
             .unwrap();
-        tx.send(OutboundMessage::Notification(msg2.clone()))
+        tx.send(OutboundMessage::Untracked(msg2.clone()))
             .await
             .unwrap();
-        tx.send(OutboundMessage::Notification(msg3.clone()))
+        tx.send(OutboundMessage::Untracked(msg3.clone()))
             .await
             .unwrap();
 
@@ -308,7 +308,7 @@ mod tests {
         let mut handle = spawn_writer_task(writer, rx, Arc::clone(&router));
 
         // Send a notification
-        tx.send(OutboundMessage::Notification(json!({"method": "test"})))
+        tx.send(OutboundMessage::Untracked(json!({"method": "test"})))
             .await
             .unwrap();
 
@@ -345,7 +345,7 @@ mod tests {
         let response_rx = router.register(request_id).expect("should register");
 
         // Queue the request but cancel before it's processed
-        tx.send(OutboundMessage::Request {
+        tx.send(OutboundMessage::Tracked {
             payload: json!({"id": 42, "method": "test"}),
             request_id,
         })
@@ -441,7 +441,7 @@ mod tests {
         let response_rx = router.register(request_id).expect("should register");
 
         // Queue the request - the write should fail (broken pipe)
-        tx.send(OutboundMessage::Request {
+        tx.send(OutboundMessage::Tracked {
             payload: json!({"id": 123, "method": "test"}),
             request_id,
         })
