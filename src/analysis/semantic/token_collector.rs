@@ -490,10 +490,7 @@ mod tests {
         let fn_node = tree.root_node().child(0).unwrap().child(0).unwrap();
         assert_eq!((fn_node.start_byte(), fn_node.end_byte()), (0, 2));
         // First range misses, second strictly contains [0, 2)
-        assert!(is_in_exclusion_range(
-            &fn_node,
-            &[(100, 200), (0, 12)]
-        ));
+        assert!(is_in_exclusion_range(&fn_node, &[(100, 200), (0, 12)]));
     }
 
     // ── collect_host_tokens exclusion behavior ───────────────────────
@@ -504,14 +501,22 @@ mod tests {
         let code = "fn main() {}";
         let tree = parse_rust_tree(code);
         let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
-        let query =
-            tree_sitter::Query::new(&language, "(identifier) @variable").unwrap();
+        let query = tree_sitter::Query::new(&language, "(identifier) @variable").unwrap();
         let lines: Vec<&str> = code.lines().collect();
 
         // Without exclusion: should get the "main" identifier token
         let mut tokens_no_excl = Vec::new();
         collect_host_tokens(
-            code, &tree, &query, Some("rust"), None, code, &lines, 0, 0, false,
+            code,
+            &tree,
+            &query,
+            Some("rust"),
+            None,
+            code,
+            &lines,
+            0,
+            0,
+            false,
             &[],
             &mut tokens_no_excl,
         );
@@ -523,7 +528,16 @@ mod tests {
         // Exclusion range [0, 12) strictly contains the identifier [3, 7) → suppressed
         let mut tokens_excl = Vec::new();
         collect_host_tokens(
-            code, &tree, &query, Some("rust"), None, code, &lines, 0, 0, false,
+            code,
+            &tree,
+            &query,
+            Some("rust"),
+            None,
+            code,
+            &lines,
+            0,
+            0,
+            false,
             &[(0, code.len())],
             &mut tokens_excl,
         );
@@ -539,8 +553,7 @@ mod tests {
         let code = "fn main() {}";
         let tree = parse_rust_tree(code);
         let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
-        let query =
-            tree_sitter::Query::new(&language, "(identifier) @variable").unwrap();
+        let query = tree_sitter::Query::new(&language, "(identifier) @variable").unwrap();
         let lines: Vec<&str> = code.lines().collect();
 
         // Exclusion range [3, 7) exactly matches the identifier node → NOT suppressed.
@@ -548,7 +561,16 @@ mod tests {
         // on the same node that is the injection content.
         let mut tokens = Vec::new();
         collect_host_tokens(
-            code, &tree, &query, Some("rust"), None, code, &lines, 0, 0, false,
+            code,
+            &tree,
+            &query,
+            Some("rust"),
+            None,
+            code,
+            &lines,
+            0,
+            0,
+            false,
             &[(3, 7)],
             &mut tokens,
         );
@@ -565,17 +587,23 @@ mod tests {
         let tree = parse_rust_tree(code);
         let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
         // Query that matches both "fn" keyword and "main" identifier
-        let query = tree_sitter::Query::new(
-            &language,
-            r#"["fn"] @keyword (identifier) @variable"#,
-        )
-        .unwrap();
+        let query = tree_sitter::Query::new(&language, r#"["fn"] @keyword (identifier) @variable"#)
+            .unwrap();
         let lines: Vec<&str> = code.lines().collect();
 
         // Exclusion range [0, 12) strictly contains both "fn" [0,2) and "main" [3,7)
         let mut tokens = Vec::new();
         collect_host_tokens(
-            code, &tree, &query, Some("rust"), None, code, &lines, 0, 0, false,
+            code,
+            &tree,
+            &query,
+            Some("rust"),
+            None,
+            code,
+            &lines,
+            0,
+            0,
+            false,
             &[(0, code.len())],
             &mut tokens,
         );
@@ -590,7 +618,16 @@ mod tests {
         // Use [2, 8) which contains [3,7) but not [0,2)
         let mut tokens2 = Vec::new();
         collect_host_tokens(
-            code, &tree, &query, Some("rust"), None, code, &lines, 0, 0, false,
+            code,
+            &tree,
+            &query,
+            Some("rust"),
+            None,
+            code,
+            &lines,
+            0,
+            0,
+            false,
             &[(2, 8)],
             &mut tokens2,
         );
@@ -598,7 +635,10 @@ mod tests {
         let has_keyword = tokens2.iter().any(|t| t.mapped_name == "keyword");
         let has_variable = tokens2.iter().any(|t| t.mapped_name == "variable");
         assert!(has_keyword, "fn keyword outside exclusion should be kept");
-        assert!(!has_variable, "main identifier strictly inside exclusion should be dropped");
+        assert!(
+            !has_variable,
+            "main identifier strictly inside exclusion should be dropped"
+        );
     }
 
     #[test]

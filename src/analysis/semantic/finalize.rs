@@ -455,10 +455,7 @@ mod tests {
         let fragments = extract_fragments(tokens);
         assert_eq!(
             fragments,
-            vec![
-                (0, 5, "variable".to_string()),
-                (5, 5, "string".to_string()),
-            ]
+            vec![(0, 5, "variable".to_string()), (5, 5, "string".to_string()),]
         );
     }
 
@@ -471,10 +468,7 @@ mod tests {
             make_token_with_node_depth(0, 0, 5, "type.builtin", 0, 10, 1),
         ];
         let fragments = extract_fragments(tokens);
-        assert_eq!(
-            fragments,
-            vec![(0, 5, "type.builtin".to_string())]
-        );
+        assert_eq!(fragments, vec![(0, 5, "type.builtin".to_string())]);
     }
 
     #[test]
@@ -486,10 +480,7 @@ mod tests {
             make_token_with_node_depth(0, 0, 5, "keyword", 1, 0, 1),
         ];
         let fragments = extract_fragments(tokens);
-        assert_eq!(
-            fragments,
-            vec![(0, 5, "keyword".to_string())]
-        );
+        assert_eq!(fragments, vec![(0, 5, "keyword".to_string())]);
     }
 
     #[test]
@@ -523,10 +514,7 @@ mod tests {
             make_token_with_node_depth(0, 0, 5, "variable", 0, 0, 2),
         ];
         let fragments = extract_fragments(tokens);
-        assert_eq!(
-            fragments,
-            vec![(0, 5, "variable".to_string())]
-        );
+        assert_eq!(fragments, vec![(0, 5, "variable".to_string())]);
     }
 
     #[test]
@@ -576,10 +564,7 @@ mod tests {
                 (7, 3, "keyword".to_string()),
             ]
         );
-        assert_eq!(
-            line1,
-            vec![(2, 3, "string".to_string())]
-        );
+        assert_eq!(line1, vec![(2, 3, "string".to_string())]);
     }
 
     // ── injection region exclusion tests ──────────────────────────────
@@ -590,7 +575,7 @@ mod tests {
         // Should be excluded because it's not exact_match.
         let tokens = vec![
             make_token(0, 0, 5, "keyword", 0, 0), // line 0 — outside region
-            make_token(3, 0, 12, "string", 0, 0),  // line 3 — inside region
+            make_token(3, 0, 12, "string", 0, 0), // line 3 — inside region
         ];
         let regions = vec![InjectionRegion {
             start_line: 2,
@@ -604,7 +589,11 @@ mod tests {
             panic!("Expected Tokens");
         };
         // Only line 0 token should survive
-        assert_eq!(st.data.len(), 1, "Host token inside injection should be excluded");
+        assert_eq!(
+            st.data.len(),
+            1,
+            "Host token inside injection should be excluded"
+        );
         assert_eq!(st.data[0].delta_line, 0);
         assert_eq!(st.data[0].delta_start, 0);
         assert_eq!(st.data[0].length, 5);
@@ -645,9 +634,7 @@ mod tests {
     #[test]
     fn finalize_no_exclusion_when_no_active_regions() {
         // No active regions → all host tokens survive.
-        let tokens = vec![
-            make_token(3, 0, 12, "string", 0, 0),
-        ];
+        let tokens = vec![make_token(3, 0, 12, "string", 0, 0)];
         let result = finalize_tokens(tokens, &[]);
         assert!(result.is_some());
     }

@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use tree_sitter::{Parser, Tree};
 
 use super::injection::{InjectionContext, MAX_INJECTION_DEPTH};
-use super::token_collector::{InjectionRegion, RawToken, collect_host_tokens, byte_to_utf16_col};
+use super::token_collector::{InjectionRegion, RawToken, byte_to_utf16_col, collect_host_tokens};
 use crate::config::CaptureMappings;
 use crate::language::LanguageCoordinator;
 
