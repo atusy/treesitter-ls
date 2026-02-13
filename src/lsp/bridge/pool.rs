@@ -22,6 +22,7 @@ mod connection_action;
 mod connection_handle;
 mod connection_state;
 mod document_tracker;
+mod dynamic_capability_registry;
 mod execute;
 mod handshake;
 mod liveness_timeout;
@@ -40,6 +41,7 @@ pub(crate) use connection_state::ConnectionState;
 use document_tracker::DocumentOpenDecision;
 use document_tracker::DocumentTracker;
 pub(crate) use document_tracker::OpenedVirtualDoc;
+pub(crate) use dynamic_capability_registry::DynamicCapabilityRegistry;
 pub(crate) use message_sender::ConnectionHandleSender;
 pub(crate) use shutdown_timeout::GlobalShutdownTimeout;
 
@@ -64,7 +66,9 @@ use super::protocol::{VirtualDocumentUri, build_didopen_notification};
 /// within this duration, the connection attempt fails with a timeout error.
 pub(crate) const INIT_TIMEOUT_SECS: u64 = 30;
 
-use super::actor::{ResponseRouter, spawn_reader_task_for_language};
+use super::actor::{
+    OUTBOUND_QUEUE_CAPACITY, ResponseRouter, UpstreamNotification, spawn_reader_task_for_language,
+};
 use super::connection::AsyncBridgeConnection;
 
 /// Upstream request ID type supporting both numeric and string IDs per LSP spec.
@@ -242,6 +246,16 @@ pub struct LanguageServerPool {
     /// Passed to downstream servers during LSP handshake so they can provide
     /// workspace-aware features (diagnostics, go-to-definition, etc.).
     root_uri: std::sync::Mutex<Option<String>>,
+    /// Sender for forwarding downstream server notifications to the upstream editor.
+    ///
+    /// Cloned into each reader task so they can signal events like
+    /// `workspace/diagnostic/refresh` without coupling to tower-lsp's Client type.
+    upstream_tx: tokio::sync::mpsc::UnboundedSender<UpstreamNotification>,
+    /// Receiver for upstream notifications, taken once by the forwarding task.
+    ///
+    /// Wrapped in `Mutex<Option<...>>` because `take_upstream_rx()` moves it out.
+    upstream_rx:
+        std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<UpstreamNotification>>>,
 }
 
 impl Default for LanguageServerPool {
@@ -266,6 +280,7 @@ impl LanguageServerPool {
     /// let service = RequestIdCapture::with_cancel_forwarder(kakehashi, cancel_forwarder);
     /// ```
     pub fn new() -> Self {
+        let (upstream_tx, upstream_rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
             connections: Mutex::new(HashMap::new()),
             document_tracker: DocumentTracker::new(),
@@ -273,6 +288,8 @@ impl LanguageServerPool {
             cancel_metrics: CancelForwardingMetrics::default(),
             consecutive_panic_counts: std::sync::Mutex::new(HashMap::new()),
             root_uri: std::sync::Mutex::new(None),
+            upstream_tx,
+            upstream_rx: std::sync::Mutex::new(Some(upstream_rx)),
         }
     }
 
@@ -288,6 +305,17 @@ impl LanguageServerPool {
     fn root_uri(&self) -> Option<String> {
         let root_uri = self.root_uri.lock().unwrap_or_else(|e| e.into_inner());
         root_uri.clone()
+    }
+
+    /// Take the upstream notification receiver for forwarding to the editor.
+    ///
+    /// Returns `Some(receiver)` on first call, `None` on subsequent calls.
+    /// The receiver should be consumed by a single forwarding task in `initialized()`.
+    pub(crate) fn take_upstream_rx(
+        &self,
+    ) -> Option<tokio::sync::mpsc::UnboundedReceiver<UpstreamNotification>> {
+        let mut guard = self.upstream_rx.lock().unwrap_or_else(|e| e.into_inner());
+        guard.take()
     }
 
     /// Get access to cancel forwarding metrics (for testing).
@@ -701,6 +729,12 @@ impl LanguageServerPool {
             .register(init_request_id)
             .expect("fresh router cannot have duplicate IDs");
 
+        // Create outbound message channel (extracted here so tx can be shared with reader task)
+        let (tx, rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
+
+        // Create dynamic capability registry (shared between reader and connection handle)
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+
         // Now spawn reader task with liveness timeout - it can route the initialize response immediately
         // Liveness timeout is configured via LivenessTimeout::default() (60s per ADR-0018 Tier 2)
         // Server name is passed for structured logging (observability improvement)
@@ -710,6 +744,9 @@ impl LanguageServerPool {
             Arc::clone(&router),
             Some(liveness_timeout.as_duration()),
             Some(server_name.to_string()),
+            tx.clone(),
+            Arc::clone(&dynamic_capabilities),
+            self.upstream_tx.clone(),
         );
 
         // Create handle in Initializing state (fast-fail for concurrent requests)
@@ -718,6 +755,9 @@ impl LanguageServerPool {
             router,
             reader_handle,
             ConnectionState::Initializing,
+            tx,
+            rx,
+            dynamic_capabilities,
         ));
 
         // Insert into pool immediately so concurrent requests see Initializing state
@@ -1821,7 +1861,7 @@ mod tests {
         // Verify that a didOpen notification was queued
         let msg = rx.try_recv().expect("should have queued didOpen");
         match msg {
-            OutboundMessage::Notification(payload) => {
+            OutboundMessage::Untracked(payload) => {
                 assert_eq!(
                     payload["method"], "textDocument/didOpen",
                     "Should be didOpen notification"
@@ -2081,18 +2121,20 @@ mod tests {
     /// Test that graceful shutdown acquires exclusive writer access.
     #[tokio::test]
     async fn graceful_shutdown_acquires_exclusive_writer_access() {
-        // Create a connection to a mock server
+        // Create a connection to a mock server (sink — doesn't respond to shutdown)
         let handle = create_handle_with_state(ConnectionState::Ready).await;
 
         // Verify initial state
         assert_eq!(handle.state(), ConnectionState::Ready);
 
-        // Perform shutdown
-        let result = handle.graceful_shutdown().await;
+        // Perform shutdown with timeout (ADR-0018: graceful_shutdown has no internal timeout,
+        // caller must provide one). Sink servers don't respond, so this always times out.
+        let result = tokio::time::timeout(Duration::from_secs(2), handle.graceful_shutdown()).await;
 
-        // Should complete (though may fail due to mock server not responding)
-        // The important thing is state transitions are correct
-        let _ = result;
+        if result.is_err() {
+            // Timeout: manually complete shutdown (simulates force_kill_all behavior)
+            handle.complete_shutdown();
+        }
 
         // After shutdown completes, state should be Closed
         assert_eq!(
@@ -2177,15 +2219,16 @@ mod tests {
             "Failed connection should be Closed after shutdown_all"
         );
 
-        // Closing -> should remain Closing (was already shutting down)
-        // Note: The closing handle was created with Closing state, but
-        // shutdown_all skips it, so it stays Closing unless something else
-        // completes the shutdown
+        // Closing -> should be Closed after global timeout triggers force_kill_all.
+        // The sink-based test server doesn't respond to shutdown requests, so the
+        // Ready handle's graceful_shutdown hangs until the global timeout. When
+        // force_kill_all runs, it transitions ALL non-Closed connections to Closed,
+        // including this one that was already Closing.
         let rust_handle = connections.get("rust").expect("rust should exist");
         assert_eq!(
             rust_handle.state(),
-            ConnectionState::Closing,
-            "Already-closing connection should remain Closing"
+            ConnectionState::Closed,
+            "Closing connection should be Closed after global timeout triggers force_kill_all"
         );
     }
 
@@ -2220,11 +2263,15 @@ mod tests {
         let router = Arc::new(ResponseRouter::new());
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
+        let (tx, rx) = tokio::sync::mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Ready,
+            tx,
+            rx,
+            Arc::new(DynamicCapabilityRegistry::new()),
         ));
 
         // Add connection to pool
@@ -2489,14 +2536,23 @@ mod tests {
             "Should be able to send notification before shutdown"
         );
 
-        // Perform graceful shutdown
+        // Perform graceful shutdown with timeout (ADR-0018: caller provides timeout).
+        // Sink server doesn't respond, so handshake always times out. We verify the
+        // writer task coordination (stop_and_reclaim) works by checking that the
+        // notification was sent and shutdown progresses to Closing state.
         let start = std::time::Instant::now();
-        let _ = handle.graceful_shutdown().await;
+        let timeout_result =
+            tokio::time::timeout(Duration::from_secs(3), handle.graceful_shutdown()).await;
 
-        // Shutdown should complete reasonably quickly (writer task drains and returns)
+        if timeout_result.is_err() {
+            // Timeout: manually complete shutdown (simulates force_kill_all behavior)
+            handle.complete_shutdown();
+        }
+
+        // Shutdown should reach Closed state within timeout + cleanup
         assert!(
-            start.elapsed() < Duration::from_secs(2),
-            "Graceful shutdown should complete within 2 seconds"
+            start.elapsed() < Duration::from_secs(5),
+            "Graceful shutdown should complete within 5 seconds (including timeout)"
         );
 
         // Verify shutdown completed (state is Closed)

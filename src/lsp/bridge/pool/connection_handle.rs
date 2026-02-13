@@ -24,6 +24,7 @@ use tokio::sync::mpsc;
 use tower_lsp_server::ls_types::ServerCapabilities;
 
 use super::connection_action::BridgeError;
+use super::dynamic_capability_registry::DynamicCapabilityRegistry;
 use super::{ConnectionState, UpstreamId};
 use crate::lsp::bridge::actor::{
     OUTBOUND_QUEUE_CAPACITY, OutboundMessage, ReaderTaskHandle, ResponseRouter, WriterTaskHandle,
@@ -108,6 +109,10 @@ pub(crate) struct ConnectionHandle {
     /// Uses OnceLock for "set once, read many" semantics
     /// (same pattern as SettingsManager::client_capabilities).
     server_capabilities: OnceLock<ServerCapabilities>,
+    /// Dynamic capability registrations from server-initiated `client/registerCapability` requests.
+    ///
+    /// Updated by the reader task, queried by request handlers via `has_capability()`.
+    dynamic_capabilities: Arc<DynamicCapabilityRegistry>,
 }
 
 impl ConnectionHandle {
@@ -121,7 +126,17 @@ impl ConnectionHandle {
         router: Arc<ResponseRouter>,
         reader_handle: ReaderTaskHandle,
     ) -> Self {
-        Self::with_state(writer, router, reader_handle, ConnectionState::Ready)
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        Self::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+            tx,
+            rx,
+            dynamic_capabilities,
+        )
     }
 
     /// Create a new ConnectionHandle with a specific initial state.
@@ -145,11 +160,11 @@ impl ConnectionHandle {
         router: Arc<ResponseRouter>,
         reader_handle: ReaderTaskHandle,
         initial_state: ConnectionState,
+        tx: mpsc::Sender<OutboundMessage>,
+        rx: mpsc::Receiver<OutboundMessage>,
+        dynamic_capabilities: Arc<DynamicCapabilityRegistry>,
     ) -> Self {
         use crate::lsp::bridge::actor::spawn_writer_task;
-
-        // Create the outbound message channel
-        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
 
         // Spawn the writer task - it owns the writer and writes from the channel
         let writer_handle = spawn_writer_task(writer, rx, Arc::clone(&router));
@@ -166,6 +181,7 @@ impl ConnectionHandle {
             // which is pre-registered before spawning the reader task.
             next_request_id: AtomicI64::new(2),
             server_capabilities: OnceLock::new(),
+            dynamic_capabilities,
         }
     }
 
@@ -200,7 +216,7 @@ impl ConnectionHandle {
     /// handle.send_notification(notification); // Fire-and-forget
     /// ```
     pub(crate) fn send_notification(&self, payload: serde_json::Value) -> NotificationSendResult {
-        match self.tx.try_send(OutboundMessage::Notification(payload)) {
+        match self.tx.try_send(OutboundMessage::Untracked(payload)) {
             Ok(()) => NotificationSendResult::Queued,
             Err(mpsc::error::TrySendError::Full(_)) => {
                 log::warn!(
@@ -260,7 +276,7 @@ impl ConnectionHandle {
         payload: serde_json::Value,
         request_id: RequestId,
     ) -> Result<(), BridgeError> {
-        match self.tx.try_send(OutboundMessage::Request {
+        match self.tx.try_send(OutboundMessage::Tracked {
             payload,
             request_id,
         }) {
@@ -386,9 +402,38 @@ impl ConnectionHandle {
     /// Returns `None` if capabilities haven't been set yet (server still initializing).
     /// Callers use typed field access (e.g., `c.diagnostic_provider.as_ref()`) for
     /// compile-time-safe capability checks.
-    #[cfg(feature = "experimental")]
     pub(crate) fn server_capabilities(&self) -> Option<&ServerCapabilities> {
         self.server_capabilities.get()
+    }
+
+    /// Access the dynamic capability registry for this connection.
+    pub(crate) fn dynamic_capabilities(&self) -> &DynamicCapabilityRegistry {
+        &self.dynamic_capabilities
+    }
+
+    /// Check if the downstream server supports a given LSP method,
+    /// either via static capabilities (initialize response) or dynamic registration.
+    ///
+    /// Dynamic registrations take precedence since they may arrive after initialize.
+    ///
+    /// To add a new method, add a match arm mapping the LSP method string to the
+    /// corresponding field in `ServerCapabilities`:
+    /// ```ignore
+    /// "textDocument/hover" => caps.hover_provider.is_some(),
+    /// ```
+    pub(crate) fn has_capability(&self, method: &str) -> bool {
+        // Check dynamic registrations first (may arrive after initialize)
+        if self.dynamic_capabilities().has_registration(method) {
+            return true;
+        }
+        // Fall back to static capabilities from initialize response
+        let Some(caps) = self.server_capabilities() else {
+            return false;
+        };
+        match method {
+            "textDocument/diagnostic" => caps.diagnostic_provider.is_some(),
+            _ => false,
+        }
     }
 
     /// Begin graceful shutdown of the connection.
@@ -655,6 +700,11 @@ mod tests {
     use crate::lsp::bridge::actor::{ResponseRouter, spawn_reader_task};
     use crate::lsp::bridge::connection::AsyncBridgeConnection;
 
+    /// Create a default DynamicCapabilityRegistry for tests that don't need it.
+    fn default_dynamic_caps() -> Arc<DynamicCapabilityRegistry> {
+        Arc::new(DynamicCapabilityRegistry::new())
+    }
+
     /// Test that ConnectionHandle provides unique request IDs via atomic counter.
     ///
     /// Each call to next_request_id() should return a unique, incrementing value.
@@ -775,11 +825,15 @@ mod tests {
         );
 
         // Create ConnectionHandle in Ready state
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Ready,
+            tx,
+            rx,
+            default_dynamic_caps(),
         ));
 
         // Verify initial state is Ready
@@ -844,11 +898,15 @@ mod tests {
         );
 
         // Create ConnectionHandle in Ready state
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Ready,
+            tx,
+            rx,
+            default_dynamic_caps(),
         ));
 
         // Register a request to start the liveness timer
@@ -897,11 +955,15 @@ mod tests {
             spawn_reader_task_with_liveness(reader, Arc::clone(&router), Some(timeout));
 
         // Create ConnectionHandle in Closing state
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Closing,
+            tx,
+            rx,
+            default_dynamic_caps(),
         ));
 
         // Register a request - this should NOT start the liveness timer
@@ -957,22 +1019,27 @@ mod tests {
         );
 
         // Create ConnectionHandle in Ready state
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Ready,
+            tx,
+            rx,
+            default_dynamic_caps(),
         ));
 
         // Register first request - this starts the liveness timer
         let (request_id1, response_rx1) = handle.register_request().expect("should register");
 
-        // Send a request that will be echoed back (ADR-0015: use send_request)
+        // Send a response-shaped message that will be echoed back.
+        // We deliberately omit "method" so the echo is classified as a Response
+        // (not a ServerRequest), matching the routing expected by this test.
         let request1 = json!({
             "jsonrpc": "2.0",
             "id": request_id1.as_i64(),
-            "method": "test",
-            "params": {}
+            "result": null
         });
         handle
             .send_request(request1, request_id1)
@@ -1001,12 +1068,11 @@ mod tests {
         // Register second request to keep pending > 0 (timer stays active after reset)
         let (request_id2, response_rx2) = handle.register_request().expect("should register");
 
-        // Send second request (ADR-0015: use send_request)
+        // Send response-shaped message for echo (see first request comment)
         let request2 = json!({
             "jsonrpc": "2.0",
             "id": request_id2.as_i64(),
-            "method": "test2",
-            "params": {}
+            "result": null
         });
         handle
             .send_request(request2, request_id2)
@@ -1053,8 +1119,16 @@ mod tests {
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
         // Create ConnectionHandle in Ready state
-        let handle =
-            ConnectionHandle::with_state(writer, router, reader_handle, ConnectionState::Ready);
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
+        let handle = ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+            tx,
+            rx,
+            default_dynamic_caps(),
+        );
 
         // Register a request with upstream ID
         let upstream_id = UpstreamId::Number(42);
@@ -1086,8 +1160,16 @@ mod tests {
         let router = Arc::new(ResponseRouter::new());
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
-        let handle =
-            ConnectionHandle::with_state(writer, router, reader_handle, ConnectionState::Ready);
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
+        let handle = ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+            tx,
+            rx,
+            default_dynamic_caps(),
+        );
 
         // Register without upstream ID
         let (downstream_id, _response_rx) = handle
@@ -1118,8 +1200,16 @@ mod tests {
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
         // Create handle already in Ready state
-        let handle =
-            ConnectionHandle::with_state(writer, router, reader_handle, ConnectionState::Ready);
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
+        let handle = ConnectionHandle::with_state(
+            writer,
+            router,
+            reader_handle,
+            ConnectionState::Ready,
+            tx,
+            rx,
+            default_dynamic_caps(),
+        );
 
         // Should return immediately
         let result = handle.wait_for_ready(Duration::from_millis(10)).await;
@@ -1142,11 +1232,15 @@ mod tests {
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
         // Create handle in Initializing state
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Initializing,
+            tx,
+            rx,
+            default_dynamic_caps(),
         ));
 
         // Spawn a task that will transition to Ready after a delay
@@ -1181,11 +1275,15 @@ mod tests {
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
         // Create handle in Initializing state
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Initializing,
+            tx,
+            rx,
+            default_dynamic_caps(),
         ));
 
         // Spawn a task that will transition to Failed
@@ -1222,11 +1320,15 @@ mod tests {
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
         // Create handle in Initializing state that won't transition
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Initializing,
+            tx,
+            rx,
+            default_dynamic_caps(),
         );
 
         // Wait with short timeout - should timeout
@@ -1252,11 +1354,15 @@ mod tests {
         let reader_handle = spawn_reader_task(reader, Arc::clone(&router));
 
         // Create handle in Initializing state
+        let (tx, rx) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         let handle = Arc::new(ConnectionHandle::with_state(
             writer,
             router,
             reader_handle,
             ConnectionState::Initializing,
+            tx,
+            rx,
+            default_dynamic_caps(),
         ));
 
         // Spawn a task that will transition to Closing
@@ -1302,7 +1408,6 @@ mod tests {
     }
 
     /// Test that server_capabilities returns None before set_server_capabilities is called.
-    #[cfg(feature = "experimental")]
     #[tokio::test]
     async fn server_capabilities_returns_none_before_init() {
         let handle = spawn_sink_handle().await;
@@ -1312,7 +1417,6 @@ mod tests {
     }
 
     /// Test that server_capabilities returns typed struct with set fields.
-    #[cfg(feature = "experimental")]
     #[tokio::test]
     async fn server_capabilities_returns_typed_struct() {
         use tower_lsp_server::ls_types::{
@@ -1341,7 +1445,6 @@ mod tests {
     }
 
     /// Test that default capabilities have all fields as None.
-    #[cfg(feature = "experimental")]
     #[tokio::test]
     async fn server_capabilities_default_has_none_fields() {
         let handle = spawn_sink_handle().await;
@@ -1352,5 +1455,81 @@ mod tests {
         assert!(caps.hover_provider.is_none());
         assert!(caps.diagnostic_provider.is_none());
         assert!(caps.completion_provider.is_none());
+    }
+
+    // ========================================
+    // Unified Capability Check Tests
+    // ========================================
+
+    /// Test has_capability returns false when neither static nor dynamic.
+    #[tokio::test]
+    async fn has_capability_returns_false_when_no_capabilities() {
+        let handle = spawn_sink_handle().await;
+        // No capabilities set, no dynamic registrations
+        assert!(!handle.has_capability("textDocument/diagnostic"));
+    }
+
+    /// Test has_capability returns true with static capability only.
+    #[tokio::test]
+    async fn has_capability_returns_true_with_static_only() {
+        use tower_lsp_server::ls_types::{DiagnosticOptions, DiagnosticServerCapabilities};
+        let handle = spawn_sink_handle().await;
+        handle.set_server_capabilities(ServerCapabilities {
+            diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
+                DiagnosticOptions::default(),
+            )),
+            ..Default::default()
+        });
+        assert!(handle.has_capability("textDocument/diagnostic"));
+    }
+
+    /// Test has_capability returns true with dynamic registration only.
+    #[tokio::test]
+    async fn has_capability_returns_true_with_dynamic_only() {
+        use tower_lsp_server::ls_types::Registration;
+        let handle = spawn_sink_handle().await;
+        // No static capabilities set
+        handle.dynamic_capabilities().register(vec![Registration {
+            id: "diag-1".to_string(),
+            method: "textDocument/diagnostic".to_string(),
+            register_options: None,
+        }]);
+        assert!(handle.has_capability("textDocument/diagnostic"));
+    }
+
+    /// Test has_capability returns true when both static and dynamic.
+    #[tokio::test]
+    async fn has_capability_returns_true_with_both() {
+        use tower_lsp_server::ls_types::{
+            DiagnosticOptions, DiagnosticServerCapabilities, Registration,
+        };
+        let handle = spawn_sink_handle().await;
+        handle.set_server_capabilities(ServerCapabilities {
+            diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
+                DiagnosticOptions::default(),
+            )),
+            ..Default::default()
+        });
+        handle.dynamic_capabilities().register(vec![Registration {
+            id: "diag-1".to_string(),
+            method: "textDocument/diagnostic".to_string(),
+            register_options: None,
+        }]);
+        assert!(handle.has_capability("textDocument/diagnostic"));
+    }
+
+    /// Test has_capability returns false for unknown methods (not mapped to static caps).
+    #[tokio::test]
+    async fn has_capability_returns_false_for_unknown_method() {
+        use tower_lsp_server::ls_types::{DiagnosticOptions, DiagnosticServerCapabilities};
+        let handle = spawn_sink_handle().await;
+        handle.set_server_capabilities(ServerCapabilities {
+            diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
+                DiagnosticOptions::default(),
+            )),
+            ..Default::default()
+        });
+        // This method has no static capability mapping
+        assert!(!handle.has_capability("textDocument/someUnknownMethod"));
     }
 }

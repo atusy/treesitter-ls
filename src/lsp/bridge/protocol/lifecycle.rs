@@ -15,22 +15,24 @@ fn build_bridge_client_capabilities() -> serde_json::Value {
     use tower_lsp_server::ls_types::{
         ClientCapabilities, CompletionClientCapabilities, CompletionItemCapability,
         DiagnosticClientCapabilities, DocumentLinkClientCapabilities,
-        DocumentSymbolClientCapabilities, GotoCapability, HoverClientCapabilities, MarkupKind,
-        TextDocumentClientCapabilities,
+        DocumentSymbolClientCapabilities, DynamicRegistrationClientCapabilities, GotoCapability,
+        HoverClientCapabilities, InlayHintClientCapabilities, MarkupKind,
+        SignatureHelpClientCapabilities, TextDocumentClientCapabilities,
     };
 
     let goto_link = Some(GotoCapability {
+        dynamic_registration: Some(false),
         link_support: Some(true),
-        ..Default::default()
     });
 
     #[allow(unused_mut)] // mutated only with "experimental" feature
     let mut text_document = TextDocumentClientCapabilities {
         hover: Some(HoverClientCapabilities {
+            dynamic_registration: Some(false),
             content_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
-            ..Default::default()
         }),
         completion: Some(CompletionClientCapabilities {
+            dynamic_registration: Some(false),
             completion_item: Some(CompletionItemCapability {
                 snippet_support: Some(true),
                 insert_replace_support: Some(true),
@@ -42,29 +44,44 @@ fn build_bridge_client_capabilities() -> serde_json::Value {
         type_definition: goto_link,
         implementation: goto_link,
         declaration: goto_link,
-        references: Some(Default::default()),
-        signature_help: Some(Default::default()),
-        document_highlight: Some(Default::default()),
+        references: Some(DynamicRegistrationClientCapabilities {
+            dynamic_registration: Some(false),
+        }),
+        signature_help: Some(SignatureHelpClientCapabilities {
+            dynamic_registration: Some(false),
+            ..Default::default()
+        }),
+        document_highlight: Some(DynamicRegistrationClientCapabilities {
+            dynamic_registration: Some(false),
+        }),
         document_symbol: Some(DocumentSymbolClientCapabilities {
+            dynamic_registration: Some(false),
             hierarchical_document_symbol_support: Some(true),
             ..Default::default()
         }),
         document_link: Some(DocumentLinkClientCapabilities {
-            dynamic_registration: None,
+            dynamic_registration: Some(false),
             tooltip_support: Some(true),
         }),
-        inlay_hint: Some(Default::default()),
-        diagnostic: Some(DiagnosticClientCapabilities {
-            related_document_support: Some(true),
+        inlay_hint: Some(InlayHintClientCapabilities {
+            dynamic_registration: Some(false),
             ..Default::default()
         }),
-        moniker: Some(Default::default()),
+        diagnostic: Some(DiagnosticClientCapabilities {
+            dynamic_registration: Some(true),
+            related_document_support: Some(true),
+        }),
+        moniker: Some(DynamicRegistrationClientCapabilities {
+            dynamic_registration: Some(false),
+        }),
         ..Default::default()
     };
 
     #[cfg(feature = "experimental")]
     {
-        text_document.color_provider = Some(Default::default());
+        text_document.color_provider = Some(DynamicRegistrationClientCapabilities {
+            dynamic_registration: Some(false),
+        });
     }
 
     let capabilities = ClientCapabilities {

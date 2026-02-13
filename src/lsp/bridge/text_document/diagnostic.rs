@@ -60,25 +60,15 @@ impl LanguageServerPool {
             )
             .await?;
 
-        // Skip if server doesn't advertise pull diagnostic support.
-        // Gated behind "experimental" because some servers (e.g., Pyright) register
-        // diagnosticProvider dynamically via client/registerCapability rather than
-        // declaring it in the initialize response. Since the bridge doesn't yet
-        // handle dynamic registration, the stored capabilities would miss it.
-        #[cfg(feature = "experimental")]
-        {
-            if handle
-                .server_capabilities()
-                .and_then(|c| c.diagnostic_provider.as_ref())
-                .is_none()
-            {
-                log::debug!(
-                    target: "kakehashi::bridge",
-                    "[{}] Server does not support diagnosticProvider, skipping",
-                    server_name
-                );
-                return Ok(Vec::new());
-            }
+        // Skip if server doesn't advertise pull diagnostic support
+        // (checked via both static capabilities and dynamic registrations).
+        if !handle.has_capability("textDocument/diagnostic") {
+            log::debug!(
+                target: "kakehashi::bridge",
+                "[{}] Server does not support textDocument/diagnostic, skipping",
+                server_name
+            );
+            return Ok(Vec::new());
         }
 
         // Server is Ready and supports diagnostics — proceed with standard lifecycle.

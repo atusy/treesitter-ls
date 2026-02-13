@@ -20,10 +20,48 @@ use log::{debug, warn};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tower_lsp_server::jsonrpc;
 
 use super::super::connection::BridgeReader;
+use super::OutboundMessage;
 use super::ResponseRouter;
 use super::response_router::RouteResult;
+use crate::lsp::bridge::pool::DynamicCapabilityRegistry;
+
+/// Notification to forward from downstream server to upstream editor.
+///
+/// Reader tasks use this to signal events that require upstream Client interaction,
+/// keeping the bridge module decoupled from tower-lsp's Client type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum UpstreamNotification {
+    /// Request upstream to re-pull diagnostics.
+    /// Sent when downstream server issues `workspace/diagnostic/refresh`.
+    DiagnosticRefresh,
+}
+
+/// Liveness channel endpoints for the reader task.
+///
+/// Groups the four liveness-related parameters that `reader_loop_with_liveness`
+/// needs: the timeout duration and the three channels for start/stop/failed
+/// signaling between the reader task and ConnectionHandle.
+struct LivenessParams {
+    timeout: Option<Duration>,
+    start_rx: mpsc::Receiver<()>,
+    stop_rx: mpsc::Receiver<()>,
+    failed_tx: oneshot::Sender<()>,
+}
+
+/// Dependencies for handling server-initiated requests.
+///
+/// Groups the parameters that `handle_server_request` needs: the language
+/// identifier (for logging), the response channel, the dynamic capability
+/// registry, and the upstream notification channel.
+struct ServerRequestDeps {
+    language: Option<String>,
+    response_tx: mpsc::Sender<OutboundMessage>,
+    dynamic_capabilities: Arc<DynamicCapabilityRegistry>,
+    upstream_tx: mpsc::UnboundedSender<UpstreamNotification>,
+}
 
 /// Type alias for the pinned liveness timer future.
 type LivenessTimer = std::pin::Pin<Box<tokio::time::Sleep>>;
@@ -296,6 +334,8 @@ pub(crate) fn spawn_reader_task(
 /// This is a convenience wrapper for tests that don't need structured logging
 /// with language identifiers. Production code should use `spawn_reader_task_for_language`.
 ///
+/// Creates dummy channel and registry for tests that don't need server request handling.
+///
 /// # Arguments
 /// * `reader` - The BridgeReader to read messages from
 /// * `router` - The ResponseRouter to route responses to waiters
@@ -309,7 +349,18 @@ pub(crate) fn spawn_reader_task_with_liveness(
     router: Arc<ResponseRouter>,
     liveness_timeout: Option<Duration>,
 ) -> ReaderTaskHandle {
-    spawn_reader_task_for_language(reader, router, liveness_timeout, None)
+    let (response_tx, _response_rx) = mpsc::channel(16);
+    let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+    let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+    spawn_reader_task_for_language(
+        reader,
+        router,
+        liveness_timeout,
+        None,
+        response_tx,
+        dynamic_capabilities,
+        upstream_tx,
+    )
 }
 
 /// Spawn a reader task with liveness timeout and language identifier for logging.
@@ -327,6 +378,9 @@ pub(crate) fn spawn_reader_task_for_language(
     router: Arc<ResponseRouter>,
     liveness_timeout: Option<Duration>,
     language: Option<String>,
+    response_tx: mpsc::Sender<OutboundMessage>,
+    dynamic_capabilities: Arc<DynamicCapabilityRegistry>,
+    upstream_tx: mpsc::UnboundedSender<UpstreamNotification>,
 ) -> ReaderTaskHandle {
     let cancel_token = CancellationToken::new();
     let token_clone = cancel_token.clone();
@@ -340,15 +394,25 @@ pub(crate) fn spawn_reader_task_for_language(
     // Channel for liveness failure notification (Phase 3: state transition signaling)
     let (liveness_failed_tx, liveness_failed_rx) = oneshot::channel();
 
+    let liveness = LivenessParams {
+        timeout: liveness_timeout,
+        start_rx: liveness_start_rx,
+        stop_rx: liveness_stop_rx,
+        failed_tx: liveness_failed_tx,
+    };
+    let server_request_deps = ServerRequestDeps {
+        language,
+        response_tx,
+        dynamic_capabilities,
+        upstream_tx,
+    };
+
     let join_handle = tokio::spawn(reader_loop_with_liveness(
         reader,
         router,
         token_clone,
-        liveness_timeout,
-        liveness_start_rx,
-        liveness_stop_rx,
-        liveness_failed_tx,
-        language,
+        liveness,
+        server_request_deps,
     ));
 
     ReaderTaskHandle {
@@ -375,17 +439,23 @@ async fn reader_loop(
     let (_stop_tx, stop_rx) = mpsc::channel(1);
     // Create a dummy sender that we'll drop (no liveness failure signaling in test helper)
     let (failed_tx, _failed_rx) = oneshot::channel();
-    reader_loop_with_liveness(
-        reader,
-        router,
-        cancel_token,
-        None,
+    // Create dummy channel and registry for tests that don't need server request handling
+    let (response_tx, _response_rx) = mpsc::channel(16);
+    let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+    let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+    let liveness = LivenessParams {
+        timeout: None,
         start_rx,
         stop_rx,
         failed_tx,
-        None, // No language context for test helper
-    )
-    .await
+    };
+    let server_request_deps = ServerRequestDeps {
+        language: None,
+        response_tx,
+        dynamic_capabilities,
+        upstream_tx,
+    };
+    reader_loop_with_liveness(reader, router, cancel_token, liveness, server_request_deps).await
 }
 
 /// The main reader loop with optional liveness timeout support.
@@ -402,19 +472,24 @@ async fn reader_loop(
 ///
 /// When `language` is provided, all log messages include the language identifier
 /// for easier filtering in production (e.g., `[lua]` prefix in log messages).
-#[allow(clippy::too_many_arguments)] // Internal async fn; grouping would add complexity
 async fn reader_loop_with_liveness(
     mut reader: BridgeReader,
     router: Arc<ResponseRouter>,
     cancel_token: CancellationToken,
-    liveness_timeout: Option<Duration>,
-    mut liveness_start_rx: mpsc::Receiver<()>,
-    mut liveness_stop_rx: mpsc::Receiver<()>,
-    liveness_failed_tx: oneshot::Sender<()>,
-    language: Option<String>,
+    liveness_params: LivenessParams,
+    server_request_deps: ServerRequestDeps,
 ) {
+    // Destructure parameter structs
+    let LivenessParams {
+        timeout: liveness_timeout,
+        start_rx: mut liveness_start_rx,
+        stop_rx: mut liveness_stop_rx,
+        failed_tx: liveness_failed_tx,
+    } = liveness_params;
+
     // Language prefix for log messages (e.g., "[lua] " or "")
-    let lang_prefix = language
+    let lang_prefix = server_request_deps
+        .language
         .as_ref()
         .map(|l| format!("[{}] ", l))
         .unwrap_or_default();
@@ -472,7 +547,7 @@ async fn reader_loop_with_liveness(
                         // Reset liveness timer on any message activity (ADR-0014)
                         liveness.reset(&lang_prefix);
 
-                        handle_message(message, &router, &lang_prefix);
+                        handle_message(message, &router, &lang_prefix, &server_request_deps).await;
 
                         // Check if pending count returned to 0 - stop timer
                         if liveness.is_active() && router.pending_count() == 0 {
@@ -496,38 +571,254 @@ async fn reader_loop_with_liveness(
     }
 }
 
+/// Classification of messages from downstream language servers.
+///
+/// LSP messages are classified by the presence of `id` and `method` fields:
+/// - Response: has `id`, no `method` (reply to our request)
+/// - ServerRequest: has both `id` and `method` (server-initiated request)
+/// - Notification: has `method`, no `id` (server-initiated notification)
+/// - Invalid: has neither `id` nor `method`
+#[derive(Debug, PartialEq)]
+enum MessageKind {
+    Response,
+    ServerRequest,
+    Notification,
+    Invalid,
+}
+
+fn classify_message(message: &serde_json::Value) -> MessageKind {
+    let has_id = message.get("id").is_some();
+    let has_method = message.get("method").is_some();
+    match (has_id, has_method) {
+        (true, false) => MessageKind::Response,
+        (true, true) => MessageKind::ServerRequest,
+        (false, true) => MessageKind::Notification,
+        (false, false) => MessageKind::Invalid,
+    }
+}
+
 /// Handle a single message from the downstream server.
-fn handle_message(message: serde_json::Value, router: &ResponseRouter, lang_prefix: &str) {
-    // Check if it's a response (has "id" field)
-    if let Some(id) = message.get("id").cloned() {
-        // It's a response - route to waiter
-        match router.route(message) {
-            RouteResult::Delivered => {
-                // Response delivered successfully - no logging needed for normal case
-            }
-            RouteResult::ReceiverDropped => {
-                // ID was found but receiver was dropped (requester cancelled).
-                // This can legitimately happen when users cancel requests rapidly.
-                // Using debug! to avoid log spam; upgrade to warn! if investigation is needed.
-                debug!(
-                    target: "kakehashi::bridge::reader",
-                    "{}Response for id={} arrived but receiver was dropped (requester cancelled)",
-                    lang_prefix,
-                    id
-                );
-            }
-            RouteResult::NotFound => {
-                // Unknown request ID - could be a late response or protocol mismatch
-                debug!(
-                    target: "kakehashi::bridge::reader",
-                    "{}Response for unknown request id={}, dropping",
-                    lang_prefix,
-                    id
-                );
+async fn handle_message(
+    message: serde_json::Value,
+    router: &ResponseRouter,
+    lang_prefix: &str,
+    deps: &ServerRequestDeps,
+) {
+    match classify_message(&message) {
+        MessageKind::Response => {
+            let id = message.get("id").cloned();
+            match router.route(message) {
+                RouteResult::Delivered => {
+                    // Response delivered successfully - no logging needed for normal case
+                }
+                RouteResult::ReceiverDropped => {
+                    // ID was found but receiver was dropped (requester cancelled).
+                    // This can legitimately happen when users cancel requests rapidly.
+                    // Using debug! to avoid log spam; upgrade to warn! if investigation is needed.
+                    debug!(
+                        target: "kakehashi::bridge::reader",
+                        "{}Response for id={} arrived but receiver was dropped (requester cancelled)",
+                        lang_prefix,
+                        id.unwrap_or(serde_json::Value::Null)
+                    );
+                }
+                RouteResult::NotFound => {
+                    // Unknown request ID - could be a late response or protocol mismatch
+                    debug!(
+                        target: "kakehashi::bridge::reader",
+                        "{}Response for unknown request id={}, dropping",
+                        lang_prefix,
+                        id.unwrap_or(serde_json::Value::Null)
+                    );
+                }
             }
         }
+        MessageKind::ServerRequest => {
+            handle_server_request(message, lang_prefix, deps).await;
+        }
+        MessageKind::Notification => {
+            // Notifications are silently ignored (no logging needed)
+        }
+        MessageKind::Invalid => {
+            warn!(
+                target: "kakehashi::bridge::reader",
+                "{}Invalid message from downstream (no id or method): {}",
+                lang_prefix,
+                message
+            );
+        }
     }
-    // Notifications are silently ignored (no logging needed)
+}
+
+/// Handle a server-initiated request by dispatching on its method.
+///
+/// Server-initiated requests have both `"id"` and `"method"` fields.
+/// We must send a JSON-RPC response back for each request.
+///
+/// # Error Handling
+///
+/// When param parsing fails for known methods (registerCapability,
+/// unregisterCapability), we respond with a JSON-RPC InvalidParams error
+/// (-32602). This is spec-correct: the LSP allows error responses to any
+/// request. If a downstream server cannot handle an error to its own
+/// request, that is a server bug.
+async fn handle_server_request(
+    message: serde_json::Value,
+    lang_prefix: &str,
+    deps: &ServerRequestDeps,
+) {
+    let id: jsonrpc::Id = message
+        .get("id")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let method = message.get("method").and_then(|v| v.as_str()).unwrap_or("");
+
+    let ok_response = || jsonrpc::Response::from_ok(id.clone(), serde_json::Value::Null);
+
+    let body: jsonrpc::Result<()> = match method {
+        "client/registerCapability" => {
+            if let Some(params) = message.get("params") {
+                match serde_json::from_value::<tower_lsp_server::ls_types::RegistrationParams>(
+                    params.clone(),
+                ) {
+                    Ok(reg_params) => {
+                        for reg in &reg_params.registrations {
+                            debug!(
+                                target: "kakehashi::bridge::reader",
+                                "{}Registered dynamic capability: {} (id={})",
+                                lang_prefix, reg.method, reg.id
+                            );
+                        }
+                        deps.dynamic_capabilities.register(reg_params.registrations);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        warn!(
+                            target: "kakehashi::bridge::reader",
+                            "{}Failed to parse registerCapability params: {}",
+                            lang_prefix, e
+                        );
+                        Err(jsonrpc::Error::invalid_params(format!(
+                            "Invalid params: {e}"
+                        )))
+                    }
+                }
+            } else {
+                warn!(
+                    target: "kakehashi::bridge::reader",
+                    "{}Request 'client/registerCapability' is missing 'params' field",
+                    lang_prefix
+                );
+                Err(jsonrpc::Error::invalid_params(
+                    "Request 'client/registerCapability' is missing 'params' field",
+                ))
+            }
+        }
+        "client/unregisterCapability" => {
+            if let Some(params) = message.get("params") {
+                match serde_json::from_value::<tower_lsp_server::ls_types::UnregistrationParams>(
+                    params.clone(),
+                ) {
+                    Ok(unreg_params) => {
+                        for unreg in &unreg_params.unregisterations {
+                            debug!(
+                                target: "kakehashi::bridge::reader",
+                                "{}Unregistered dynamic capability: {} (id={})",
+                                lang_prefix, unreg.method, unreg.id
+                            );
+                        }
+                        deps.dynamic_capabilities
+                            .unregister(unreg_params.unregisterations);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        warn!(
+                            target: "kakehashi::bridge::reader",
+                            "{}Failed to parse unregisterCapability params: {}",
+                            lang_prefix, e
+                        );
+                        Err(jsonrpc::Error::invalid_params(format!(
+                            "Invalid params: {e}"
+                        )))
+                    }
+                }
+            } else {
+                warn!(
+                    target: "kakehashi::bridge::reader",
+                    "{}Request 'client/unregisterCapability' is missing 'params' field",
+                    lang_prefix
+                );
+                Err(jsonrpc::Error::invalid_params(
+                    "Request 'client/unregisterCapability' is missing 'params' field",
+                ))
+            }
+        }
+        "window/workDoneProgress/create" => {
+            // Common from Pyright et al. Returning MethodNotFound causes server-side log noise,
+            // so we acknowledge silently.
+            debug!(
+                target: "kakehashi::bridge::reader",
+                "{}Acknowledged window/workDoneProgress/create",
+                lang_prefix
+            );
+            Ok(())
+        }
+        "workspace/diagnostic/refresh" => {
+            // Downstream server is requesting that the client re-pull diagnostics.
+            // Forward this upstream so the editor triggers a fresh diagnostic pull.
+            debug!(
+                target: "kakehashi::bridge::reader",
+                "{}Forwarding workspace/diagnostic/refresh upstream",
+                lang_prefix
+            );
+            let _ = deps
+                .upstream_tx
+                .send(UpstreamNotification::DiagnosticRefresh);
+            Ok(())
+        }
+        _ => {
+            debug!(
+                target: "kakehashi::bridge::reader",
+                "{}Unknown server request method: {}, responding with MethodNotFound",
+                lang_prefix, method
+            );
+            Err(jsonrpc::Error::method_not_found())
+        }
+    };
+
+    let response = match body {
+        Ok(()) => ok_response(),
+        Err(error) => jsonrpc::Response::from_error(id, error),
+    };
+    // Response implements Serialize, so convert to Value for OutboundMessage.
+    let response = serde_json::to_value(response).expect("Response serialization is infallible");
+
+    // Send response via the writer channel.
+    // We use OutboundMessage::Untracked because a server-initiated response has
+    // no ResponseRouter entry to clean up on failure (unlike Tracked requests).
+    //
+    // We use send_timeout(5s) instead of try_send() to guarantee delivery under
+    // transient backpressure. try_send() silently drops the response if the queue
+    // (capacity 256) is momentarily full — a correctness bug for server-initiated
+    // requests like client/registerCapability that require acknowledgment.
+    //
+    // We avoid bare send().await because it could theoretically deadlock if the
+    // queue is full, the writer is blocked on stdin, and the downstream server is
+    // blocked on stdout — creating a circular wait. send_timeout(5s) provides an
+    // explicit safety net: the response is dropped only after 5 seconds of
+    // sustained backpressure, which is far better than instant loss.
+    if let Err(e) = deps
+        .response_tx
+        .send_timeout(OutboundMessage::Untracked(response), Duration::from_secs(5))
+        .await
+    {
+        warn!(
+            target: "kakehashi::bridge::reader",
+            "{}Failed to send response for server request '{}': {}",
+            lang_prefix, method, e
+        );
+    }
 }
 
 #[cfg(test)]
@@ -585,12 +876,29 @@ mod tests {
         drop(writer);
     }
 
-    #[test]
-    fn handle_message_routes_response() {
+    /// Create dummy ServerRequestDeps for tests that don't need server request handling.
+    ///
+    /// Returns the deps along with the receivers (stored in a tuple) to keep them alive.
+    fn dummy_server_request_deps() -> (ServerRequestDeps, impl std::any::Any) {
+        let (tx, rx) = mpsc::channel(16);
+        let caps = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, upstream_rx) = mpsc::unbounded_channel();
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx: tx,
+            dynamic_capabilities: caps,
+            upstream_tx,
+        };
+        (deps, (rx, upstream_rx))
+    }
+
+    #[tokio::test]
+    async fn handle_message_routes_response() {
         let router = ResponseRouter::new();
         let _rx = router
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
             .unwrap();
+        let (deps, _keep) = dummy_server_request_deps();
 
         let response = json!({
             "jsonrpc": "2.0",
@@ -598,7 +906,7 @@ mod tests {
             "result": null
         });
 
-        handle_message(response, &router, "");
+        handle_message(response, &router, "", &deps).await;
 
         // Receiver should have the response
         // We can't block on rx.await here in a sync test, but we can check
@@ -606,12 +914,13 @@ mod tests {
         assert_eq!(router.pending_count(), 0);
     }
 
-    #[test]
-    fn handle_message_ignores_notification() {
+    #[tokio::test]
+    async fn handle_message_ignores_notification() {
         let router = ResponseRouter::new();
         let _rx = router
             .register(crate::lsp::bridge::protocol::RequestId::new(1))
             .unwrap();
+        let (deps, _keep) = dummy_server_request_deps();
 
         let notification = json!({
             "jsonrpc": "2.0",
@@ -619,7 +928,7 @@ mod tests {
             "params": {}
         });
 
-        handle_message(notification, &router, "");
+        handle_message(notification, &router, "", &deps).await;
 
         // Pending count should still be 1 (notification was ignored)
         assert_eq!(router.pending_count(), 1);
@@ -847,6 +1156,458 @@ mod tests {
         assert_eq!(received["result"], "known");
 
         drop(writer);
+    }
+
+    // ============================================================
+    // Message Classification Tests
+    // ============================================================
+
+    #[test]
+    fn classify_message_response() {
+        let msg = json!({"jsonrpc": "2.0", "id": 1, "result": null});
+        assert_eq!(classify_message(&msg), MessageKind::Response);
+    }
+
+    #[test]
+    fn classify_message_server_request() {
+        let msg =
+            json!({"jsonrpc": "2.0", "id": 1, "method": "client/registerCapability", "params": {}});
+        assert_eq!(classify_message(&msg), MessageKind::ServerRequest);
+    }
+
+    #[test]
+    fn classify_message_notification() {
+        let msg = json!({"jsonrpc": "2.0", "method": "$/progress", "params": {}});
+        assert_eq!(classify_message(&msg), MessageKind::Notification);
+    }
+
+    #[test]
+    fn classify_message_invalid() {
+        let msg = json!({"jsonrpc": "2.0"});
+        assert_eq!(classify_message(&msg), MessageKind::Invalid);
+    }
+
+    #[tokio::test]
+    async fn handle_message_does_not_route_server_request() {
+        let router = ResponseRouter::new();
+        let _rx = router
+            .register(crate::lsp::bridge::protocol::RequestId::new(1))
+            .unwrap();
+        assert_eq!(router.pending_count(), 1);
+        let (deps, _keep) = dummy_server_request_deps();
+
+        // Server-initiated request: has both "id" and "method"
+        let server_request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "client/registerCapability",
+            "params": {}
+        });
+
+        handle_message(server_request, &router, "", &deps).await;
+
+        // The server request should NOT be routed as a response.
+        // Pending count must remain 1 (the registered request is still waiting).
+        assert_eq!(
+            router.pending_count(),
+            1,
+            "Server-initiated requests (with both id and method) must not be routed as responses"
+        );
+    }
+
+    // ============================================================
+    // Server Request Handling Tests
+    // ============================================================
+
+    #[tokio::test]
+    async fn handle_message_register_capability_updates_registry() {
+        let router = ResponseRouter::new();
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities: Arc::clone(&dynamic_capabilities),
+            upstream_tx,
+        };
+
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "client/registerCapability",
+            "params": {
+                "registrations": [
+                    {
+                        "id": "diag-1",
+                        "method": "textDocument/diagnostic",
+                        "registerOptions": null
+                    }
+                ]
+            }
+        });
+
+        handle_message(message, &router, "", &deps).await;
+
+        // Registry should have the registration
+        assert!(dynamic_capabilities.has_registration("textDocument/diagnostic"));
+
+        // A response should have been sent
+        let response = response_rx.try_recv().expect("should have response");
+        match response {
+            OutboundMessage::Untracked(val) => {
+                assert_eq!(val["id"], 1);
+                assert!(val["result"].is_null());
+            }
+            _ => panic!("Expected Untracked variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_message_unregister_capability_updates_registry() {
+        let router = ResponseRouter::new();
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+
+        // First register a capability
+        dynamic_capabilities.register(vec![tower_lsp_server::ls_types::Registration {
+            id: "diag-1".to_string(),
+            method: "textDocument/diagnostic".to_string(),
+            register_options: None,
+        }]);
+        assert!(dynamic_capabilities.has_registration("textDocument/diagnostic"));
+
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities: Arc::clone(&dynamic_capabilities),
+            upstream_tx,
+        };
+
+        // Then unregister it
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "client/unregisterCapability",
+            "params": {
+                "unregisterations": [
+                    {
+                        "id": "diag-1",
+                        "method": "textDocument/diagnostic"
+                    }
+                ]
+            }
+        });
+
+        handle_message(message, &router, "", &deps).await;
+
+        // Registry should no longer have the registration
+        assert!(!dynamic_capabilities.has_registration("textDocument/diagnostic"));
+
+        // A success response should have been sent
+        let response = response_rx.try_recv().expect("should have response");
+        match response {
+            OutboundMessage::Untracked(val) => {
+                assert_eq!(val["id"], 2);
+                assert!(val["result"].is_null());
+            }
+            _ => panic!("Expected Untracked variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_message_work_done_progress_create_sends_success() {
+        let router = ResponseRouter::new();
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities,
+            upstream_tx,
+        };
+
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "window/workDoneProgress/create",
+            "params": {
+                "token": "some-token"
+            }
+        });
+
+        handle_message(message, &router, "", &deps).await;
+
+        // A success response should have been sent
+        let response = response_rx.try_recv().expect("should have response");
+        match response {
+            OutboundMessage::Untracked(val) => {
+                assert_eq!(val["id"], 5);
+                assert!(val["result"].is_null());
+            }
+            _ => panic!("Expected Untracked variant"),
+        }
+    }
+
+    /// Test that workspace/diagnostic/refresh is forwarded upstream and acknowledged.
+    ///
+    /// When a downstream server sends workspace/diagnostic/refresh:
+    /// 1. An UpstreamNotification::DiagnosticRefresh is sent on the upstream channel
+    /// 2. A success response (not MethodNotFound) is sent back to the server
+    #[tokio::test]
+    async fn handle_message_diagnostic_refresh_forwards_upstream() {
+        let router = ResponseRouter::new();
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, mut upstream_rx) = mpsc::unbounded_channel();
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities,
+            upstream_tx,
+        };
+
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "workspace/diagnostic/refresh",
+            "params": null
+        });
+
+        handle_message(message, &router, "", &deps).await;
+
+        // Should have sent DiagnosticRefresh on the upstream channel
+        let notification = upstream_rx
+            .try_recv()
+            .expect("should have upstream notification");
+        assert_eq!(notification, UpstreamNotification::DiagnosticRefresh);
+
+        // Should have sent a success response (not MethodNotFound)
+        let response = response_rx.try_recv().expect("should have response");
+        match response {
+            OutboundMessage::Untracked(val) => {
+                assert_eq!(val["id"], 10);
+                assert!(val["result"].is_null(), "Should be success, not error");
+                assert!(val.get("error").is_none(), "Should not have error field");
+            }
+            _ => panic!("Expected Untracked variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_message_unknown_server_request_sends_method_not_found() {
+        let router = ResponseRouter::new();
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities,
+            upstream_tx,
+        };
+
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "some/unknownMethod",
+            "params": {}
+        });
+
+        handle_message(message, &router, "", &deps).await;
+
+        let response = response_rx.try_recv().expect("should have response");
+        match response {
+            OutboundMessage::Untracked(val) => {
+                assert_eq!(val["id"], 99);
+                assert_eq!(val["error"]["code"], -32601);
+            }
+            _ => panic!("Expected Untracked variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_message_register_capability_missing_params_returns_error() {
+        let router = ResponseRouter::new();
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities: Arc::clone(&dynamic_capabilities),
+            upstream_tx,
+        };
+
+        // client/registerCapability with no params field at all
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "client/registerCapability"
+        });
+
+        handle_message(message, &router, "", &deps).await;
+
+        // Should respond with InvalidParams error (-32602)
+        let response = response_rx.try_recv().expect("should have response");
+        match response {
+            OutboundMessage::Untracked(val) => {
+                assert_eq!(val["id"], 1);
+                assert_eq!(
+                    val["error"]["code"], -32602,
+                    "Should be InvalidParams error"
+                );
+            }
+            _ => panic!("Expected Untracked variant"),
+        }
+
+        // Registry should remain empty
+        assert!(!dynamic_capabilities.has_registration("textDocument/diagnostic"));
+    }
+
+    #[tokio::test]
+    async fn handle_message_unregister_capability_missing_params_returns_error() {
+        let router = ResponseRouter::new();
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+
+        // Pre-register a capability so we can verify it's NOT removed
+        dynamic_capabilities.register(vec![tower_lsp_server::ls_types::Registration {
+            id: "diag-1".to_string(),
+            method: "textDocument/diagnostic".to_string(),
+            register_options: None,
+        }]);
+
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities: Arc::clone(&dynamic_capabilities),
+            upstream_tx,
+        };
+
+        // client/unregisterCapability with no params field at all
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "client/unregisterCapability"
+        });
+
+        handle_message(message, &router, "", &deps).await;
+
+        // Should respond with InvalidParams error (-32602)
+        let response = response_rx.try_recv().expect("should have response");
+        match response {
+            OutboundMessage::Untracked(val) => {
+                assert_eq!(val["id"], 2);
+                assert_eq!(
+                    val["error"]["code"], -32602,
+                    "Should be InvalidParams error"
+                );
+            }
+            _ => panic!("Expected Untracked variant"),
+        }
+
+        // Registry should still have the pre-registered capability
+        assert!(dynamic_capabilities.has_registration("textDocument/diagnostic"));
+    }
+
+    // ============================================================
+    // Server Request Response Reliability Tests
+    // ============================================================
+
+    /// Test that server request response is delivered even under backpressure.
+    ///
+    /// With `try_send`, if the outbound queue is full the response is silently
+    /// dropped. With `send_timeout`, the response waits for capacity and is
+    /// delivered once the queue drains.
+    #[tokio::test]
+    async fn server_request_response_survives_backpressure() {
+        use std::time::Duration;
+
+        // Use capacity=1 to simulate backpressure
+        let (response_tx, mut response_rx) = mpsc::channel(1);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+
+        // Fill the channel with a dummy message to create backpressure
+        response_tx
+            .send(OutboundMessage::Untracked(json!({"dummy": true})))
+            .await
+            .unwrap();
+
+        // Spawn handle_server_request in a separate task (it needs to await)
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx: response_tx.clone(),
+            dynamic_capabilities,
+            upstream_tx,
+        };
+        let handle = tokio::spawn(async move {
+            let message = json!({
+                "jsonrpc": "2.0",
+                "id": 42,
+                "method": "window/workDoneProgress/create",
+                "params": { "token": "test" }
+            });
+            handle_server_request(message, "", &deps).await;
+        });
+
+        // Give handle_server_request a moment to start waiting
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Drain the dummy message to free capacity
+        let dummy = response_rx.recv().await.expect("should have dummy");
+        assert!(matches!(dummy, OutboundMessage::Untracked(v) if v["dummy"] == true));
+
+        // Now the server request response should arrive
+        let response = tokio::time::timeout(Duration::from_secs(2), response_rx.recv())
+            .await
+            .expect("should not timeout waiting for response")
+            .expect("channel should not be closed");
+
+        match response {
+            OutboundMessage::Untracked(val) => {
+                assert_eq!(val["id"], 42);
+                assert!(val["result"].is_null());
+            }
+            _ => panic!("Expected Untracked variant"),
+        }
+
+        handle.await.unwrap();
+    }
+
+    /// Test that server request response on a closed channel does not panic.
+    ///
+    /// When the receiver is dropped (e.g., connection shutting down),
+    /// handle_server_request should log a warning but not panic.
+    #[tokio::test]
+    async fn server_request_response_closed_channel_no_panic() {
+        let (response_tx, response_rx) = mpsc::channel(1);
+        let dynamic_capabilities = Arc::new(DynamicCapabilityRegistry::new());
+        let (upstream_tx, _upstream_rx) = mpsc::unbounded_channel();
+
+        // Drop the receiver to simulate a closed channel
+        drop(response_rx);
+
+        let deps = ServerRequestDeps {
+            language: None,
+            response_tx,
+            dynamic_capabilities,
+            upstream_tx,
+        };
+
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "window/workDoneProgress/create",
+            "params": { "token": "test" }
+        });
+
+        // Should not panic
+        handle_server_request(message, "", &deps).await;
     }
 
     // ============================================================

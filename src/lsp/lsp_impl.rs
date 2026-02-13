@@ -124,6 +124,12 @@ pub struct Kakehashi {
     synthetic_diagnostics: std::sync::Arc<SyntheticDiagnosticsManager>,
     /// Manager for debounced didChange diagnostic triggers (ADR-0020 Phase 3)
     debounced_diagnostics: DebouncedDiagnosticsManager,
+    /// Token for cancelling the upstream forwarding task on shutdown.
+    ///
+    /// Without this, the forwarding task only exits when all channel senders are
+    /// dropped. Cancelling the token gives deterministic shutdown: `shutdown()`
+    /// cancels → task exits immediately → no waiting for channel drainage.
+    shutdown_token: tokio_util::sync::CancellationToken,
 }
 
 impl std::fmt::Debug for Kakehashi {
@@ -139,6 +145,7 @@ impl std::fmt::Debug for Kakehashi {
             .field("bridge", &"BridgeCoordinator")
             .field("synthetic_diagnostics", &"SyntheticDiagnosticsManager")
             .field("debounced_diagnostics", &"DebouncedDiagnosticsManager")
+            .field("shutdown_token", &"CancellationToken")
             .finish_non_exhaustive()
     }
 }
@@ -163,6 +170,7 @@ impl Kakehashi {
             bridge: BridgeCoordinator::new(),
             synthetic_diagnostics: std::sync::Arc::new(SyntheticDiagnosticsManager::new()),
             debounced_diagnostics: DebouncedDiagnosticsManager::new(),
+            shutdown_token: tokio_util::sync::CancellationToken::new(),
         }
     }
 
@@ -196,6 +204,7 @@ impl Kakehashi {
             bridge: BridgeCoordinator::with_cancel_forwarder(pool, cancel_forwarder),
             synthetic_diagnostics: std::sync::Arc::new(SyntheticDiagnosticsManager::new()),
             debounced_diagnostics: DebouncedDiagnosticsManager::new(),
+            shutdown_token: tokio_util::sync::CancellationToken::new(),
         }
     }
 
@@ -870,6 +879,77 @@ impl Kakehashi {
     }
 }
 
+/// Forward upstream notifications from downstream language servers to the editor.
+///
+/// Consumes notifications from `upstream_rx` and dispatches them to the LSP client.
+/// Currently handles:
+/// - `DiagnosticRefresh`: forwards `workspace/diagnostic/refresh` to trigger a
+///   fresh diagnostic pull from the editor.
+///
+/// Exits when:
+/// - The channel is closed (all senders dropped), OR
+/// - The `cancel_token` is cancelled (deterministic shutdown)
+async fn upstream_forwarding_loop(
+    mut upstream_rx: tokio::sync::mpsc::UnboundedReceiver<super::bridge::UpstreamNotification>,
+    client: Client,
+    cancel_token: tokio_util::sync::CancellationToken,
+) {
+    use super::bridge::UpstreamNotification;
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = cancel_token.cancelled() => {
+                log::debug!(
+                    target: "kakehashi::bridge",
+                    "Upstream forwarding loop cancelled"
+                );
+                break;
+            }
+
+            notification = upstream_rx.recv() => {
+                match notification {
+                    Some(UpstreamNotification::DiagnosticRefresh) => {
+                        if let Err(e) = client.workspace_diagnostic_refresh().await {
+                            log::debug!(
+                                target: "kakehashi::bridge",
+                                "workspace/diagnostic/refresh forwarding failed: {}",
+                                e
+                            );
+                        }
+                    }
+                    None => break, // Channel closed
+                }
+            }
+        }
+    }
+}
+
+/// Cancellable upstream forwarding loop without a Client (for testing).
+///
+/// Drains notifications from the channel and exits when the token is cancelled
+/// or the channel closes. Does not forward to any client.
+#[cfg(test)]
+async fn upstream_forwarding_loop_with_cancel(
+    mut upstream_rx: tokio::sync::mpsc::UnboundedReceiver<super::bridge::UpstreamNotification>,
+    cancel_token: tokio_util::sync::CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = cancel_token.cancelled() => break,
+
+            notification = upstream_rx.recv() => {
+                if notification.is_none() {
+                    break; // Channel closed
+                }
+                // Notification consumed but not forwarded (no client in test)
+            }
+        }
+    }
+}
+
 impl LanguageServer for Kakehashi {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         // Store client capabilities for LSP compliance checks (e.g., refresh support).
@@ -1028,6 +1108,17 @@ impl LanguageServer for Kakehashi {
 
     async fn initialized(&self, _: InitializedParams) {
         self.notifier().log_info("server is ready").await;
+
+        // Forward downstream server notifications to upstream editor.
+        // When a downstream LS sends workspace/diagnostic/refresh, the reader
+        // task puts DiagnosticRefresh on this channel. We forward it to the
+        // editor via Client::workspace_diagnostic_refresh() so the editor
+        // triggers a fresh textDocument/diagnostic pull.
+        if let Some(upstream_rx) = self.bridge.take_upstream_rx() {
+            let client = self.client.clone();
+            let token = self.shutdown_token.clone();
+            tokio::spawn(upstream_forwarding_loop(upstream_rx, client, token));
+        }
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -1046,6 +1137,10 @@ impl LanguageServer for Kakehashi {
 
         // Cancel all debounced diagnostic timers (ADR-0020 Phase 3)
         self.debounced_diagnostics.cancel_all();
+
+        // Cancel the upstream forwarding task for deterministic shutdown.
+        // Without this, the task only exits when all senders are dropped.
+        self.shutdown_token.cancel();
 
         // Graceful shutdown of all downstream language server connections (ADR-0017)
         // - Transitions to Closing state, sends LSP shutdown/exit handshake
@@ -1505,4 +1600,36 @@ mod tests {
     }
 
     // Note: Large integration tests for auto-install are in tests/test_auto_install_integration.rs
+
+    /// Test that upstream_forwarding_loop exits when its CancellationToken is cancelled,
+    /// even if the channel is still open.
+    #[tokio::test]
+    async fn upstream_forwarding_loop_exits_on_cancellation() {
+        use crate::lsp::bridge::UpstreamNotification;
+        use std::time::Duration;
+        use tokio_util::sync::CancellationToken;
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let token = CancellationToken::new();
+
+        // Send a notification before cancellation — it should be forwarded
+        tx.send(UpstreamNotification::DiagnosticRefresh).unwrap();
+
+        // Spawn the loop with a cancellation token (channel stays open via `tx`)
+        let token_clone = token.clone();
+        let handle = tokio::spawn(upstream_forwarding_loop_with_cancel(rx, token_clone));
+
+        // Give the loop time to process the notification
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Cancel the token — loop should exit even though tx is still alive
+        token.cancel();
+
+        // The loop should exit promptly
+        let result = tokio::time::timeout(Duration::from_secs(1), handle).await;
+        assert!(
+            result.is_ok(),
+            "upstream_forwarding_loop should exit when token is cancelled"
+        );
+    }
 }
