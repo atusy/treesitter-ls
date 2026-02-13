@@ -415,6 +415,12 @@ impl ConnectionHandle {
     /// either via static capabilities (initialize response) or dynamic registration.
     ///
     /// Dynamic registrations take precedence since they may arrive after initialize.
+    ///
+    /// To add a new method, add a match arm mapping the LSP method string to the
+    /// corresponding field in `ServerCapabilities`:
+    /// ```ignore
+    /// "textDocument/hover" => caps.hover_provider.is_some(),
+    /// ```
     pub(crate) fn has_capability(&self, method: &str) -> bool {
         // Check dynamic registrations first (may arrive after initialize)
         if self.dynamic_capabilities().has_registration(method) {
@@ -426,7 +432,6 @@ impl ConnectionHandle {
         };
         match method {
             "textDocument/diagnostic" => caps.diagnostic_provider.is_some(),
-            // Add more mappings as handlers adopt this API
             _ => false,
         }
     }
