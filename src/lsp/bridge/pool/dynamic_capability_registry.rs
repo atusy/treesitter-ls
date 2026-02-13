@@ -10,12 +10,10 @@ use tower_lsp_server::ls_types::{Registration, Unregistration};
 /// via `client/registerCapability` after the initialize handshake. This registry
 /// tracks those registrations so the bridge can check capability support.
 ///
-/// # Simplification
-///
 /// The LSP spec allows multiple registrations per method (with different document
-/// selectors and IDs). We key by method name only, so later registrations for the
-/// same method overwrite earlier ones. This is sufficient for our use case
-/// (`has_registration` check) but means we don't track per-selector registrations.
+/// selectors and IDs). We key by registration ID, allowing multiple same-method
+/// registrations to coexist (e.g., two `textDocument/diagnostic` registrations
+/// with different document selectors).
 pub(crate) struct DynamicCapabilityRegistry {
     registrations: RwLock<HashMap<String, Registration>>,
 }
