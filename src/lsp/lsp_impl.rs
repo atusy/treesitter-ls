@@ -1543,4 +1543,36 @@ mod tests {
     }
 
     // Note: Large integration tests for auto-install are in tests/test_auto_install_integration.rs
+
+    /// Test that upstream_forwarding_loop exits when its CancellationToken is cancelled,
+    /// even if the channel is still open.
+    #[tokio::test]
+    async fn upstream_forwarding_loop_exits_on_cancellation() {
+        use super::bridge::UpstreamNotification;
+        use std::time::Duration;
+        use tokio_util::sync::CancellationToken;
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let token = CancellationToken::new();
+
+        // Send a notification before cancellation — it should be forwarded
+        tx.send(UpstreamNotification::DiagnosticRefresh).unwrap();
+
+        // Spawn the loop with a cancellation token (channel stays open via `tx`)
+        let token_clone = token.clone();
+        let handle = tokio::spawn(upstream_forwarding_loop_with_cancel(rx, token_clone));
+
+        // Give the loop time to process the notification
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Cancel the token — loop should exit even though tx is still alive
+        token.cancel();
+
+        // The loop should exit promptly
+        let result = tokio::time::timeout(Duration::from_secs(1), handle).await;
+        assert!(
+            result.is_ok(),
+            "upstream_forwarding_loop should exit when token is cancelled"
+        );
+    }
 }
