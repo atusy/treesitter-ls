@@ -21,18 +21,18 @@ fn build_bridge_client_capabilities() -> serde_json::Value {
     };
 
     let goto_link = Some(GotoCapability {
-        dynamic_registration: Some(true),
+        dynamic_registration: Some(false),
         link_support: Some(true),
     });
 
     #[allow(unused_mut)] // mutated only with "experimental" feature
     let mut text_document = TextDocumentClientCapabilities {
         hover: Some(HoverClientCapabilities {
-            dynamic_registration: Some(true),
+            dynamic_registration: Some(false),
             content_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
         }),
         completion: Some(CompletionClientCapabilities {
-            dynamic_registration: Some(true),
+            dynamic_registration: Some(false),
             completion_item: Some(CompletionItemCapability {
                 snippet_support: Some(true),
                 insert_replace_support: Some(true),
@@ -45,26 +45,26 @@ fn build_bridge_client_capabilities() -> serde_json::Value {
         implementation: goto_link,
         declaration: goto_link,
         references: Some(DynamicRegistrationClientCapabilities {
-            dynamic_registration: Some(true),
+            dynamic_registration: Some(false),
         }),
         signature_help: Some(SignatureHelpClientCapabilities {
-            dynamic_registration: Some(true),
+            dynamic_registration: Some(false),
             ..Default::default()
         }),
         document_highlight: Some(DynamicRegistrationClientCapabilities {
-            dynamic_registration: Some(true),
+            dynamic_registration: Some(false),
         }),
         document_symbol: Some(DocumentSymbolClientCapabilities {
-            dynamic_registration: Some(true),
+            dynamic_registration: Some(false),
             hierarchical_document_symbol_support: Some(true),
             ..Default::default()
         }),
         document_link: Some(DocumentLinkClientCapabilities {
-            dynamic_registration: Some(true),
+            dynamic_registration: Some(false),
             tooltip_support: Some(true),
         }),
         inlay_hint: Some(InlayHintClientCapabilities {
-            dynamic_registration: Some(true),
+            dynamic_registration: Some(false),
             ..Default::default()
         }),
         diagnostic: Some(DiagnosticClientCapabilities {
@@ -72,7 +72,7 @@ fn build_bridge_client_capabilities() -> serde_json::Value {
             related_document_support: Some(true),
         }),
         moniker: Some(DynamicRegistrationClientCapabilities {
-            dynamic_registration: Some(true),
+            dynamic_registration: Some(false),
         }),
         ..Default::default()
     };
@@ -80,7 +80,7 @@ fn build_bridge_client_capabilities() -> serde_json::Value {
     #[cfg(feature = "experimental")]
     {
         text_document.color_provider = Some(DynamicRegistrationClientCapabilities {
-            dynamic_registration: Some(true),
+            dynamic_registration: Some(false),
         });
     }
 

@@ -9,14 +9,14 @@ expression: capabilities
         "insertReplaceSupport": true,
         "snippetSupport": true
       },
-      "dynamicRegistration": true
+      "dynamicRegistration": false
     },
     "declaration": {
-      "dynamicRegistration": true,
+      "dynamicRegistration": false,
       "linkSupport": true
     },
     "definition": {
-      "dynamicRegistration": true,
+      "dynamicRegistration": false,
       "linkSupport": true
     },
     "diagnostic": {
@@ -24,14 +24,14 @@ expression: capabilities
       "relatedDocumentSupport": true
     },
     "documentHighlight": {
-      "dynamicRegistration": true
+      "dynamicRegistration": false
     },
     "documentLink": {
-      "dynamicRegistration": true,
+      "dynamicRegistration": false,
       "tooltipSupport": true
     },
     "documentSymbol": {
-      "dynamicRegistration": true,
+      "dynamicRegistration": false,
       "hierarchicalDocumentSymbolSupport": true
     },
     "hover": {
@@ -39,26 +39,26 @@ expression: capabilities
         "markdown",
         "plaintext"
       ],
-      "dynamicRegistration": true
+      "dynamicRegistration": false
     },
     "implementation": {
-      "dynamicRegistration": true,
+      "dynamicRegistration": false,
       "linkSupport": true
     },
     "inlayHint": {
-      "dynamicRegistration": true
+      "dynamicRegistration": false
     },
     "moniker": {
-      "dynamicRegistration": true
+      "dynamicRegistration": false
     },
     "references": {
-      "dynamicRegistration": true
+      "dynamicRegistration": false
     },
     "signatureHelp": {
-      "dynamicRegistration": true
+      "dynamicRegistration": false
     },
     "typeDefinition": {
-      "dynamicRegistration": true,
+      "dynamicRegistration": false,
       "linkSupport": true
     }
   }
