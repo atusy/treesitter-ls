@@ -20,6 +20,7 @@ use log::{debug, warn};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tower_lsp_server::jsonrpc;
 
 use super::super::connection::BridgeReader;
 use super::OutboundMessage;
@@ -666,13 +667,16 @@ async fn handle_server_request(
     lang_prefix: &str,
     deps: &ServerRequestDeps,
 ) {
-    let id = message
+    let id: jsonrpc::Id = message
         .get("id")
         .cloned()
-        .unwrap_or(serde_json::Value::Null);
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
     let method = message.get("method").and_then(|v| v.as_str()).unwrap_or("");
 
-    let response = match method {
+    let ok_response = || jsonrpc::Response::from_ok(id.clone(), serde_json::Value::Null);
+
+    let body: jsonrpc::Result<()> = match method {
         "client/registerCapability" => {
             if let Some(params) = message.get("params") {
                 match serde_json::from_value::<tower_lsp_server::ls_types::RegistrationParams>(
@@ -687,7 +691,7 @@ async fn handle_server_request(
                             );
                         }
                         deps.dynamic_capabilities.register(reg_params.registrations);
-                        serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
+                        Ok(())
                     }
                     Err(e) => {
                         warn!(
@@ -695,15 +699,13 @@ async fn handle_server_request(
                             "{}Failed to parse registerCapability params: {}",
                             lang_prefix, e
                         );
-                        serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "error": {"code": -32602, "message": format!("Invalid params: {}", e)}
-                        })
+                        Err(jsonrpc::Error::invalid_params(format!(
+                            "Invalid params: {e}"
+                        )))
                     }
                 }
             } else {
-                serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
+                Ok(())
             }
         }
         "client/unregisterCapability" => {
@@ -721,7 +723,7 @@ async fn handle_server_request(
                         }
                         deps.dynamic_capabilities
                             .unregister(unreg_params.unregisterations);
-                        serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
+                        Ok(())
                     }
                     Err(e) => {
                         warn!(
@@ -729,15 +731,13 @@ async fn handle_server_request(
                             "{}Failed to parse unregisterCapability params: {}",
                             lang_prefix, e
                         );
-                        serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "error": {"code": -32602, "message": format!("Invalid params: {}", e)}
-                        })
+                        Err(jsonrpc::Error::invalid_params(format!(
+                            "Invalid params: {e}"
+                        )))
                     }
                 }
             } else {
-                serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
+                Ok(())
             }
         }
         "window/workDoneProgress/create" => {
@@ -748,7 +748,7 @@ async fn handle_server_request(
                 "{}Acknowledged window/workDoneProgress/create",
                 lang_prefix
             );
-            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
+            Ok(())
         }
         "workspace/diagnostic/refresh" => {
             // Downstream server is requesting that the client re-pull diagnostics.
@@ -761,7 +761,7 @@ async fn handle_server_request(
             let _ = deps
                 .upstream_tx
                 .send(UpstreamNotification::DiagnosticRefresh);
-            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": null})
+            Ok(())
         }
         _ => {
             debug!(
@@ -769,13 +769,16 @@ async fn handle_server_request(
                 "{}Unknown server request method: {}, responding with MethodNotFound",
                 lang_prefix, method
             );
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": {"code": -32601, "message": "Method not found"}
-            })
+            Err(jsonrpc::Error::method_not_found())
         }
     };
+
+    let response = match body {
+        Ok(()) => ok_response(),
+        Err(error) => jsonrpc::Response::from_error(id, error),
+    };
+    // Response implements Serialize, so convert to Value for OutboundMessage.
+    let response = serde_json::to_value(response).expect("Response serialization is infallible");
 
     // Send response via the writer channel.
     // We use OutboundMessage::Untracked because a server-initiated response has
