@@ -653,6 +653,15 @@ async fn handle_message(
 ///
 /// Server-initiated requests have both `"id"` and `"method"` fields.
 /// We must send a JSON-RPC response back for each request.
+///
+/// # Defensive Strategy
+///
+/// When param parsing fails for known methods (registerCapability,
+/// unregisterCapability), we respond with success but skip the registry
+/// update. Many downstream servers don't handle error responses to their
+/// own requests gracefully, so returning an error could cause them to
+/// enter a bad state. The warn log is sufficient for debugging parse
+/// mismatches.
 async fn handle_server_request(
     message: serde_json::Value,
     lang_prefix: &str,
@@ -681,6 +690,7 @@ async fn handle_server_request(
                         deps.dynamic_capabilities.register(reg_params.registrations);
                     }
                     Err(e) => {
+                        // See defensive strategy in doc comment above
                         warn!(
                             target: "kakehashi::bridge::reader",
                             "{}Failed to parse registerCapability params: {}",
@@ -708,6 +718,7 @@ async fn handle_server_request(
                             .unregister(unreg_params.unregisterations);
                     }
                     Err(e) => {
+                        // See defensive strategy in doc comment above
                         warn!(
                             target: "kakehashi::bridge::reader",
                             "{}Failed to parse unregisterCapability params: {}",
