@@ -9,18 +9,27 @@ use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
 use super::legend::apply_capture_mapping;
 
-/// Check whether a node's byte range overlaps any exclusion range.
+/// Check whether a node is strictly contained within any exclusion range.
 ///
-/// A node is considered "in" an exclusion range if its byte span `[start, end)`
-/// has any overlap with any range in the slice. This means even partial overlap
-/// causes exclusion — intentionally aggressive to avoid leaking parent tokens
-/// into injection regions.
+/// A node is excluded only if it is **properly inside** a range — meaning fully
+/// contained but NOT exactly equal. This distinction matters because:
+///
+/// - **Exact match** (e.g., `@markup.heading.1` on the same `inline` node that
+///   is the injection content): The parent capture provides useful semantics
+///   (heading level) that complement the injection's tokens. Conflicts at the
+///   same `(line, col)` are already resolved by `finalize_tokens()` dedup.
+///
+/// - **Strictly inside** (a parent capture on a child node within the injection
+///   content area): The capture is redundant because the injection language
+///   provides its own tokens for that region.
 fn is_in_exclusion_range(node: &Node, ranges: &[(usize, usize)]) -> bool {
     let node_start = node.start_byte();
     let node_end = node.end_byte();
-    ranges
-        .iter()
-        .any(|&(range_start, range_end)| node_start < range_end && node_end > range_start)
+    ranges.iter().any(|&(range_start, range_end)| {
+        node_start >= range_start
+            && node_end <= range_end
+            && (node_start != range_start || node_end != range_end)
+    })
 }
 
 /// Represents a token before delta encoding with all position information.
@@ -352,36 +361,51 @@ mod tests {
     }
 
     #[test]
-    fn is_in_exclusion_range_exact_overlap() {
+    fn is_in_exclusion_range_exact_match_not_excluded() {
         let tree = parse_rust_tree("fn main() {}");
         let root = tree.root_node();
-        // Root node spans the whole text [0, 12)
-        assert!(is_in_exclusion_range(
-            &root,
-            &[(0, 12)]
-        ));
+        // Root node spans [0, 12) — exactly matches the exclusion range.
+        // Exact match should NOT be excluded (dedup handles same-position conflicts).
+        // This matches the Markdown heading case: @markup.heading.1 is captured on
+        // the same node as the markdown_inline injection content.
+        assert!(
+            !is_in_exclusion_range(&root, &[(0, 12)]),
+            "Exact match should NOT be excluded"
+        );
     }
 
     #[test]
-    fn is_in_exclusion_range_partial_overlap_start() {
+    fn is_in_exclusion_range_strictly_contained() {
+        // "fn" keyword node spans bytes [0, 2), which is strictly inside [0, 12)
         let tree = parse_rust_tree("fn main() {}");
-        let root = tree.root_node();
-        // Range overlaps only the beginning of the node
-        assert!(is_in_exclusion_range(
-            &root,
-            &[(0, 3)]
-        ));
+        let fn_node = tree.root_node().child(0).unwrap().child(0).unwrap();
+        assert_eq!((fn_node.start_byte(), fn_node.end_byte()), (0, 2));
+        assert!(
+            is_in_exclusion_range(&fn_node, &[(0, 12)]),
+            "Node strictly inside range should be excluded"
+        );
     }
 
     #[test]
-    fn is_in_exclusion_range_partial_overlap_end() {
+    fn is_in_exclusion_range_partial_overlap_start_not_excluded() {
         let tree = parse_rust_tree("fn main() {}");
         let root = tree.root_node();
-        // Range overlaps only the tail of the node
-        assert!(is_in_exclusion_range(
-            &root,
-            &[(10, 15)]
-        ));
+        // Root [0, 12), range [0, 3) — root extends beyond range → not contained
+        assert!(
+            !is_in_exclusion_range(&root, &[(0, 3)]),
+            "Node extending beyond range should NOT be excluded"
+        );
+    }
+
+    #[test]
+    fn is_in_exclusion_range_partial_overlap_end_not_excluded() {
+        let tree = parse_rust_tree("fn main() {}");
+        let root = tree.root_node();
+        // Root [0, 12), range [10, 15) — root starts before range → not contained
+        assert!(
+            !is_in_exclusion_range(&root, &[(10, 15)]),
+            "Node starting before range should NOT be excluded"
+        );
     }
 
     #[test]
@@ -418,20 +442,23 @@ mod tests {
     }
 
     #[test]
-    fn is_in_exclusion_range_multiple_ranges() {
+    fn is_in_exclusion_range_multiple_ranges_one_hits() {
+        // "fn" keyword at [0, 2), check against multiple ranges
         let tree = parse_rust_tree("fn main() {}");
-        let root = tree.root_node();
-        // One range misses, the other hits
+        let fn_node = tree.root_node().child(0).unwrap().child(0).unwrap();
+        assert_eq!((fn_node.start_byte(), fn_node.end_byte()), (0, 2));
+        // First range misses, second strictly contains [0, 2)
         assert!(is_in_exclusion_range(
-            &root,
-            &[(100, 200), (0, 1)]
+            &fn_node,
+            &[(100, 200), (0, 12)]
         ));
     }
 
     // ── collect_host_tokens exclusion behavior ───────────────────────
 
     #[test]
-    fn collect_host_tokens_with_exclusion_ranges_suppresses_tokens() {
+    fn collect_host_tokens_exclusion_suppresses_strictly_contained_tokens() {
+        // "fn main() {}" — "main" identifier node is at [3, 7)
         let code = "fn main() {}";
         let tree = parse_rust_tree(code);
         let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
@@ -451,7 +478,7 @@ mod tests {
             "Without exclusion should produce tokens"
         );
 
-        // With exclusion covering the whole text: should suppress all tokens
+        // Exclusion range [0, 12) strictly contains the identifier [3, 7) → suppressed
         let mut tokens_excl = Vec::new();
         collect_host_tokens(
             code, &tree, &query, Some("rust"), None, code, &lines, 0, 0, false,
@@ -460,7 +487,32 @@ mod tests {
         );
         assert!(
             tokens_excl.is_empty(),
-            "Exclusion covering whole text should suppress all tokens"
+            "Identifier strictly inside exclusion range should be suppressed"
+        );
+    }
+
+    #[test]
+    fn collect_host_tokens_exclusion_exact_match_not_suppressed() {
+        // "fn main() {}" — "main" identifier node is at [3, 7)
+        let code = "fn main() {}";
+        let tree = parse_rust_tree(code);
+        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        let query =
+            tree_sitter::Query::new(&language, "(identifier) @variable").unwrap();
+        let lines: Vec<&str> = code.lines().collect();
+
+        // Exclusion range [3, 7) exactly matches the identifier node → NOT suppressed.
+        // This models the Markdown heading case where @markup.heading.1 is captured
+        // on the same node that is the injection content.
+        let mut tokens = Vec::new();
+        collect_host_tokens(
+            code, &tree, &query, Some("rust"), None, code, &lines, 0, 0, false,
+            &[(3, 7)],
+            &mut tokens,
+        );
+        assert!(
+            !tokens.is_empty(),
+            "Token with exact-match exclusion range should NOT be suppressed"
         );
     }
 
@@ -478,19 +530,33 @@ mod tests {
         .unwrap();
         let lines: Vec<&str> = code.lines().collect();
 
-        // Exclude only the identifier region [3, 7) — should keep "fn" but drop "main"
+        // Exclusion range [0, 12) strictly contains both "fn" [0,2) and "main" [3,7)
         let mut tokens = Vec::new();
         collect_host_tokens(
             code, &tree, &query, Some("rust"), None, code, &lines, 0, 0, false,
-            &[(3, 7)],
+            &[(0, code.len())],
             &mut tokens,
         );
 
-        // Should have the "fn" keyword token but NOT the "main" variable token
-        let has_keyword = tokens.iter().any(|t| t.mapped_name == "keyword");
-        let has_variable = tokens.iter().any(|t| t.mapped_name == "variable");
+        // Both are strictly contained → both suppressed
+        assert!(
+            tokens.is_empty(),
+            "All tokens strictly inside exclusion should be suppressed"
+        );
+
+        // But with a range that only strictly contains "main" [3,7):
+        // Use [2, 8) which contains [3,7) but not [0,2)
+        let mut tokens2 = Vec::new();
+        collect_host_tokens(
+            code, &tree, &query, Some("rust"), None, code, &lines, 0, 0, false,
+            &[(2, 8)],
+            &mut tokens2,
+        );
+
+        let has_keyword = tokens2.iter().any(|t| t.mapped_name == "keyword");
+        let has_variable = tokens2.iter().any(|t| t.mapped_name == "variable");
         assert!(has_keyword, "fn keyword outside exclusion should be kept");
-        assert!(!has_variable, "main identifier inside exclusion should be dropped");
+        assert!(!has_variable, "main identifier strictly inside exclusion should be dropped");
     }
 
     #[test]
