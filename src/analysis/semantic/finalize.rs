@@ -1,7 +1,7 @@
 //! Token post-processing and LSP encoding.
 //!
 //! This module handles the final steps of semantic token processing:
-//! - Filtering zero-length tokens
+//! - Excluding host tokens inside active injection regions
 //! - Splitting overlapping tokens via sweep line algorithm
 //! - Converting to LSP SemanticToken format with delta-relative positions
 //!
@@ -12,7 +12,7 @@
 use tower_lsp_server::ls_types::{SemanticToken, SemanticTokens, SemanticTokensResult};
 
 use super::legend::map_capture_to_token_type_and_modifiers;
-use super::token_collector::RawToken;
+use super::token_collector::{InjectionRegion, RawToken};
 
 /// Priority key for token comparison. Higher values win.
 fn token_priority(t: &RawToken) -> (usize, usize, usize) {
@@ -82,6 +82,7 @@ fn split_overlapping_tokens(mut tokens: Vec<RawToken>) -> Vec<RawToken> {
                     depth: winner.depth,
                     pattern_index: winner.pattern_index,
                     node_depth: winner.node_depth,
+                    exact_match_injection: winner.exact_match_injection,
                 });
             }
         }
@@ -124,16 +125,58 @@ fn merge_adjacent_fragments(tokens: &mut Vec<RawToken>) {
     tokens.truncate(write + 1);
 }
 
+/// Check whether a single-line token is inside any active injection region.
+fn is_in_active_injection_region(token: &RawToken, regions: &[InjectionRegion]) -> bool {
+    let token_end = token.column + token.length;
+    regions.iter().any(|r| {
+        // Token is on a line strictly between region start and end
+        (token.line > r.start_line && token.line < r.end_line)
+        // Token is on the start line, past the start column
+        || (token.line == r.start_line
+            && token.line < r.end_line
+            && token.column >= r.start_col)
+        // Token is on the end line, before the end column
+        || (token.line == r.end_line
+            && token.line > r.start_line
+            && token_end <= r.end_col)
+        // Token is on a single-line region
+        || (token.line == r.start_line
+            && token.line == r.end_line
+            && token.column >= r.start_col
+            && token_end <= r.end_col)
+    })
+}
+
 /// Post-process and delta-encode raw tokens into SemanticTokensResult.
 ///
 /// This shared helper:
-/// 1. Filters zero-length tokens
+/// 1. Excludes host tokens inside active injection regions
 /// 2. Splits overlapping tokens via sweep line
 /// 3. Delta-encodes for LSP protocol
-pub(super) fn finalize_tokens(mut all_tokens: Vec<RawToken>) -> Option<SemanticTokensResult> {
+pub(super) fn finalize_tokens(
+    mut all_tokens: Vec<RawToken>,
+    active_injection_regions: &[InjectionRegion],
+) -> Option<SemanticTokensResult> {
     // Filter out zero-length tokens BEFORE splitting.
     // Unknown captures are already filtered at collection time (apply_capture_mapping returns None).
     all_tokens.retain(|token| token.length > 0);
+
+    // Injection region exclusion: remove host tokens (depth=0) inside active
+    // injection regions, UNLESS they are exact-match tokens.
+    if !active_injection_regions.is_empty() {
+        all_tokens.retain(|token| {
+            // Non-host tokens (injection tokens) are always kept
+            if token.depth > 0 {
+                return true;
+            }
+            // Exact-match tokens are preserved (resolved by sweep line)
+            if token.exact_match_injection {
+                return true;
+            }
+            // Remove host tokens inside active injection regions
+            !is_in_active_injection_region(token, active_injection_regions)
+        });
+    }
 
     // Split overlapping tokens using sweep line algorithm.
     // This replaces the old sort + dedup approach, producing non-overlapping
@@ -216,13 +259,14 @@ mod tests {
             depth,
             pattern_index,
             node_depth,
+            exact_match_injection: false,
         }
     }
 
     #[test]
     fn finalize_tokens_returns_none_for_empty_input() {
         let tokens: Vec<RawToken> = vec![];
-        assert!(finalize_tokens(tokens).is_none());
+        assert!(finalize_tokens(tokens, &[]).is_none());
     }
 
     #[test]
@@ -231,7 +275,7 @@ mod tests {
             make_token(0, 0, 0, "keyword", 0, 0), // zero length - should be filtered
             make_token(0, 5, 3, "variable", 0, 0), // valid
         ];
-        let result = finalize_tokens(tokens);
+        let result = finalize_tokens(tokens, &[]);
         assert!(result.is_some());
 
         if let Some(SemanticTokensResult::Tokens(semantic_tokens)) = result {
@@ -248,7 +292,7 @@ mod tests {
             make_token(0, 0, 0, "keyword", 0, 0),
             make_token(1, 5, 0, "variable", 0, 0),
         ];
-        assert!(finalize_tokens(tokens).is_none());
+        assert!(finalize_tokens(tokens, &[]).is_none());
     }
 
     #[test]
@@ -258,7 +302,7 @@ mod tests {
             make_token(0, 10, 3, "string", 0, 0),  // line 0, col 10
             make_token(0, 0, 3, "function", 0, 0), // line 0, col 0
         ];
-        let result = finalize_tokens(tokens);
+        let result = finalize_tokens(tokens, &[]);
         assert!(result.is_some());
 
         if let Some(SemanticTokensResult::Tokens(semantic_tokens)) = result {
@@ -285,7 +329,7 @@ mod tests {
             make_token(0, 5, 4, "function", 0, 0),
             make_token(0, 12, 2, "variable", 0, 0),
         ];
-        let result = finalize_tokens(tokens);
+        let result = finalize_tokens(tokens, &[]);
         assert!(result.is_some());
 
         if let Some(SemanticTokensResult::Tokens(semantic_tokens)) = result {
@@ -311,7 +355,7 @@ mod tests {
             make_token(0, 5, 3, "keyword", 0, 0),
             make_token(1, 10, 4, "function", 0, 0),
         ];
-        let result = finalize_tokens(tokens);
+        let result = finalize_tokens(tokens, &[]);
         assert!(result.is_some());
 
         if let Some(SemanticTokensResult::Tokens(semantic_tokens)) = result {
@@ -538,8 +582,77 @@ mod tests {
         );
     }
 
-    // At same position, the sweep line picks the winner by
-    // (depth DESC, node_depth DESC, pattern_index DESC).
+    // ── injection region exclusion tests ──────────────────────────────
+
+    #[test]
+    fn finalize_excludes_host_token_inside_active_injection_region() {
+        // Host token (depth=0) on line 3 falls inside injection region lines 2-4.
+        // Should be excluded because it's not exact_match.
+        let tokens = vec![
+            make_token(0, 0, 5, "keyword", 0, 0), // line 0 — outside region
+            make_token(3, 0, 12, "string", 0, 0),  // line 3 — inside region
+        ];
+        let regions = vec![InjectionRegion {
+            start_line: 2,
+            start_col: 0,
+            end_line: 4,
+            end_col: 0,
+        }];
+        let result = finalize_tokens(tokens, &regions);
+        assert!(result.is_some());
+        let SemanticTokensResult::Tokens(st) = result.unwrap() else {
+            panic!("Expected Tokens");
+        };
+        // Only line 0 token should survive
+        assert_eq!(st.data.len(), 1, "Host token inside injection should be excluded");
+        assert_eq!(st.data[0].delta_line, 0);
+        assert_eq!(st.data[0].delta_start, 0);
+        assert_eq!(st.data[0].length, 5);
+    }
+
+    #[test]
+    fn finalize_preserves_exact_match_token_inside_injection_region() {
+        // exact_match_injection = true → preserved even inside region.
+        let mut token = make_token(3, 0, 12, "keyword", 0, 0);
+        token.exact_match_injection = true;
+        let tokens = vec![token];
+        let regions = vec![InjectionRegion {
+            start_line: 2,
+            start_col: 0,
+            end_line: 4,
+            end_col: 0,
+        }];
+        let result = finalize_tokens(tokens, &regions);
+        assert!(result.is_some(), "Exact-match token should survive");
+    }
+
+    #[test]
+    fn finalize_preserves_injection_tokens_inside_region() {
+        // depth=1 tokens (injection) should always be kept.
+        let tokens = vec![
+            make_token(3, 0, 5, "keyword", 1, 0), // injection token
+        ];
+        let regions = vec![InjectionRegion {
+            start_line: 2,
+            start_col: 0,
+            end_line: 4,
+            end_col: 0,
+        }];
+        let result = finalize_tokens(tokens, &regions);
+        assert!(result.is_some(), "Injection tokens should always survive");
+    }
+
+    #[test]
+    fn finalize_no_exclusion_when_no_active_regions() {
+        // No active regions → all host tokens survive.
+        let tokens = vec![
+            make_token(3, 0, 12, "string", 0, 0),
+        ];
+        let result = finalize_tokens(tokens, &[]);
+        assert!(result.is_some());
+    }
+
+    // At same position, dedup keeps the winner after sorting by (depth DESC, pattern_index DESC).
     #[rstest]
     #[case::deeper_injection_wins(
         ("string", 0, 0), ("keyword", 1, 0), "keyword"
@@ -562,7 +675,7 @@ mod tests {
             make_token(0, 0, 5, token_a.0, token_a.1, token_a.2),
             make_token(0, 0, 5, token_b.0, token_b.1, token_b.2),
         ];
-        let result = finalize_tokens(tokens);
+        let result = finalize_tokens(tokens, &[]);
 
         let SemanticTokensResult::Tokens(semantic_tokens) = result.expect("should produce tokens")
         else {

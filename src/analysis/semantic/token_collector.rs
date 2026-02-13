@@ -53,6 +53,25 @@ pub(crate) struct RawToken {
     /// Used by the sweep line to resolve overlaps: deeper nodes are more
     /// specific and take priority over shallower ones at the same injection depth.
     pub node_depth: usize,
+    /// Whether this token's node exactly matches an injection content node.
+    /// Exact-match tokens are preserved even inside active injection regions
+    /// (e.g., `@markup.heading.1` on the `inline` node that is the injection content).
+    pub exact_match_injection: bool,
+}
+
+/// Represents the line/column boundaries of an injection region in the host document.
+///
+/// Used to exclude host tokens that fall inside active injection regions during finalization.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct InjectionRegion {
+    /// Start line (0-indexed)
+    pub start_line: usize,
+    /// Start column (UTF-16)
+    pub start_col: usize,
+    /// End line (0-indexed)
+    pub end_line: usize,
+    /// End column (UTF-16)
+    pub end_col: usize,
 }
 
 /// Compute the depth of a node in the syntax tree by walking its parent chain.
@@ -256,6 +275,7 @@ pub(super) fn collect_host_tokens(
                     depth,
                     pattern_index: m.pattern_index,
                     node_depth,
+                    exact_match_injection: false,
                 });
             } else if supports_multiline {
                 // Multiline token with client support: emit a single token spanning multiple lines.
@@ -317,6 +337,7 @@ pub(super) fn collect_host_tokens(
                     depth,
                     pattern_index: m.pattern_index,
                     node_depth,
+                    exact_match_injection: false,
                 });
             } else {
                 // Multiline token without client support: split into per-line tokens
@@ -346,6 +367,7 @@ pub(super) fn collect_host_tokens(
                             depth,
                             pattern_index: m.pattern_index,
                             node_depth,
+                            exact_match_injection: false,
                         });
                     }
                 }

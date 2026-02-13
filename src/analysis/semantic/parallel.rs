@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use tree_sitter::{Parser, Tree};
 
 use super::injection::{InjectionContext, MAX_INJECTION_DEPTH};
-use super::token_collector::{RawToken, collect_host_tokens};
+use super::token_collector::{InjectionRegion, RawToken, collect_host_tokens, byte_to_utf16_col};
 use crate::config::CaptureMappings;
 use crate::language::LanguageCoordinator;
 
@@ -254,21 +254,6 @@ pub(crate) fn process_injection_sync(
     tokens
 }
 
-/// Compute byte ranges of child injection regions for a host document.
-///
-/// This is the public entry point used by `semantic.rs` to get exclusion ranges
-/// before calling `collect_host_tokens`. It runs the same injection discovery as
-/// `collect_injection_contexts_sync` but only returns the byte ranges.
-pub(super) fn compute_host_exclusion_ranges(
-    text: &str,
-    tree: &Tree,
-    filetype: Option<&str>,
-    coordinator: &LanguageCoordinator,
-) -> Vec<(usize, usize)> {
-    let (_, ranges) = collect_injection_contexts_sync(text, tree, filetype, coordinator, 0);
-    ranges
-}
-
 /// Collect injection contexts from a parsed tree (sync version).
 ///
 /// This is a synchronous version of the injection context collection that
@@ -377,7 +362,10 @@ fn collect_injection_contexts_sync<'a>(
 /// * `supports_multiline` - Whether the client supports multiline tokens
 ///
 /// # Returns
-/// Vector of raw tokens from all injections, sorted by (line, column)
+/// Tuple of (raw tokens from all injections sorted by position, active injection regions).
+///
+/// An injection region is **active** if at least one token was produced from it (depth ≥ 1).
+/// Inactive regions (injection resolved but no captures) don't suppress parent tokens.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn collect_injection_tokens_parallel(
     host_text: &str,
@@ -386,18 +374,18 @@ pub(crate) fn collect_injection_tokens_parallel(
     coordinator: &LanguageCoordinator,
     capture_mappings: Option<&CaptureMappings>,
     supports_multiline: bool,
-) -> Vec<RawToken> {
+) -> (Vec<RawToken>, Vec<InjectionRegion>) {
     use rayon::prelude::*;
 
     // Pre-compute host lines for position calculations
     let host_lines: Vec<&str> = host_text.lines().collect();
 
-    // Collect top-level injection contexts
-    let (contexts, _exclusion_ranges) =
+    // Collect top-level injection contexts and their byte ranges
+    let (contexts, exclusion_byte_ranges) =
         collect_injection_contexts_sync(host_text, host_tree, host_filetype, coordinator, 0);
 
     if contexts.is_empty() {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
 
     // Create factory from coordinator's registry (cloned for thread safety)
@@ -446,7 +434,70 @@ pub(crate) fn collect_injection_tokens_parallel(
     // Sort tokens by position (line, then column)
     all_tokens.sort_by(|a, b| a.line.cmp(&b.line).then_with(|| a.column.cmp(&b.column)));
 
-    all_tokens
+    // Convert byte ranges to line/column InjectionRegions, but only for
+    // regions that actually produced tokens (= "active" injection regions).
+    let active_regions = compute_active_injection_regions(
+        host_text,
+        &host_lines,
+        &exclusion_byte_ranges,
+        &all_tokens,
+    );
+
+    (all_tokens, active_regions)
+}
+
+/// Convert byte-based exclusion ranges to line/column `InjectionRegion`s,
+/// keeping only those regions that contain at least one injection token.
+fn compute_active_injection_regions(
+    host_text: &str,
+    host_lines: &[&str],
+    byte_ranges: &[(usize, usize)],
+    tokens: &[RawToken],
+) -> Vec<InjectionRegion> {
+    byte_ranges
+        .iter()
+        .filter_map(|&(start_byte, end_byte)| {
+            // Convert byte range to line/col
+            let (start_line, start_col) = byte_to_line_col(host_text, host_lines, start_byte);
+            let (end_line, end_col) = byte_to_line_col(host_text, host_lines, end_byte);
+
+            // Check if any token (depth ≥ 1) falls within this region
+            let has_injection_tokens = tokens.iter().any(|t| {
+                t.depth >= 1
+                    && ((t.line > start_line || (t.line == start_line && t.column >= start_col))
+                        && (t.line < end_line || (t.line == end_line && t.column < end_col)))
+            });
+
+            if has_injection_tokens {
+                Some(InjectionRegion {
+                    start_line,
+                    start_col,
+                    end_line,
+                    end_col,
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Convert a byte offset in host_text to a (line, utf16_col) pair.
+fn byte_to_line_col(host_text: &str, host_lines: &[&str], byte_offset: usize) -> (usize, usize) {
+    let byte_offset = byte_offset.min(host_text.len());
+    let line = host_text[..byte_offset]
+        .chars()
+        .filter(|c| *c == '\n')
+        .count();
+    let line_start_byte = if line == 0 {
+        0
+    } else {
+        host_text[..byte_offset].rfind('\n').map_or(0, |p| p + 1)
+    };
+    let col_byte = byte_offset - line_start_byte;
+    let line_text = host_lines.get(line).unwrap_or(&"");
+    let col_utf16 = byte_to_utf16_col(line_text, col_byte);
+    (line, col_utf16)
 }
 
 #[cfg(test)]
@@ -733,7 +784,7 @@ mod tests {
         parser_pool.release("markdown".to_string(), parser);
 
         // Collect tokens - should be empty for empty document
-        let tokens = collect_injection_tokens_parallel(
+        let (tokens, _regions) = collect_injection_tokens_parallel(
             text,
             &tree,
             Some("markdown"),
@@ -782,7 +833,7 @@ local x = 42
         parser_pool.release("markdown".to_string(), parser);
 
         // Collect tokens in parallel
-        let tokens = collect_injection_tokens_parallel(
+        let (tokens, _regions) = collect_injection_tokens_parallel(
             text,
             &tree,
             Some("markdown"),
@@ -850,7 +901,7 @@ local b = 2
         };
         parser_pool.release("markdown".to_string(), parser);
 
-        let tokens = collect_injection_tokens_parallel(
+        let (tokens, _regions) = collect_injection_tokens_parallel(
             text,
             &tree,
             Some("markdown"),
