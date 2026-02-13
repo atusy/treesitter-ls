@@ -39,7 +39,7 @@ impl DynamicCapabilityRegistry {
             }
         };
         for reg in registrations {
-            guard.insert(reg.method.clone(), reg);
+            guard.insert(reg.id.clone(), reg);
         }
     }
 
@@ -55,7 +55,7 @@ impl DynamicCapabilityRegistry {
             }
         };
         for unreg in unregistrations {
-            guard.remove(&unreg.method);
+            guard.remove(&unreg.id);
         }
     }
 
@@ -70,7 +70,7 @@ impl DynamicCapabilityRegistry {
                 poisoned.into_inner()
             }
         };
-        guard.contains_key(method)
+        guard.values().any(|r| r.method == method)
     }
 }
 
@@ -128,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn register_overwrites_same_method() {
+    fn register_coexists_same_method_different_ids() {
         let registry = DynamicCapabilityRegistry::new();
         let reg1 = make_registration("1", "textDocument/completion");
         let reg2 = make_registration("2", "textDocument/completion");
@@ -137,10 +137,10 @@ mod tests {
         registry.register(vec![reg2]);
 
         assert!(registry.has_registration("textDocument/completion"));
-        // Verify the latest registration is stored (id "2", not "1")
+        // Verify both registrations are stored (keyed by ID)
         let guard = registry.registrations.read().unwrap();
-        let stored = guard.get("textDocument/completion").unwrap();
-        assert_eq!(stored.id, "2");
+        assert_eq!(guard.get("1").unwrap().id, "1");
+        assert_eq!(guard.get("2").unwrap().id, "2");
     }
 
     #[test]
