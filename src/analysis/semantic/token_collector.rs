@@ -22,6 +22,10 @@ pub(crate) struct RawToken {
     pub mapped_name: String,
     /// Injection depth (0 = host document)
     pub depth: usize,
+    /// Index of the query pattern that produced this token.
+    /// Within a single query, later patterns (higher index) are more specific
+    /// and should override earlier ones at the same position and depth.
+    pub pattern_index: usize,
 }
 
 /// Convert byte column position to UTF-16 column position within a line
@@ -204,6 +208,7 @@ pub(super) fn collect_host_tokens(
                     length: end_utf16 - start_utf16,
                     mapped_name,
                     depth,
+                    pattern_index: m.pattern_index,
                 });
             } else if supports_multiline {
                 // Multiline token with client support: emit a single token spanning multiple lines.
@@ -263,6 +268,7 @@ pub(super) fn collect_host_tokens(
                     length: total_length_utf16,
                     mapped_name,
                     depth,
+                    pattern_index: m.pattern_index,
                 });
             } else {
                 // Multiline token without client support: split into per-line tokens
@@ -290,6 +296,7 @@ pub(super) fn collect_host_tokens(
                             length: end_utf16 - start_utf16,
                             mapped_name: mapped_name.clone(),
                             depth,
+                            pattern_index: m.pattern_index,
                         });
                     }
                 }
