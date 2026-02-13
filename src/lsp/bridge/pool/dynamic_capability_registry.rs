@@ -70,6 +70,25 @@ impl DynamicCapabilityRegistry {
         };
         guard.values().any(|r| r.method == method)
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn get_registrations(&self, method: &str) -> Vec<Registration> {
+        let guard = match self.registrations.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!(
+                    target: "kakehashi::lock_recovery",
+                    "Recovered from poisoned lock in DynamicCapabilityRegistry::get_registrations()"
+                );
+                poisoned.into_inner()
+            }
+        };
+        guard
+            .values()
+            .filter(|r| r.method == method)
+            .cloned()
+            .collect()
+    }
 }
 
 #[cfg(test)]
