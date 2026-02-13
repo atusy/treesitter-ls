@@ -70,25 +70,6 @@ impl DynamicCapabilityRegistry {
         };
         guard.values().any(|r| r.method == method)
     }
-
-    #[allow(dead_code)]
-    pub(crate) fn get_registrations(&self, method: &str) -> Vec<Registration> {
-        let guard = match self.registrations.read() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
-                warn!(
-                    target: "kakehashi::lock_recovery",
-                    "Recovered from poisoned lock in DynamicCapabilityRegistry::get_registrations()"
-                );
-                poisoned.into_inner()
-            }
-        };
-        guard
-            .values()
-            .filter(|r| r.method == method)
-            .cloned()
-            .collect()
-    }
 }
 
 #[cfg(test)]
@@ -195,58 +176,6 @@ mod tests {
 
         // has_registration should recover from the poisoned lock
         assert!(registry.has_registration("textDocument/completion"));
-    }
-
-    #[test]
-    fn get_registrations_returns_matching() {
-        let registry = DynamicCapabilityRegistry::new();
-        let reg1 = make_registration("diag-1", "textDocument/diagnostic");
-        let reg2 = make_registration("diag-2", "textDocument/diagnostic");
-        let reg3 = make_registration("hover-1", "textDocument/hover");
-
-        registry.register(vec![reg1, reg2, reg3]);
-
-        let diagnostics = registry.get_registrations("textDocument/diagnostic");
-        assert_eq!(diagnostics.len(), 2);
-        assert!(diagnostics.iter().any(|r| r.id == "diag-1"));
-        assert!(diagnostics.iter().any(|r| r.id == "diag-2"));
-
-        let hovers = registry.get_registrations("textDocument/hover");
-        assert_eq!(hovers.len(), 1);
-        assert_eq!(hovers[0].id, "hover-1");
-    }
-
-    #[test]
-    fn get_registrations_returns_empty_for_unknown() {
-        let registry = DynamicCapabilityRegistry::new();
-        let reg = make_registration("1", "textDocument/completion");
-        registry.register(vec![reg]);
-
-        let result = registry.get_registrations("textDocument/hover");
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn poison_recovery_on_get_registrations() {
-        let registry = Arc::new(DynamicCapabilityRegistry::new());
-        let reg = make_registration("1", "textDocument/completion");
-        registry.register(vec![reg]);
-
-        // Poison the RwLock by panicking while holding a write guard
-        let registry_clone = Arc::clone(&registry);
-        let handle = thread::spawn(move || {
-            let _guard = registry_clone.registrations.write().unwrap();
-            panic!("intentional panic to poison the lock");
-        });
-        let _ = handle.join(); // Wait for thread to finish (it panicked)
-
-        // Verify the lock is poisoned
-        assert!(registry.registrations.read().is_err());
-
-        // get_registrations should recover from the poisoned lock
-        let result = registry.get_registrations("textDocument/completion");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "1");
     }
 
     #[test]
