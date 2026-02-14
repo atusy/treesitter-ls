@@ -219,7 +219,7 @@ pub(super) fn finalize_tokens(
     // which treats [column, column+length) as a 1D interval on a single line.
     let mut all_tokens = split_multiline_tokens(all_tokens, lines);
 
-    // Filter out zero-length tokens BEFORE splitting.
+    // Filter out zero-length tokens before the sweep line overlap resolution.
     // Unknown captures are already filtered at collection time (apply_capture_mapping returns None).
     all_tokens.retain(|token| token.length > 0);
 
