@@ -485,6 +485,15 @@ fn compute_active_injection_regions(
 /// Convert a byte offset in host_text to a (line, utf16_col) pair.
 fn byte_to_line_col(host_text: &str, host_lines: &[&str], byte_offset: usize) -> (usize, usize) {
     let byte_offset = byte_offset.min(host_text.len());
+    // Snap to valid UTF-8 char boundary (tree-sitter always provides valid offsets,
+    // but guard defensively against unexpected inputs).
+    let byte_offset = {
+        let mut b = byte_offset;
+        while b > 0 && !host_text.is_char_boundary(b) {
+            b -= 1;
+        }
+        b
+    };
     let line = host_text[..byte_offset]
         .chars()
         .filter(|c| *c == '\n')
@@ -639,6 +648,39 @@ mod tests {
         assert_eq!(ctx.resolved_lang, "rust");
         assert_eq!(ctx.content_text, "fn main() {}");
         assert_eq!(ctx.host_start_byte, 100);
+    }
+
+    #[test]
+    fn test_byte_to_line_col_mid_char_boundary() {
+        // Test that byte_to_line_col handles mid-UTF-8-character offsets defensively
+        // by snapping to the nearest valid char boundary.
+        let text = "あいう"; // Three 3-byte UTF-8 characters (9 bytes total)
+        let lines: Vec<&str> = text.lines().collect();
+
+        // Offset 0 is valid (start of first char)
+        let (line, col) = byte_to_line_col(text, &lines, 0);
+        assert_eq!(line, 0);
+        assert_eq!(col, 0);
+
+        // Offset 1 is mid-character (should snap to 0)
+        let (line, col) = byte_to_line_col(text, &lines, 1);
+        assert_eq!(line, 0, "Mid-character offset should snap to line 0");
+        assert_eq!(col, 0, "Mid-character offset should snap to col 0");
+
+        // Offset 2 is mid-character (should snap to 0)
+        let (line, col) = byte_to_line_col(text, &lines, 2);
+        assert_eq!(line, 0);
+        assert_eq!(col, 0);
+
+        // Offset 3 is valid (start of second char)
+        let (line, col) = byte_to_line_col(text, &lines, 3);
+        assert_eq!(line, 0);
+        assert_eq!(col, 1); // One UTF-16 code unit (Japanese chars are in BMP)
+
+        // Offset 4 is mid-character (should snap to 3)
+        let (line, col) = byte_to_line_col(text, &lines, 4);
+        assert_eq!(line, 0);
+        assert_eq!(col, 1); // Should snap to start of second char
     }
 
     #[test]
