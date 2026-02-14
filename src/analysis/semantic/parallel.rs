@@ -699,10 +699,12 @@ mod tests {
         let load_result = coordinator.ensure_language_loaded("rust");
         if !load_result.success {
             // Skip test if rust parser not available in CI
+            eprintln!("Skipping: rust parser not available");
             return;
         }
 
         let Some(highlight_query) = coordinator.get_highlight_query("rust") else {
+            eprintln!("Skipping: rust highlight query not available");
             return;
         };
 
@@ -752,10 +754,12 @@ mod tests {
 
         let load_result = coordinator.ensure_language_loaded("rust");
         if !load_result.success {
+            eprintln!("Skipping: rust parser not available");
             return;
         }
 
         let Some(highlight_query) = coordinator.get_highlight_query("rust") else {
+            eprintln!("Skipping: rust highlight query not available");
             return;
         };
 
@@ -811,6 +815,7 @@ mod tests {
         // Load markdown (host language)
         let load_result = coordinator.ensure_language_loaded("markdown");
         if !load_result.success {
+            eprintln!("Skipping: markdown parser not available");
             return;
         }
 
@@ -818,9 +823,11 @@ mod tests {
         let text = "";
         let mut parser_pool = coordinator.create_document_parser_pool();
         let Some(mut parser) = parser_pool.acquire("markdown") else {
+            eprintln!("Skipping: markdown parser not available");
             return;
         };
         let Some(tree) = parser.parse(text, None) else {
+            eprintln!("Skipping: failed to parse document");
             return;
         };
         parser_pool.release("markdown".to_string(), parser);
@@ -853,6 +860,7 @@ mod tests {
         let md_result = coordinator.ensure_language_loaded("markdown");
         let lua_result = coordinator.ensure_language_loaded("lua");
         if !md_result.success || !lua_result.success {
+            eprintln!("Skipping: markdown or lua parser not available");
             return;
         }
 
@@ -867,9 +875,11 @@ local x = 42
         // Parse the markdown document
         let mut parser_pool = coordinator.create_document_parser_pool();
         let Some(mut parser) = parser_pool.acquire("markdown") else {
+            eprintln!("Skipping: markdown parser not available");
             return;
         };
         let Some(tree) = parser.parse(text, None) else {
+            eprintln!("Skipping: failed to parse document");
             return;
         };
         parser_pool.release("markdown".to_string(), parser);
@@ -917,6 +927,7 @@ local x = 42
         let md_result = coordinator.ensure_language_loaded("markdown");
         let lua_result = coordinator.ensure_language_loaded("lua");
         if !md_result.success || !lua_result.success {
+            eprintln!("Skipping: markdown or lua parser not available");
             return;
         }
 
@@ -936,9 +947,11 @@ local b = 2
 
         let mut parser_pool = coordinator.create_document_parser_pool();
         let Some(mut parser) = parser_pool.acquire("markdown") else {
+            eprintln!("Skipping: markdown parser not available");
             return;
         };
         let Some(tree) = parser.parse(text, None) else {
+            eprintln!("Skipping: failed to parse document");
             return;
         };
         parser_pool.release("markdown".to_string(), parser);
