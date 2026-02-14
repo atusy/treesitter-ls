@@ -59,7 +59,7 @@ pub(crate) async fn handle_semantic_tokens_full(
         let mut all_tokens: Vec<RawToken> = Vec::with_capacity(1000);
         let lines: Vec<&str> = text.lines().collect();
 
-        // Collect host document tokens first (no exclusion — finalize handles it)
+        // Collect host document tokens first (no exclusion — finalize handles it).
         collect_host_tokens(
             &text,
             &tree,
@@ -89,7 +89,7 @@ pub(crate) async fn handle_semantic_tokens_full(
         // Merge injection tokens with host tokens
         all_tokens.extend(injection_tokens);
 
-        finalize_tokens(all_tokens, &active_injection_regions)
+        finalize_tokens(all_tokens, &active_injection_regions, &lines)
     })
     .await
     .ok()
@@ -105,6 +105,24 @@ mod tests {
     /// Uses TREE_SITTER_GRAMMARS env var if set (Nix), otherwise falls back to deps/tree-sitter.
     fn test_search_path() -> String {
         std::env::var("TREE_SITTER_GRAMMARS").unwrap_or_else(|_| "deps/tree-sitter".to_string())
+    }
+
+    /// Decode delta-encoded LSP semantic tokens to absolute `(line, col, length, token_type)`.
+    fn decode_tokens(tokens: &[SemanticToken]) -> Vec<(u32, u32, u32, u32)> {
+        let mut abs_line = 0u32;
+        let mut abs_col = 0u32;
+        tokens
+            .iter()
+            .map(|st| {
+                abs_line += st.delta_line;
+                if st.delta_line > 0 {
+                    abs_col = st.delta_start;
+                } else {
+                    abs_col += st.delta_start;
+                }
+                (abs_line, abs_col, st.length, st.token_type)
+            })
+            .collect()
     }
 
     #[test]
@@ -640,6 +658,7 @@ local x = 42
     #[tokio::test]
     async fn test_no_host_tokens_inside_injection_region() {
         use crate::config::WorkspaceSettings;
+        use crate::config::defaults::default_capture_mappings;
         use crate::language::LanguageCoordinator;
         use std::sync::Arc;
 
@@ -681,13 +700,17 @@ local x = 42
         };
         parser_pool.release("markdown".to_string(), parser);
 
+        // Use default capture mappings so markdown captures like @markup.raw.block
+        // are translated to `string` (token_type 2).
+        let capture_mappings = default_capture_mappings();
+
         // Use the full pipeline — exclusion now happens in finalize_tokens
         let result = handle_semantic_tokens_full(
             text,
             tree,
             md_query,
             Some("markdown".to_string()),
-            None,
+            Some(capture_mappings),
             coordinator,
             false,
         )
@@ -699,19 +722,7 @@ local x = 42
             panic!("Expected full tokens result");
         };
 
-        // Decode delta-encoded tokens to absolute (line, col) for inspection
-        let mut abs_line = 0u32;
-        let mut abs_col = 0u32;
-        let mut decoded = Vec::new();
-        for st in &tokens.data {
-            abs_line += st.delta_line;
-            if st.delta_line > 0 {
-                abs_col = st.delta_start;
-            } else {
-                abs_col += st.delta_start;
-            }
-            decoded.push((abs_line, abs_col, st.length, st.token_type));
-        }
+        let decoded = decode_tokens(&tokens.data);
 
         // Line 3 contains "local x = 42" — injection tokens should be present
         let line3_tokens: Vec<_> = decoded.iter().filter(|t| t.0 == 3).collect();
@@ -721,12 +732,501 @@ local x = 42
             decoded
         );
 
-        // Line 0 has "# Hello" — should have heading / heading-content tokens
+        // --- Stronger assertions: no host token leaks on content line ---
+
+        // `string` is token_type index 2 in LEGEND_TYPES (SemanticTokenType::STRING).
+        // Markdown maps @markup.raw.block to `string`. Host tokens with this type
+        // must NOT appear on line 3 (the content line inside the injection region).
+        let string_token_type = 2u32;
+        let line3_host_leaks: Vec<_> = decoded
+            .iter()
+            .filter(|t| t.0 == 3 && t.3 == string_token_type)
+            .collect();
+        assert!(
+            line3_host_leaks.is_empty(),
+            "Host `string` tokens must not leak onto content line 3 (injection region). \
+             Leaked tokens: {:?}. All decoded: {:?}",
+            line3_host_leaks,
+            decoded
+        );
+
+        // Fence lines (2 and 4) SHOULD still have host tokens.
+        // Line 2 = "```lua", line 4 = "```" — these are outside the injection region.
+        let line2_tokens: Vec<_> = decoded.iter().filter(|t| t.0 == 2).collect();
+        assert!(
+            !line2_tokens.is_empty(),
+            "Fence line 2 ('```lua') should have host tokens. Decoded: {:?}",
+            decoded
+        );
+        let line4_tokens: Vec<_> = decoded.iter().filter(|t| t.0 == 4).collect();
+        assert!(
+            !line4_tokens.is_empty(),
+            "Fence line 4 ('```') should have host tokens. Decoded: {:?}",
+            decoded
+        );
+    }
+
+    /// Integration test: Sparse injection tokens with gaps must not leak host
+    /// fragments. When injection tokens don't cover the full line (e.g., `x = 1`
+    /// produces tokens at columns 0, 2, 4 but not at 1 or 3), the host token
+    /// for the entire content line must be fully excluded — not split around
+    /// the injection tokens by the sweep line.
+    #[tokio::test]
+    async fn test_no_host_leak_in_gaps_between_sparse_injection_tokens() {
+        use crate::config::WorkspaceSettings;
+        use crate::config::defaults::default_capture_mappings;
+        use crate::language::LanguageCoordinator;
+        use std::sync::Arc;
+
+        let coordinator = Arc::new(LanguageCoordinator::new());
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        let md_result = coordinator.ensure_language_loaded("markdown");
+        let lua_result = coordinator.ensure_language_loaded("lua");
+        if !md_result.success || !lua_result.success {
+            eprintln!("Skipping: markdown or lua parser not available");
+            return;
+        }
+
+        let Some(md_query) = coordinator.get_highlight_query("markdown") else {
+            eprintln!("Skipping: markdown highlight query not available");
+            return;
+        };
+
+        // Lua code with sparse tokens: `x = 1` has just variable, operator, number
+        // with space gaps at columns 1 and 3.
+        let text = "```lua\nx = 1\n```\n".to_string();
+        // Lines:
+        //   0: "```lua"
+        //   1: "x = 1"
+        //   2: "```"
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let Some(mut parser) = parser_pool.acquire("markdown") else {
+            return;
+        };
+        let Some(tree) = parser.parse(&text, None) else {
+            return;
+        };
+        parser_pool.release("markdown".to_string(), parser);
+
+        // Use default capture mappings so @markup.raw.block → `string`
+        let capture_mappings = default_capture_mappings();
+
+        let result = handle_semantic_tokens_full(
+            text,
+            tree,
+            md_query,
+            Some("markdown".to_string()),
+            Some(capture_mappings),
+            coordinator,
+            false,
+        )
+        .await;
+
+        assert!(result.is_some(), "Should return semantic tokens");
+
+        let SemanticTokensResult::Tokens(tokens) = result.unwrap() else {
+            panic!("Expected full tokens result");
+        };
+
+        let decoded = decode_tokens(&tokens.data);
+
+        // `string` = token_type 2, the host @markup.raw.block type
+        let string_token_type = 2u32;
+
+        // Content line 1: "x = 1" — must have NO host `string` fragments
+        let line1_host_leaks: Vec<_> = decoded
+            .iter()
+            .filter(|t| t.0 == 1 && t.3 == string_token_type)
+            .collect();
+        assert!(
+            line1_host_leaks.is_empty(),
+            "Host `string` tokens must not leak into gaps on content line 1. \
+             Leaked: {:?}. All decoded: {:?}",
+            line1_host_leaks,
+            decoded
+        );
+
+        // Content line 1 should have injection tokens (Lua captures)
+        let line1_injection: Vec<_> = decoded.iter().filter(|t| t.0 == 1).collect();
+        assert!(
+            !line1_injection.is_empty(),
+            "Should have Lua injection tokens on line 1. Decoded: {:?}",
+            decoded
+        );
+
+        // Fence lines should still have host tokens
         let line0_tokens: Vec<_> = decoded.iter().filter(|t| t.0 == 0).collect();
         assert!(
             !line0_tokens.is_empty(),
-            "Should have host tokens on line 0 (heading). Decoded: {:?}",
+            "Fence line 0 should have host tokens. Decoded: {:?}",
             decoded
+        );
+        let line2_tokens: Vec<_> = decoded.iter().filter(|t| t.0 == 2).collect();
+        assert!(
+            !line2_tokens.is_empty(),
+            "Fence line 2 should have host tokens. Decoded: {:?}",
+            decoded
+        );
+    }
+
+    /// Integration test matching real-world scenario: Python code block with
+    /// multiline content including blank lines. The `@markup.raw.block` host
+    /// token (mapped to `string`) spans the entire fenced_code_block node.
+    /// Stage 1 must exclude ALL per-line fragments on content lines.
+    #[tokio::test]
+    async fn test_no_host_leak_python_multiline_code_block() {
+        use crate::config::WorkspaceSettings;
+        use crate::config::defaults::default_capture_mappings;
+        use crate::language::LanguageCoordinator;
+        use std::sync::Arc;
+
+        let coordinator = Arc::new(LanguageCoordinator::new());
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        let md_result = coordinator.ensure_language_loaded("markdown");
+        let py_result = coordinator.ensure_language_loaded("python");
+        if !md_result.success || !py_result.success {
+            eprintln!("Skipping: markdown or python parser not available");
+            return;
+        }
+
+        let Some(md_query) = coordinator.get_highlight_query("markdown") else {
+            eprintln!("Skipping: markdown highlight query not available");
+            return;
+        };
+
+        // Multiline Python code block matching the screenshot scenario
+        let text = "```python\nx: str = 1\n\ndef f(a: int) -> str:\n    return a\n\nf(x)\n```\n"
+            .to_string();
+        // Lines:
+        //   0: "```python"
+        //   1: "x: str = 1"
+        //   2: ""
+        //   3: "def f(a: int) -> str:"
+        //   4: "    return a"
+        //   5: ""
+        //   6: "f(x)"
+        //   7: "```"
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let Some(mut parser) = parser_pool.acquire("markdown") else {
+            return;
+        };
+        let Some(tree) = parser.parse(&text, None) else {
+            return;
+        };
+        parser_pool.release("markdown".to_string(), parser);
+
+        let capture_mappings = default_capture_mappings();
+        let result = handle_semantic_tokens_full(
+            text,
+            tree,
+            md_query,
+            Some("markdown".to_string()),
+            Some(capture_mappings),
+            coordinator,
+            false,
+        )
+        .await;
+
+        assert!(result.is_some(), "Should return semantic tokens");
+
+        let SemanticTokensResult::Tokens(tokens) = result.unwrap() else {
+            panic!("Expected full tokens result");
+        };
+
+        let decoded = decode_tokens(&tokens.data);
+
+        // `string` = token_type 2, the host @markup.raw.block type
+        let string_token_type = 2u32;
+
+        // Content lines 1-6 must have NO host `string` fragments
+        for content_line in 1..=6 {
+            let leaks: Vec<_> = decoded
+                .iter()
+                .filter(|t| t.0 == content_line && t.3 == string_token_type)
+                .collect();
+            assert!(
+                leaks.is_empty(),
+                "Host `string` tokens must not leak onto content line {}. \
+                 Leaked: {:?}. All decoded: {:?}",
+                content_line,
+                leaks,
+                decoded
+            );
+        }
+
+        // Fence lines should have host tokens
+        let line0_has_host = decoded.iter().any(|t| t.0 == 0);
+        let line7_has_host = decoded.iter().any(|t| t.0 == 7);
+        assert!(
+            line0_has_host,
+            "Fence line 0 should have tokens. Decoded: {:?}",
+            decoded
+        );
+        assert!(
+            line7_has_host,
+            "Fence line 7 should have tokens. Decoded: {:?}",
+            decoded
+        );
+
+        // Content lines should have injection tokens (Python captures)
+        let line1_injection: Vec<_> = decoded.iter().filter(|t| t.0 == 1).collect();
+        assert!(
+            !line1_injection.is_empty(),
+            "Should have Python injection tokens on line 1. Decoded: {:?}",
+            decoded
+        );
+    }
+
+    /// Regression test: when `supports_multiline` is true, multiline host
+    /// tokens (e.g., `@markup.raw.block` on `fenced_code_block`) are emitted
+    /// as a single token starting at the fence line. Stage 1 exclusion must
+    /// still suppress the host token on content lines — it cannot let a
+    /// multiline token leak through because its start position is outside
+    /// the injection region.
+    #[tokio::test]
+    async fn test_no_host_leak_with_multiline_support() {
+        use crate::config::WorkspaceSettings;
+        use crate::config::defaults::default_capture_mappings;
+        use crate::language::LanguageCoordinator;
+        use std::sync::Arc;
+
+        let coordinator = Arc::new(LanguageCoordinator::new());
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        let md_result = coordinator.ensure_language_loaded("markdown");
+        let lua_result = coordinator.ensure_language_loaded("lua");
+        if !md_result.success || !lua_result.success {
+            eprintln!("Skipping: markdown or lua parser not available");
+            return;
+        }
+
+        let Some(md_query) = coordinator.get_highlight_query("markdown") else {
+            eprintln!("Skipping: markdown highlight query not available");
+            return;
+        };
+
+        let text = "```lua\nlocal x = 42\n```\n".to_string();
+        // Lines:
+        //   0: "```lua"
+        //   1: "local x = 42"
+        //   2: "```"
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let Some(mut parser) = parser_pool.acquire("markdown") else {
+            return;
+        };
+        let Some(tree) = parser.parse(&text, None) else {
+            return;
+        };
+        parser_pool.release("markdown".to_string(), parser);
+
+        let capture_mappings = default_capture_mappings();
+
+        // KEY: supports_multiline = true
+        let result = handle_semantic_tokens_full(
+            text,
+            tree,
+            md_query,
+            Some("markdown".to_string()),
+            Some(capture_mappings),
+            coordinator,
+            true, // multiline support enabled!
+        )
+        .await;
+
+        assert!(result.is_some(), "Should return semantic tokens");
+
+        let SemanticTokensResult::Tokens(tokens) = result.unwrap() else {
+            panic!("Expected full tokens result");
+        };
+
+        let decoded = decode_tokens(&tokens.data);
+
+        // `string` = token_type 2
+        let string_token_type = 2u32;
+
+        // With multiline support, a single `string` token might start on
+        // line 0 (fence) but extend past the fence content into content lines.
+        // Line 0 = "```lua" (6 UTF-16 chars). Any `string` token on line 0
+        // with col + length > 6 is a multiline host token leaking into content.
+        let line0_width = 6u32; // "```lua"
+        let multiline_leaks: Vec<_> = decoded
+            .iter()
+            .filter(|t| t.3 == string_token_type && t.0 == 0 && t.1 + t.2 > line0_width)
+            .collect();
+        assert!(
+            multiline_leaks.is_empty(),
+            "Multiline host `string` tokens must not extend past fence line into content. \
+             Leaked: {:?}. All decoded: {:?}",
+            multiline_leaks,
+            decoded
+        );
+
+        // Content line 1 must have NO host `string` tokens starting there either
+        let line1_host_leaks: Vec<_> = decoded
+            .iter()
+            .filter(|t| t.0 == 1 && t.3 == string_token_type)
+            .collect();
+        assert!(
+            line1_host_leaks.is_empty(),
+            "Host `string` must not leak onto content line 1. \
+             Leaked: {:?}. All decoded: {:?}",
+            line1_host_leaks,
+            decoded
+        );
+
+        // Should still have injection tokens on line 1
+        let line1_injection: Vec<_> = decoded.iter().filter(|t| t.0 == 1).collect();
+        assert!(
+            !line1_injection.is_empty(),
+            "Should have injection tokens on line 1. Decoded: {:?}",
+            decoded
+        );
+    }
+
+    /// Integration test matching the exact screenshot: Python code block
+    /// followed by a non-language code block. Tests that the two blocks
+    /// don't interfere with each other's host token exclusion.
+    #[tokio::test]
+    async fn test_no_host_leak_python_plus_nolang_code_blocks() {
+        use crate::config::WorkspaceSettings;
+        use crate::config::defaults::default_capture_mappings;
+        use crate::language::LanguageCoordinator;
+        use std::sync::Arc;
+
+        let coordinator = Arc::new(LanguageCoordinator::new());
+        let settings = WorkspaceSettings {
+            search_paths: vec![test_search_path()],
+            ..Default::default()
+        };
+        let _summary = coordinator.load_settings(settings);
+
+        let md_result = coordinator.ensure_language_loaded("markdown");
+        let py_result = coordinator.ensure_language_loaded("python");
+        if !md_result.success || !py_result.success {
+            eprintln!("Skipping: markdown or python parser not available");
+            return;
+        }
+
+        let Some(md_query) = coordinator.get_highlight_query("markdown") else {
+            eprintln!("Skipping: markdown highlight query not available");
+            return;
+        };
+
+        // Document matching screenshot: Python block + no-language block
+        let text = "\
+```python
+x: str = 1
+
+def f(a: int) -> str:
+    return a
+
+f(x)
+```
+
+```
+foo
+```
+"
+        .to_string();
+        // Lines:
+        //   0: "```python"
+        //   1: "x: str = 1"
+        //   2: ""
+        //   3: "def f(a: int) -> str:"
+        //   4: "    return a"
+        //   5: ""
+        //   6: "f(x)"
+        //   7: "```"
+        //   8: ""
+        //   9: "```"
+        //  10: "foo"
+        //  11: "```"
+
+        let mut parser_pool = coordinator.create_document_parser_pool();
+        let Some(mut parser) = parser_pool.acquire("markdown") else {
+            return;
+        };
+        let Some(tree) = parser.parse(&text, None) else {
+            return;
+        };
+        parser_pool.release("markdown".to_string(), parser);
+
+        let capture_mappings = default_capture_mappings();
+        let result = handle_semantic_tokens_full(
+            text,
+            tree,
+            md_query,
+            Some("markdown".to_string()),
+            Some(capture_mappings),
+            coordinator,
+            false,
+        )
+        .await;
+
+        assert!(result.is_some(), "Should return semantic tokens");
+
+        let SemanticTokensResult::Tokens(tokens) = result.unwrap() else {
+            panic!("Expected full tokens result");
+        };
+
+        let decoded = decode_tokens(&tokens.data);
+
+        // `string` = token_type 2
+        let string_token_type = 2u32;
+
+        // Python content lines 1-6: NO host `string` fragments
+        for content_line in 1u32..=6 {
+            let leaks: Vec<_> = decoded
+                .iter()
+                .filter(|t| t.0 == content_line && t.3 == string_token_type)
+                .collect();
+            assert!(
+                leaks.is_empty(),
+                "Host `string` tokens must not leak onto Python content line {}. \
+                 Leaked: {:?}. All decoded: {:?}",
+                content_line,
+                leaks,
+                decoded
+            );
+        }
+
+        // No-language block content line 10: `string` SHOULD be present
+        // (inactive injection region — no captures produced)
+        let line10_string: Vec<_> = decoded
+            .iter()
+            .filter(|t| t.0 == 10 && t.3 == string_token_type)
+            .collect();
+        assert!(
+            !line10_string.is_empty(),
+            "Non-language block content line 10 should have `string` token. Decoded: {:?}",
+            decoded
+        );
+
+        // Fence lines should have tokens
+        assert!(
+            decoded.iter().any(|t| t.0 == 0),
+            "Python fence line 0 should have tokens"
+        );
+        assert!(
+            decoded.iter().any(|t| t.0 == 7),
+            "Python fence line 7 should have tokens"
         );
     }
 }

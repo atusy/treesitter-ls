@@ -19,6 +19,64 @@ fn token_priority(t: &RawToken) -> (usize, usize, usize) {
     (t.depth, t.node_depth, t.pattern_index)
 }
 
+/// Compute the UTF-16 width of a string.
+fn utf16_width(s: &str) -> usize {
+    s.chars().map(|c| c.len_utf16()).sum()
+}
+
+/// Split multiline tokens into per-line tokens.
+///
+/// The sweep line algorithm groups tokens by `token.line` and treats
+/// `[column, column+length)` as a 1D interval on that line. Multiline
+/// tokens encode their total UTF-16 length (including +1 per inter-line
+/// newline) in `length`, producing invalid fragments when the sweep line
+/// splits around other tokens on the same start line.
+fn split_multiline_tokens(tokens: Vec<RawToken>, lines: &[&str]) -> Vec<RawToken> {
+    let mut result = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        // If the token's line is beyond the lines array, keep as-is (no line
+        // info to determine whether it's multiline).
+        let Some(line_text) = lines.get(token.line) else {
+            result.push(token);
+            continue;
+        };
+
+        let line_width = utf16_width(line_text);
+
+        // Single-line token: column + length fits within the line
+        if token.column + token.length <= line_width {
+            result.push(token);
+            continue;
+        }
+
+        // Multiline token: split into per-line fragments
+        let mut remaining = token.length;
+        let mut current_line = token.line;
+        let mut start_col = token.column;
+
+        while remaining > 0 && current_line < lines.len() {
+            let current_line_width = utf16_width(lines[current_line]);
+            let per_line_len = remaining.min(current_line_width.saturating_sub(start_col));
+
+            result.push(RawToken {
+                line: current_line,
+                column: start_col,
+                length: per_line_len,
+                mapped_name: token.mapped_name.clone(),
+                depth: token.depth,
+                pattern_index: token.pattern_index,
+                node_depth: token.node_depth,
+            });
+
+            // Subtract per_line_len + 1 (the +1 accounts for the newline between lines)
+            remaining = remaining.saturating_sub(per_line_len + 1);
+            current_line += 1;
+            start_col = 0; // subsequent lines start at column 0
+        }
+    }
+    result
+}
+
 /// Split overlapping tokens on the same line using a sweep line algorithm.
 ///
 /// For each line, collects breakpoints (start/end columns of all tokens),
@@ -153,9 +211,14 @@ fn is_in_active_injection_region(token: &RawToken, regions: &[InjectionRegion]) 
 /// 2. Splits overlapping tokens via sweep line
 /// 3. Delta-encodes for LSP protocol
 pub(super) fn finalize_tokens(
-    mut all_tokens: Vec<RawToken>,
+    all_tokens: Vec<RawToken>,
     active_injection_regions: &[InjectionRegion],
+    lines: &[&str],
 ) -> Option<SemanticTokensResult> {
+    // Split multiline tokens into per-line tokens before the sweep line,
+    // which treats [column, column+length) as a 1D interval on a single line.
+    let mut all_tokens = split_multiline_tokens(all_tokens, lines);
+
     // Filter out zero-length tokens BEFORE splitting.
     // Unknown captures are already filtered at collection time (apply_capture_mapping returns None).
     all_tokens.retain(|token| token.length > 0);
@@ -260,7 +323,7 @@ mod tests {
     #[test]
     fn finalize_tokens_returns_none_for_empty_input() {
         let tokens: Vec<RawToken> = vec![];
-        assert!(finalize_tokens(tokens, &[]).is_none());
+        assert!(finalize_tokens(tokens, &[], &[]).is_none());
     }
 
     #[test]
@@ -269,7 +332,7 @@ mod tests {
             make_token(0, 0, 0, "keyword", 0, 0), // zero length - should be filtered
             make_token(0, 5, 3, "variable", 0, 0), // valid
         ];
-        let result = finalize_tokens(tokens, &[]);
+        let result = finalize_tokens(tokens, &[], &[]);
         assert!(result.is_some());
 
         if let Some(SemanticTokensResult::Tokens(semantic_tokens)) = result {
@@ -286,7 +349,7 @@ mod tests {
             make_token(0, 0, 0, "keyword", 0, 0),
             make_token(1, 5, 0, "variable", 0, 0),
         ];
-        assert!(finalize_tokens(tokens, &[]).is_none());
+        assert!(finalize_tokens(tokens, &[], &[]).is_none());
     }
 
     #[test]
@@ -296,7 +359,7 @@ mod tests {
             make_token(0, 10, 3, "string", 0, 0),  // line 0, col 10
             make_token(0, 0, 3, "function", 0, 0), // line 0, col 0
         ];
-        let result = finalize_tokens(tokens, &[]);
+        let result = finalize_tokens(tokens, &[], &[]);
         assert!(result.is_some());
 
         if let Some(SemanticTokensResult::Tokens(semantic_tokens)) = result {
@@ -323,7 +386,7 @@ mod tests {
             make_token(0, 5, 4, "function", 0, 0),
             make_token(0, 12, 2, "variable", 0, 0),
         ];
-        let result = finalize_tokens(tokens, &[]);
+        let result = finalize_tokens(tokens, &[], &[]);
         assert!(result.is_some());
 
         if let Some(SemanticTokensResult::Tokens(semantic_tokens)) = result {
@@ -349,7 +412,7 @@ mod tests {
             make_token(0, 5, 3, "keyword", 0, 0),
             make_token(1, 10, 4, "function", 0, 0),
         ];
-        let result = finalize_tokens(tokens, &[]);
+        let result = finalize_tokens(tokens, &[], &[]);
         assert!(result.is_some());
 
         if let Some(SemanticTokensResult::Tokens(semantic_tokens)) = result {
@@ -577,7 +640,7 @@ mod tests {
             end_line: 4,
             end_col: 0,
         }];
-        let result = finalize_tokens(tokens, &regions);
+        let result = finalize_tokens(tokens, &regions, &[]);
         assert!(result.is_some());
         let SemanticTokensResult::Tokens(st) = result.unwrap() else {
             panic!("Expected Tokens");
@@ -605,7 +668,7 @@ mod tests {
             end_line: 4,
             end_col: 0,
         }];
-        let result = finalize_tokens(tokens, &regions);
+        let result = finalize_tokens(tokens, &regions, &[]);
         assert!(result.is_some(), "Injection tokens should always survive");
     }
 
@@ -613,7 +676,7 @@ mod tests {
     fn finalize_no_exclusion_when_no_active_regions() {
         // No active regions → all host tokens survive.
         let tokens = vec![make_token(3, 0, 12, "string", 0, 0)];
-        let result = finalize_tokens(tokens, &[]);
+        let result = finalize_tokens(tokens, &[], &[]);
         assert!(result.is_some());
     }
 
@@ -640,7 +703,7 @@ mod tests {
             make_token(0, 0, 5, token_a.0, token_a.1, token_a.2),
             make_token(0, 0, 5, token_b.0, token_b.1, token_b.2),
         ];
-        let result = finalize_tokens(tokens, &[]);
+        let result = finalize_tokens(tokens, &[], &[]);
 
         let SemanticTokensResult::Tokens(semantic_tokens) = result.expect("should produce tokens")
         else {
@@ -650,5 +713,108 @@ mod tests {
         let (expected_type, _) = map_capture_to_token_type_and_modifiers(expected_winner)
             .expect("expected_winner should be a known capture");
         assert_eq!(semantic_tokens.data[0].token_type, expected_type);
+    }
+
+    // ── split_multiline_tokens tests ─────────────────────────────────
+
+    /// Helper to extract (line, column, length) tuples from split_multiline_tokens output.
+    fn extract_split(tokens: Vec<RawToken>, lines: &[&str]) -> Vec<(usize, usize, usize)> {
+        split_multiline_tokens(tokens, lines)
+            .into_iter()
+            .map(|t| (t.line, t.column, t.length))
+            .collect()
+    }
+
+    #[test]
+    fn split_multiline_single_line_passthrough() {
+        // Token fits within line → kept as-is.
+        let lines = &["hello world"];
+        let tokens = vec![make_token(0, 0, 5, "keyword", 0, 0)];
+        let result = extract_split(tokens, lines);
+        assert_eq!(result, vec![(0, 0, 5)]);
+    }
+
+    #[test]
+    fn split_multiline_two_line_token() {
+        // Line 0: "abcdef" (width 6), Line 1: "ghij" (width 4)
+        // Token at (line=0, col=3, length=8): occupies col 3..6 on line 0 (len=3),
+        // then +1 for newline (remaining = 8-3-1=4), then col 0..4 on line 1 (len=4).
+        let lines = &["abcdef", "ghij"];
+        let tokens = vec![make_token(0, 3, 8, "string", 0, 0)];
+        let result = extract_split(tokens, lines);
+        assert_eq!(result, vec![(0, 3, 3), (1, 0, 4)]);
+    }
+
+    #[test]
+    fn split_multiline_three_lines_with_empty_middle() {
+        // Line 0: "abc" (width 3), Line 1: "" (width 0), Line 2: "de" (width 2)
+        // Token at (line=0, col=0, length=6): line 0 len=3, newline -1 → remaining=2,
+        // line 1 len=0, newline -1 → remaining=1, line 2 len=1... wait let me recalculate.
+        //
+        // Total length encoding: line0_content(3) + newline(1) + line1_content(0) + newline(1) + line2_content(2) = 7
+        // But we want length=6 to test partial coverage of last line:
+        // line0: 3, newline: 1, line1: 0, newline: 1, line2: 1 → total = 6
+        let lines = &["abc", "", "de"];
+        let tokens = vec![make_token(0, 0, 6, "string", 0, 0)];
+        let result = extract_split(tokens, lines);
+        // line 0: min(6, 3-0)=3, remaining=6-3-1=2
+        // line 1: min(2, 0-0)=0, remaining=2-0-1=1
+        // line 2: min(1, 2-0)=1, remaining=1-1-1=0 (saturating)
+        assert_eq!(result, vec![(0, 0, 3), (1, 0, 0), (2, 0, 1)]);
+    }
+
+    #[test]
+    fn split_multiline_unicode_content() {
+        // CJK characters: 1 UTF-16 code unit each, but 3 bytes in UTF-8.
+        // Line 0: "あいう" (UTF-16 width = 3), Line 1: "えお" (UTF-16 width = 2)
+        // Token at (line=0, col=1, length=5): line 0 len=min(5,3-1)=2, remaining=5-2-1=2,
+        // line 1 len=min(2,2-0)=2, remaining=2-2-1=0 (saturating)
+        let lines = &["あいう", "えお"];
+        let tokens = vec![make_token(0, 1, 5, "string", 0, 0)];
+        let result = extract_split(tokens, lines);
+        assert_eq!(result, vec![(0, 1, 2), (1, 0, 2)]);
+    }
+
+    #[test]
+    fn split_multiline_token_at_eof() {
+        // Token extends beyond available lines → splits what it can,
+        // remaining is discarded when current_line >= lines.len().
+        let lines = &["abc"];
+        // Token claims to span 2 lines but only 1 line exists
+        let tokens = vec![make_token(0, 0, 5, "string", 0, 0)];
+        let result = extract_split(tokens, lines);
+        // line 0: min(5, 3-0)=3, remaining=5-3-1=1, then current_line=1 >= lines.len()=1 → stop
+        assert_eq!(result, vec![(0, 0, 3)]);
+    }
+
+    #[test]
+    fn split_multiline_no_lines_passthrough() {
+        // When lines is empty, tokens pass through unchanged (no line info to judge).
+        let tokens = vec![make_token(0, 0, 10, "string", 0, 0)];
+        let result = extract_split(tokens, &[]);
+        assert_eq!(result, vec![(0, 0, 10)]);
+    }
+
+    #[test]
+    fn split_multiline_preserves_metadata() {
+        // Verify that split fragments retain depth, pattern_index, node_depth, mapped_name.
+        let lines = &["ab", "cd"];
+        let tokens = vec![make_token_with_node_depth(0, 0, 5, "string", 1, 42, 3)];
+        let result = split_multiline_tokens(tokens, lines);
+        assert_eq!(result.len(), 2);
+        for frag in &result {
+            assert_eq!(frag.mapped_name, "string");
+            assert_eq!(frag.depth, 1);
+            assert_eq!(frag.pattern_index, 42);
+            assert_eq!(frag.node_depth, 3);
+        }
+        assert_eq!(
+            (result[0].line, result[0].column, result[0].length),
+            (0, 0, 2)
+        );
+        assert_eq!(
+            (result[1].line, result[1].column, result[1].length),
+            (1, 0, 2)
+        );
     }
 }
