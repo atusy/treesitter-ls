@@ -393,7 +393,8 @@ mod tests {
         let tree = parse_rust_tree("fn main() {}");
         let root = tree.root_node();
         // Root node spans [0, 12) — exactly matches the exclusion range.
-        // Exact match should NOT be excluded (dedup handles same-position conflicts).
+        // Exact match should NOT be excluded (the sweep line splitter in
+        // `finalize_tokens` resolves same-position conflicts).
         // This matches the Markdown heading case: @markup.heading.1 is captured on
         // the same node as the markdown_inline injection content.
         assert!(

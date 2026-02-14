@@ -680,7 +680,7 @@ mod tests {
         assert!(result.is_some());
     }
 
-    // At same position, dedup keeps the winner after sorting by (depth DESC, pattern_index DESC).
+    // At same position, the sweep line picks the winner by priority (depth DESC, node_depth DESC, pattern_index DESC).
     #[rstest]
     #[case::deeper_injection_wins(
         ("string", 0, 0), ("keyword", 1, 0), "keyword"
@@ -694,7 +694,7 @@ mod tests {
     #[case::depth_beats_pattern_index(
         ("variable", 0, 99), ("keyword", 1, 0), "keyword"
     )]
-    fn finalize_tokens_dedup_priority(
+    fn finalize_tokens_sweep_priority(
         #[case] token_a: (&str, usize, usize),
         #[case] token_b: (&str, usize, usize),
         #[case] expected_winner: &str,
