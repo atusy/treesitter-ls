@@ -87,7 +87,7 @@ pub(super) fn apply_capture_mapping(
     // No mapping found - check if the base type is in SemanticTokensLegend.
     // If not, return None to skip adding to all_tokens.
     // This prevents unknown captures (e.g., @spell) from blocking meaningful
-    // tokens at the same position during deduplication.
+    // tokens at the same position during sweep line overlap resolution.
     let base_type = capture_name.split('.').next().unwrap_or("");
     if LEGEND_TYPES.iter().any(|t| t.as_str() == base_type) {
         Some(capture_name.to_string())

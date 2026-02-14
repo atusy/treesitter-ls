@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use tree_sitter::{Parser, Tree};
 
 use super::injection::{InjectionContext, MAX_INJECTION_DEPTH};
-use super::token_collector::{RawToken, collect_host_tokens};
+use super::token_collector::{InjectionRegion, RawToken, byte_to_utf16_col, collect_host_tokens};
 use crate::config::CaptureMappings;
 use crate::language::LanguageCoordinator;
 
@@ -206,9 +206,21 @@ pub(crate) fn process_injection_sync(
         return Vec::new();
     };
 
+    // Discover nested injections BEFORE collecting tokens so we can compute
+    // exclusion ranges. This suppresses this level's captures within regions
+    // that will be handled by deeper injection languages.
+    let (nested_contexts, nested_exclusion_ranges) = collect_injection_contexts_sync(
+        ctx.content_text,
+        &tree,
+        Some(&ctx.resolved_lang),
+        coordinator,
+        ctx.host_start_byte,
+    );
+
     let mut tokens = Vec::new();
 
-    // Collect tokens from this injection's highlight query
+    // Collect tokens from this injection's highlight query, excluding
+    // regions covered by nested injections
     collect_host_tokens(
         ctx.content_text,
         &tree,
@@ -220,18 +232,11 @@ pub(crate) fn process_injection_sync(
         ctx.host_start_byte,
         depth,
         supports_multiline,
+        &nested_exclusion_ranges,
         &mut tokens,
     );
 
     // Recursively process nested injections (same thread, no parallelism)
-    let nested_contexts = collect_injection_contexts_sync(
-        ctx.content_text,
-        &tree,
-        Some(&ctx.resolved_lang),
-        coordinator,
-        ctx.host_start_byte,
-    );
-
     for nested_ctx in nested_contexts {
         let nested_tokens = process_injection_sync(
             &nested_ctx,
@@ -254,26 +259,32 @@ pub(crate) fn process_injection_sync(
 /// This is a synchronous version of the injection context collection that
 /// works without mutable parser access. It discovers all injections in the
 /// given tree and returns their contexts for processing.
+///
+/// Returns `(contexts, exclusion_ranges)` where exclusion_ranges are the
+/// content-local byte ranges of each resolved injection. These ranges
+/// correspond to the regions where child injections produce their own tokens,
+/// so parent captures overlapping these ranges should be suppressed.
 fn collect_injection_contexts_sync<'a>(
     text: &'a str,
     tree: &Tree,
     filetype: Option<&str>,
     coordinator: &LanguageCoordinator,
     content_start_byte: usize,
-) -> Vec<InjectionContext<'a>> {
+) -> (Vec<InjectionContext<'a>>, Vec<(usize, usize)>) {
     use crate::language::{collect_all_injections, injection::parse_offset_directive_for_pattern};
 
     let current_lang = filetype.unwrap_or("unknown");
     let Some(injection_query) = coordinator.get_injection_query(current_lang) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
 
     let Some(injections) = collect_all_injections(&tree.root_node(), text, Some(&injection_query))
     else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
 
     let mut contexts = Vec::with_capacity(injections.len());
+    let mut exclusion_ranges = Vec::with_capacity(injections.len());
 
     for injection in injections {
         let start = injection.content_node.start_byte();
@@ -318,6 +329,9 @@ fn collect_injection_contexts_sync<'a>(
             continue;
         }
 
+        // Record exclusion range (content-local) for parent token suppression
+        exclusion_ranges.push((inj_start_byte, inj_end_byte));
+
         contexts.push(InjectionContext {
             resolved_lang,
             highlight_query,
@@ -326,7 +340,7 @@ fn collect_injection_contexts_sync<'a>(
         });
     }
 
-    contexts
+    (contexts, exclusion_ranges)
 }
 
 /// Collect semantic tokens from all injections in parallel using Rayon.
@@ -348,7 +362,10 @@ fn collect_injection_contexts_sync<'a>(
 /// * `supports_multiline` - Whether the client supports multiline tokens
 ///
 /// # Returns
-/// Vector of raw tokens from all injections, sorted by (line, column)
+/// Tuple of (raw tokens from all injections sorted by position, active injection regions).
+///
+/// An injection region is **active** if at least one token was produced from it (depth ≥ 1).
+/// Inactive regions (injection resolved but no captures) don't suppress parent tokens.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn collect_injection_tokens_parallel(
     host_text: &str,
@@ -357,18 +374,18 @@ pub(crate) fn collect_injection_tokens_parallel(
     coordinator: &LanguageCoordinator,
     capture_mappings: Option<&CaptureMappings>,
     supports_multiline: bool,
-) -> Vec<RawToken> {
+) -> (Vec<RawToken>, Vec<InjectionRegion>) {
     use rayon::prelude::*;
 
     // Pre-compute host lines for position calculations
     let host_lines: Vec<&str> = host_text.lines().collect();
 
-    // Collect top-level injection contexts
-    let contexts =
+    // Collect top-level injection contexts and their byte ranges
+    let (contexts, exclusion_byte_ranges) =
         collect_injection_contexts_sync(host_text, host_tree, host_filetype, coordinator, 0);
 
     if contexts.is_empty() {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
 
     // Create factory from coordinator's registry (cloned for thread safety)
@@ -417,7 +434,79 @@ pub(crate) fn collect_injection_tokens_parallel(
     // Sort tokens by position (line, then column)
     all_tokens.sort_by(|a, b| a.line.cmp(&b.line).then_with(|| a.column.cmp(&b.column)));
 
-    all_tokens
+    // Convert byte ranges to line/column InjectionRegions, but only for
+    // regions that actually produced tokens (= "active" injection regions).
+    let active_regions = compute_active_injection_regions(
+        host_text,
+        &host_lines,
+        &exclusion_byte_ranges,
+        &all_tokens,
+    );
+
+    (all_tokens, active_regions)
+}
+
+/// Convert byte-based exclusion ranges to line/column `InjectionRegion`s,
+/// keeping only those regions that contain at least one injection token.
+fn compute_active_injection_regions(
+    host_text: &str,
+    host_lines: &[&str],
+    byte_ranges: &[(usize, usize)],
+    tokens: &[RawToken],
+) -> Vec<InjectionRegion> {
+    byte_ranges
+        .iter()
+        .filter_map(|&(start_byte, end_byte)| {
+            // Convert byte range to line/col
+            let (start_line, start_col) = byte_to_line_col(host_text, host_lines, start_byte);
+            let (end_line, end_col) = byte_to_line_col(host_text, host_lines, end_byte);
+
+            // Check if any token (depth ≥ 1) falls within this region
+            let has_injection_tokens = tokens.iter().any(|t| {
+                t.depth >= 1
+                    && ((t.line > start_line || (t.line == start_line && t.column >= start_col))
+                        && (t.line < end_line || (t.line == end_line && t.column < end_col)))
+            });
+
+            if has_injection_tokens {
+                Some(InjectionRegion {
+                    start_line,
+                    start_col,
+                    end_line,
+                    end_col,
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Convert a byte offset in host_text to a (line, utf16_col) pair.
+fn byte_to_line_col(host_text: &str, host_lines: &[&str], byte_offset: usize) -> (usize, usize) {
+    let byte_offset = byte_offset.min(host_text.len());
+    // Snap to valid UTF-8 char boundary (tree-sitter always provides valid offsets,
+    // but guard defensively against unexpected inputs).
+    let byte_offset = {
+        let mut b = byte_offset;
+        while b > 0 && !host_text.is_char_boundary(b) {
+            b -= 1;
+        }
+        b
+    };
+    let line = host_text[..byte_offset]
+        .chars()
+        .filter(|c| *c == '\n')
+        .count();
+    let line_start_byte = if line == 0 {
+        0
+    } else {
+        host_text[..byte_offset].rfind('\n').map_or(0, |p| p + 1)
+    };
+    let col_byte = byte_offset - line_start_byte;
+    let line_text = host_lines.get(line).unwrap_or(&"");
+    let col_utf16 = byte_to_utf16_col(line_text, col_byte);
+    (line, col_utf16)
 }
 
 #[cfg(test)]
@@ -562,6 +651,39 @@ mod tests {
     }
 
     #[test]
+    fn test_byte_to_line_col_mid_char_boundary() {
+        // Test that byte_to_line_col handles mid-UTF-8-character offsets defensively
+        // by snapping to the nearest valid char boundary.
+        let text = "あいう"; // Three 3-byte UTF-8 characters (9 bytes total)
+        let lines: Vec<&str> = text.lines().collect();
+
+        // Offset 0 is valid (start of first char)
+        let (line, col) = byte_to_line_col(text, &lines, 0);
+        assert_eq!(line, 0);
+        assert_eq!(col, 0);
+
+        // Offset 1 is mid-character (should snap to 0)
+        let (line, col) = byte_to_line_col(text, &lines, 1);
+        assert_eq!(line, 0, "Mid-character offset should snap to line 0");
+        assert_eq!(col, 0, "Mid-character offset should snap to col 0");
+
+        // Offset 2 is mid-character (should snap to 0)
+        let (line, col) = byte_to_line_col(text, &lines, 2);
+        assert_eq!(line, 0);
+        assert_eq!(col, 0);
+
+        // Offset 3 is valid (start of second char)
+        let (line, col) = byte_to_line_col(text, &lines, 3);
+        assert_eq!(line, 0);
+        assert_eq!(col, 1); // One UTF-16 code unit (Japanese chars are in BMP)
+
+        // Offset 4 is mid-character (should snap to 3)
+        let (line, col) = byte_to_line_col(text, &lines, 4);
+        assert_eq!(line, 0);
+        assert_eq!(col, 1); // Should snap to start of second char
+    }
+
+    #[test]
     fn test_process_injection_sync_with_simple_code() {
         use crate::config::WorkspaceSettings;
 
@@ -577,10 +699,12 @@ mod tests {
         let load_result = coordinator.ensure_language_loaded("rust");
         if !load_result.success {
             // Skip test if rust parser not available in CI
+            eprintln!("Skipping: rust parser not available");
             return;
         }
 
         let Some(highlight_query) = coordinator.get_highlight_query("rust") else {
+            eprintln!("Skipping: rust highlight query not available");
             return;
         };
 
@@ -630,10 +754,12 @@ mod tests {
 
         let load_result = coordinator.ensure_language_loaded("rust");
         if !load_result.success {
+            eprintln!("Skipping: rust parser not available");
             return;
         }
 
         let Some(highlight_query) = coordinator.get_highlight_query("rust") else {
+            eprintln!("Skipping: rust highlight query not available");
             return;
         };
 
@@ -689,6 +815,7 @@ mod tests {
         // Load markdown (host language)
         let load_result = coordinator.ensure_language_loaded("markdown");
         if !load_result.success {
+            eprintln!("Skipping: markdown parser not available");
             return;
         }
 
@@ -696,15 +823,17 @@ mod tests {
         let text = "";
         let mut parser_pool = coordinator.create_document_parser_pool();
         let Some(mut parser) = parser_pool.acquire("markdown") else {
+            eprintln!("Skipping: markdown parser not available");
             return;
         };
         let Some(tree) = parser.parse(text, None) else {
+            eprintln!("Skipping: failed to parse document");
             return;
         };
         parser_pool.release("markdown".to_string(), parser);
 
         // Collect tokens - should be empty for empty document
-        let tokens = collect_injection_tokens_parallel(
+        let (tokens, _regions) = collect_injection_tokens_parallel(
             text,
             &tree,
             Some("markdown"),
@@ -731,6 +860,7 @@ mod tests {
         let md_result = coordinator.ensure_language_loaded("markdown");
         let lua_result = coordinator.ensure_language_loaded("lua");
         if !md_result.success || !lua_result.success {
+            eprintln!("Skipping: markdown or lua parser not available");
             return;
         }
 
@@ -745,15 +875,17 @@ local x = 42
         // Parse the markdown document
         let mut parser_pool = coordinator.create_document_parser_pool();
         let Some(mut parser) = parser_pool.acquire("markdown") else {
+            eprintln!("Skipping: markdown parser not available");
             return;
         };
         let Some(tree) = parser.parse(text, None) else {
+            eprintln!("Skipping: failed to parse document");
             return;
         };
         parser_pool.release("markdown".to_string(), parser);
 
         // Collect tokens in parallel
-        let tokens = collect_injection_tokens_parallel(
+        let (tokens, _regions) = collect_injection_tokens_parallel(
             text,
             &tree,
             Some("markdown"),
@@ -795,6 +927,7 @@ local x = 42
         let md_result = coordinator.ensure_language_loaded("markdown");
         let lua_result = coordinator.ensure_language_loaded("lua");
         if !md_result.success || !lua_result.success {
+            eprintln!("Skipping: markdown or lua parser not available");
             return;
         }
 
@@ -814,14 +947,16 @@ local b = 2
 
         let mut parser_pool = coordinator.create_document_parser_pool();
         let Some(mut parser) = parser_pool.acquire("markdown") else {
+            eprintln!("Skipping: markdown parser not available");
             return;
         };
         let Some(tree) = parser.parse(text, None) else {
+            eprintln!("Skipping: failed to parse document");
             return;
         };
         parser_pool.release("markdown".to_string(), parser);
 
-        let tokens = collect_injection_tokens_parallel(
+        let (tokens, _regions) = collect_injection_tokens_parallel(
             text,
             &tree,
             Some("markdown"),
