@@ -114,19 +114,9 @@ pub(crate) fn build_didopen_notification(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use tower_lsp_server::ls_types::Uri;
-    use url::Url;
-
     // ==========================================================================
     // Test helpers
     // ==========================================================================
-
-    /// Standard test host URI used across most tests.
-    fn test_host_uri() -> Uri {
-        let url = Url::parse("file:///project/doc.md").unwrap();
-        crate::lsp::lsp_impl::url_to_uri(&url).expect("test URL should convert to URI")
-    }
 
     /// Assert that a request uses a virtual URI with the expected extension.
     fn assert_uses_virtual_uri(request: &serde_json::Value, extension: &str) {
