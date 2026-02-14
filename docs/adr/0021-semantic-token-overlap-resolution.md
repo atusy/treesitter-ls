@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (Phases 1-2 Implemented) |
+| **Status** | Accepted (Phases 1-2 Implemented, basic multiline splitting added) |
 | **Date** | 2026-02-14 |
 
 ## Context
@@ -157,8 +157,9 @@ semantic.rs::handle_semantic_tokens_full
   |     +-- compute_active_injection_regions
   |           (byte ranges -> InjectionRegion, filtered by token presence)
   |
-  +-- finalize_tokens(all_tokens, &active_injection_regions)
+  +-- finalize_tokens(all_tokens, &active_injection_regions, &lines)
         |
+        +-- split_multiline_tokens (normalize to single-line fragments)
         +-- retain(length > 0)
         +-- Stage 1: injection region exclusion
         +-- Stage 2: split_overlapping_tokens (sweep line)
@@ -168,14 +169,13 @@ semantic.rs::handle_semantic_tokens_full
 
 Note: The `exclusion_ranges` parameter in `collect_host_tokens` is still used for **nested injection exclusion** within `process_injection_sync` -- it prevents a parent injection from emitting tokens in regions covered by its child injections. This is distinct from the host-level exclusion in Stage 1.
 
-### Scope: Single-Line Tokens Only
+### Multiline Token Handling
 
-The sweep line operates **per-line**. Multiline tokens (when `supports_multiline = true`) are not split by the sweep line and fall through to the existing priority-based resolution. Full multiline splitting is deferred to Phase 3.
+The sweep line operates **per-line**. Before running the sweep line, `finalize_tokens` calls `split_multiline_tokens`, which normalizes any multiline tokens into single-line fragments. The sweep line then processes those fragments together with tokens that were already single-line.
 
-This is acceptable because:
-- Most LSP clients use `supports_multiline = false` (the default)
-- When multiline is disabled, tokens are already split per-line during collection
-- Multiline overlaps are rare in practice
+- When `supports_multiline = false` (the common case), tokens are already split per-line during collection
+- When `supports_multiline = true`, `split_multiline_tokens` ensures multiline tokens participate correctly in overlap resolution
+- Advanced cross-line merging heuristics (e.g., re-joining fragments after splitting) are deferred to a future phase
 
 ## Consequences
 
@@ -192,7 +192,7 @@ This is acceptable because:
 
 - **O(n*b) sweep line complexity**: For each line, the algorithm iterates all tokens on that line for each breakpoint interval. With many overlapping tokens on a single line, this could be slow. In practice, typical lines have fewer than 10 tokens, so this is not a concern.
 - **Additional memory for `node_depth`**: Each `RawToken` carries a `node_depth` field (one `usize`), increasing per-token memory. The cost is negligible relative to the `mapped_name: String` already present.
-- **Multiline tokens deferred**: The sweep line does not split multiline tokens. Clients using `supports_multiline = true` may still see overlapping multiline tokens until Phase 3.
+- **Multiline splitting is basic**: `split_multiline_tokens` decomposes multiline tokens into per-line fragments, which is sufficient for overlap resolution. More advanced heuristics (e.g., cross-line fragment merging) are deferred.
 - **Adjacent fragment merging adds a post-processing pass**: After splitting, adjacent fragments with the same type are merged. This is an O(n) pass on the already-split tokens.
 
 ### Neutral
@@ -243,13 +243,13 @@ Assign each token a z-index and let the highest-z token "win" at each position, 
 
 ## Deferred Phases
 
-### Phase 3: Multiline Token Splitting
+### Phase 3: Advanced Multiline Heuristics
 
-When `supports_multiline = true`, tokens can span multiple lines. The current sweep line operates per-line and skips these. Full multiline splitting would require:
+Basic multiline splitting (`split_multiline_tokens`) is implemented: multiline tokens are decomposed into per-line fragments before the sweep line. Potential future improvements:
 
-- Adding `end_line` / `end_column` to `RawToken`
-- Extending the sweep line to cross-line intervals
-- Low priority: most clients use `supports_multiline = false`
+- Cross-line fragment merging after overlap resolution
+- Smarter handling of tokens spanning empty lines
+- Low priority: the current per-line approach handles all known use cases
 
 ### Phase 4: `overlappingTokenSupport` Pass-Through (Future ADR)
 
