@@ -183,24 +183,14 @@ fn merge_adjacent_fragments(tokens: &mut Vec<RawToken>) {
 }
 
 /// Check whether a single-line token is inside any active injection region.
+///
+/// Uses lexicographic tuple comparison: `(line, col) >= (start_line, start_col)`
+/// covers all four cases (middle line, start line, end line, single-line region).
 fn is_in_active_injection_region(token: &RawToken, regions: &[InjectionRegion]) -> bool {
     let token_end = token.column + token.length;
     regions.iter().any(|r| {
-        // Token is on a line strictly between region start and end
-        (token.line > r.start_line && token.line < r.end_line)
-        // Token is on the start line, past the start column
-        || (token.line == r.start_line
-            && token.line < r.end_line
-            && token.column >= r.start_col)
-        // Token is on the end line, before the end column
-        || (token.line == r.end_line
-            && token.line > r.start_line
-            && token_end <= r.end_col)
-        // Token is on a single-line region
-        || (token.line == r.start_line
-            && token.line == r.end_line
-            && token.column >= r.start_col
-            && token_end <= r.end_col)
+        (token.line, token.column) >= (r.start_line, r.start_col)
+            && (token.line, token_end) <= (r.end_line, r.end_col)
     })
 }
 
